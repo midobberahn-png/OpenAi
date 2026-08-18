@@ -335,7 +335,7 @@ INVARIANTS: tuple[Invariant, ...] = (
             "die Fähigkeiten von B erben, nur weil B ihn aufgerufen hat — sonst ist "
             "die Kette der Umweg um jede Beschränkung."
         ),
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.agents",
     ),
     Invariant(
@@ -349,7 +349,7 @@ INVARIANTS: tuple[Invariant, ...] = (
             "Andernfalls genügte eine Zwischenstufe als Waschmaschine: Agent B liest "
             "die Mail, meldet ein „sauberes“ Ergebnis nach oben, und A sendet."
         ),
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.agents",
     ),
     # -- Audit ----------------------------------------------------------

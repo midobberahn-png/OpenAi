@@ -168,6 +168,7 @@ class TestNormalfall:
             arguments=ARGS,
             spec=CALENDAR_CREATE,
             taint=TaintLevel.TAINTED,
+            run_id=rid,
             now=NOW + timedelta(seconds=5),
         )
         assert grant.verified_hash == action.payload_hash
@@ -198,6 +199,7 @@ class TestNormalfall:
                 spec=CALENDAR_CREATE,
                 taint=TaintLevel.CLEAN,
                 now=NOW,
+                run_id=rid,
             )
         assert exc.value.code == "approval-not-granted"
 
@@ -235,6 +237,7 @@ class TestAngriffBPayloadMutation:
                 spec=CALENDAR_CREATE,
                 taint=TaintLevel.CLEAN,
                 now=NOW,
+                run_id=rid,
             )
         assert exc.value.code == "payload-mismatch"
         assert "weicht von dem ab" in exc.value.reason
@@ -265,6 +268,7 @@ class TestAngriffBPayloadMutation:
                 spec=CALENDAR_CREATE,
                 taint=TaintLevel.CLEAN,
                 now=NOW,
+                run_id=rid,
             )
         assert exc.value.code == "payload-mismatch"
 
@@ -308,6 +312,7 @@ class TestAngriffBPayloadMutation:
                 spec=anderes,
                 taint=TaintLevel.CLEAN,
                 now=NOW,
+                run_id=rid,
             )
         assert exc.value.code == "payload-mismatch"
 
@@ -344,6 +349,7 @@ class TestAngriffCToctou:
                 spec=CALENDAR_CREATE,
                 taint=TaintLevel.CLEAN,
                 now=NOW + timedelta(seconds=1),
+                run_id=rid,
             )
         assert exc.value.code == "policy-changed"
 
@@ -374,6 +380,7 @@ class TestAngriffCToctou:
                 spec=CALENDAR_CREATE,
                 taint=TaintLevel.CLEAN,
                 now=NOW + timedelta(minutes=11),
+                run_id=rid,
             )
         assert exc.value.code == "approval-expired"
 
@@ -406,6 +413,7 @@ class TestAngriffCToctou:
                 spec=CALENDAR_CREATE,
                 taint=TaintLevel.TAINTED,
                 now=NOW + timedelta(seconds=1),
+                run_id=rid,
             )
         assert exc.value.code == "policy-changed"
 
@@ -809,3 +817,81 @@ class TestGateOhneBestaetigung:
         result = await registry.execute(grant, run_id=rid_a, user_id=uid)
         assert result.ok
         assert len(called) == 1
+
+
+class TestLaufbindungDerBestaetigung:
+    """In welchem Lauf darf eine Bestätigung eingelöst werden?
+
+    Der Fall fiel beim Durchstichtest auf: ``authorize_execution`` band den
+    Grant an den *bestätigenden* Lauf und prüfte nie, in welchem Lauf
+    tatsächlich ausgeführt wird. Damit war eine Bestätigung aus Lauf A in jedem
+    beliebigen Lauf einlösbar — der Nutzer hätte dann etwas anderes freigegeben,
+    als geschieht.
+    """
+
+    @pytest.mark.invariant("grant-bound-to-run")
+    async def test_fremder_lauf_kann_die_bestaetigung_nicht_einloesen(
+        self, conn: AsyncConnection
+    ) -> None:
+        uid, rid = await _seed(conn)
+        sid = uuid.uuid4()
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+
+        action = await _request(gw, uid, rid, sid)
+        await gw.respond(
+            action_id=action.id,
+            nonce=action.nonce,
+            approve=True,
+            user_id=uid,
+            session_id=sid,
+            channel="ui",
+            now=NOW,
+        )
+
+        with pytest.raises(ExecutionDenied) as denied:
+            await gw.authorize_execution(
+                action_id=action.id,
+                arguments=ARGS,
+                spec=CALENDAR_CREATE,
+                taint=TaintLevel.CLEAN,
+                run_id=uuid.uuid4(),  # irgendein anderer Lauf
+                now=NOW + timedelta(seconds=5),
+            )
+        assert denied.value.code == "run-mismatch"
+
+    @pytest.mark.invariant("taint-cross-run-isolation")
+    async def test_sanierter_lauf_darf_einloesen(self, conn: AsyncConnection) -> None:
+        """Die eine zulässige Ausnahme: Der sanierte Lauf ist ein anderer Lauf,
+        aber der aus dieser Bestätigung hervorgegangene. Ohne diese Ausnahme
+        wäre das Sanitization-Gate nicht ausführbar — und ein Schutz, der den
+        Normalfall blockiert, wird abgeschaltet."""
+        uid, rid = await _seed(conn)
+        sid = uuid.uuid4()
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+
+        action = await _request(gw, uid, rid, sid)
+        await gw.respond(
+            action_id=action.id,
+            nonce=action.nonce,
+            approve=True,
+            user_id=uid,
+            session_id=sid,
+            channel="ui",
+            now=NOW,
+        )
+
+        sanierter_lauf = uuid.uuid4()
+        grant = await gw.authorize_execution(
+            action_id=action.id,
+            arguments=ARGS,
+            spec=CALENDAR_CREATE,
+            taint=TaintLevel.CLEAN,
+            run_id=sanierter_lauf,
+            sanitized_from_run_id=rid,
+            now=NOW + timedelta(seconds=5),
+        )
+        assert grant.run_id == sanierter_lauf, "Der Grant gilt dort, wo ausgeführt wird"

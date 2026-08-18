@@ -324,12 +324,22 @@ class ApprovalGateway:
         arguments: dict[str, Any],
         spec: ToolSpec,
         taint: TaintLevel,
+        run_id: UUID,
+        sanitized_from_run_id: UUID | None = None,
         allowed_data_class: Any = None,
         now: datetime,
     ) -> ExecutionGrant:
         """Letzte Prüfung unmittelbar vor dem Werkzeugaufruf.
 
-        Zwei Prüfungen, die beide nötig sind:
+        ``run_id`` ist der Lauf, in dem tatsächlich ausgeführt wird — nicht
+        zwingend der, in dem bestätigt wurde. Beide auseinanderzuhalten ist
+        nötig, weil die Sanierung den bestätigten Payload absichtlich in einem
+        *neuen*, sauberen Lauf ausführt. Genau deshalb muss die Beziehung
+        geprüft werden: Ohne sie wäre eine Bestätigung aus Lauf A in jedem
+        beliebigen Lauf einlösbar, und die Laufbindung des Grants hinge an
+        einer Angabe, die niemand kontrolliert.
+
+        Drei Prüfungen, die alle nötig sind:
 
         1. **Hash-Vergleich.** Der Hash der tatsächlich auszuführenden
            Argumente muss dem entsprechen, der bei der Anfrage festgehalten
@@ -356,6 +366,16 @@ class ApprovalGateway:
             raise ExecutionDenied(
                 "Die Bestätigung ist zwischen Freigabe und Ausführung abgelaufen.",
                 code="approval-expired",
+            )
+
+        # (0) Laufbindung. Zulässig sind genau zwei Fälle: der Lauf, in dem
+        # bestätigt wurde, und der daraus hervorgegangene sanierte Lauf. Alles
+        # andere wäre eine Bestätigung, die in einem fremden Zusammenhang
+        # wirkt — der Nutzer hat dann etwas anderes freigegeben, als geschieht.
+        if run_id != action.run_id and sanitized_from_run_id != action.run_id:
+            raise ExecutionDenied(
+                "Die Bestätigung gehört zu einem anderen Lauf.",
+                code="run-mismatch",
             )
 
         # (1) Hash-Vergleich
@@ -394,7 +414,10 @@ class ApprovalGateway:
             tool_name=spec.name,
             arguments=arguments,
             verified_hash=actual,
-            run_id=action.run_id,
+            # Der *ausführende* Lauf, nicht der bestätigende: Beim sanierten
+            # Lauf sind das verschiedene, und die Registry vergleicht gegen den
+            # Kontext, in dem tatsächlich gearbeitet wird.
+            run_id=run_id,
             user_id=action.user_id,
             invocation_id=action.invocation_id,
             granted_at=now,

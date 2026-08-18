@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict
 from jarvis_contracts import (
     ApprovalChannel,
     DataClass,
+    InvocationStatus,
     PendingAction,
     PolicyDecision,
     PolicyEffect,
@@ -43,6 +44,7 @@ from jarvis_contracts import (
     SanitizedPayload,
     StepOutcome,
     TaintLevel,
+    ToolInvocation,
     ToolResult,
     ToolSpec,
     escalate,
@@ -51,6 +53,7 @@ from jarvis_core.audit.chain import AuditEntry, AuditSink
 from jarvis_core.orchestrator.budget import BudgetTracker, utc_now
 from jarvis_core.policy.approval import ApprovalGateway, ExecutionDenied, ExecutionGrant
 from jarvis_core.policy.engine import PolicyEngine
+from jarvis_core.ports.invocations import InvocationStore
 from jarvis_core.runs.fsm import assert_transition
 from jarvis_core.tools.registry import ToolRegistry
 
@@ -100,12 +103,14 @@ class ToolExecutor:
         policy: PolicyEngine,
         gateway: ApprovalGateway,
         audit: AuditSink | None = None,
+        invocations: InvocationStore | None = None,
         clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._registry = registry
         self._policy = policy
         self._gateway = gateway
         self._audit = audit
+        self._invocations = invocations
         self._clock = clock
 
     # -- Regulärer Schritt ------------------------------------------------
@@ -140,7 +145,14 @@ class ToolExecutor:
         )
         decision = await self._policy.decide(request, taint=run.taint_level, now=now)
 
+        # Der Aufruf wird festgehalten, sobald die Entscheidung feststeht — vor
+        # jeder Wirkung. Ein Aufruf, der erst nach seiner Ausführung
+        # protokolliert wird, fehlt genau dann, wenn er abgestürzt ist.
+        invocation_id = uuid4()
+        await self._record(run, spec, arguments, decision, invocation_id, now)
+
         if decision.effect is PolicyEffect.DENY:
+            await self._mark(invocation_id, InvocationStatus.BLOCKED, decision.reason)
             await self._log(run, "tool.denied", tool_name, {"reason": decision.reason}, now)
             return StepExecution(
                 status="blocked",
@@ -158,6 +170,7 @@ class ToolExecutor:
                 decision=decision,
                 session_id=session_id,
                 channel=channel,
+                invocation_id=invocation_id,
                 now=now,
             )
 
@@ -166,13 +179,14 @@ class ToolExecutor:
                 request=request,
                 spec=spec,
                 taint=run.taint_level,
-                invocation_id=uuid4(),
+                invocation_id=invocation_id,
                 now=now,
             )
         except ExecutionDenied as denied:
             # Zwischen der ersten Prüfung und dem Gate hat sich die Lage
             # geändert. Der Rückgabewert sagt „blockiert“ — ausgeführt wurde
             # nichts, und es gibt in dieser Methode keinen Weg, das nachzuholen.
+            await self._mark(invocation_id, InvocationStatus.BLOCKED, denied.reason)
             await self._log(run, "tool.gate_denied", tool_name, {"code": denied.code}, now)
             return StepExecution(
                 status="blocked",
@@ -183,7 +197,14 @@ class ToolExecutor:
             )
 
         return await self._run_grant(
-            run, tracker, spec=spec, grant=grant, seq=seq, decision=decision, now=now
+            run,
+            tracker,
+            spec=spec,
+            grant=grant,
+            seq=seq,
+            decision=decision,
+            invocation_id=invocation_id,
+            now=now,
         )
 
     # -- Fortsetzung nach Bestätigung -------------------------------------
@@ -222,6 +243,8 @@ class ToolExecutor:
                 arguments=arguments,
                 spec=spec,
                 taint=run.taint_level,
+                run_id=run.id,
+                sanitized_from_run_id=run.sanitized_from_run_id,
                 allowed_data_class=_ceiling(run),
                 now=now,
             )
@@ -234,12 +257,29 @@ class ToolExecutor:
                 code=denied.code,
             )
 
-        executing = self._advance(run, RunStatus.EXECUTING, tracker)
+        # Zwei Fälle laufen hier zusammen, und nur einer davon wartet:
+        # Der pausierte Lauf steht auf ``awaiting_confirmation`` und wird
+        # fortgesetzt; der sanierte Lauf ist ein neuer Lauf, der bereits
+        # ausführt und nie gewartet hat. Ein unbedingter Übergang wäre für ihn
+        # ``executing → executing`` — und der Zustandsautomat würde ihn
+        # zurecht als Programmierfehler melden.
+        executing = (
+            run
+            if run.status is RunStatus.EXECUTING
+            else self._advance(run, RunStatus.EXECUTING, tracker)
+        )
         cleared = executing.model_copy(
             update={"state": executing.state.model_copy(update={"awaiting_action_id": None})}
         )
         return await self._run_grant(
-            cleared, tracker, spec=spec, grant=grant, seq=seq, decision=None, now=now
+            cleared,
+            tracker,
+            spec=spec,
+            grant=grant,
+            seq=seq,
+            decision=None,
+            invocation_id=grant.invocation_id,
+            now=now,
         )
 
     # -- Sanierter Lauf ---------------------------------------------------
@@ -297,6 +337,7 @@ class ToolExecutor:
         decision: PolicyDecision,
         session_id: UUID,
         channel: ApprovalChannel,
+        invocation_id: UUID,
         now: datetime,
     ) -> StepExecution:
         if decision.preview is None:  # pragma: no cover - vom Vertrag ausgeschlossen
@@ -308,7 +349,7 @@ class ToolExecutor:
             preview=decision.preview,
             reason=decision.reason,
             run_id=run.id,
-            invocation_id=uuid4(),
+            invocation_id=invocation_id,
             user_id=run.user_id,
             session_id=session_id,
             channel=channel,
@@ -338,6 +379,7 @@ class ToolExecutor:
         grant: ExecutionGrant,
         seq: int,
         decision: PolicyDecision | None,
+        invocation_id: UUID | None = None,
         now: datetime,
     ) -> StepExecution:
         """Führt aus und schreibt die Folgen fort.
@@ -356,6 +398,7 @@ class ToolExecutor:
             # aber sein Fehler wird benannt und nicht in ein Ergebnis
             # umgedeutet (docs/04-orchestrator.md §9).
             tracker.record_step()
+            await self._mark(invocation_id, InvocationStatus.FAILED, str(error))
             await self._log(run, "tool.failed", spec.name, {"error": str(error)}, now)
             return StepExecution(
                 status="failed",
@@ -379,6 +422,11 @@ class ToolExecutor:
                 ),
                 "usage": tracker.usage,
             }
+        )
+        await self._mark(
+            invocation_id,
+            InvocationStatus.EXECUTED if result.ok else InvocationStatus.FAILED,
+            result.error,
         )
         await self._log(
             updated,
@@ -435,6 +483,43 @@ class ToolExecutor:
     @staticmethod
     def _with_usage(run: Run, tracker: BudgetTracker) -> Run:
         return run.model_copy(update={"usage": tracker.usage})
+
+    async def _record(
+        self,
+        run: Run,
+        spec: ToolSpec,
+        arguments: dict[str, Any],
+        decision: PolicyDecision,
+        invocation_id: UUID,
+        now: datetime,
+    ) -> None:
+        """Hält den Aufruf mitsamt Entscheidung fest.
+
+        Ohne Speicher passiert nichts — die Unit-Suite läuft ohne Datenbank.
+        In der Anwendung ist der Eintrag Voraussetzung für jede Bestätigung:
+        ``pending_actions.invocation_id`` verweist auf ihn.
+        """
+        if self._invocations is None:
+            return
+        await self._invocations.record(
+            ToolInvocation(
+                id=invocation_id,
+                run_id=run.id,
+                tool_name=spec.name,
+                arguments=arguments,
+                risk_level=spec.risk,
+                policy_decision=decision.effect,
+                decision_reason=decision.reason,
+                created_at=now,
+            )
+        )
+
+    async def _mark(
+        self, invocation_id: UUID | None, status: InvocationStatus, error: str | None = None
+    ) -> None:
+        if self._invocations is None or invocation_id is None:
+            return
+        await self._invocations.mark(invocation_id, status, error=error)
 
     async def _log(
         self,

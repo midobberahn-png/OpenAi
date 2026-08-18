@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 29/31**
+**Security Invariant Coverage: 31/31**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -40,18 +40,10 @@ nicht nachträglich passend machen.
 | `data-class-hard-filter` | Datenklassifikation ist ein hartes Filter | Ein Kontext, der eine Klasse nicht zulässt, führt kein Werkzeug dieser Klasse aus. | `core.policy.engine` |
 | `unattended-runs-are-stricter` | Unbeaufsichtigte Läufe sind strenger | Automationen bestätigen schreibende Aktionen, auch wenn das Recht erteilt ist. | `core.policy.engine` |
 | `orchestrator-consumes-decisions` | Der Orchestrator entscheidet nichts über Sicherheit | Der Orchestrator fragt die Policy Engine und das Ausführungs-Gate; er bildet keine eigene Meinung darüber, ob etwas erlaubt ist. | `core.orchestrator` |
+| `agent-chain-preserves-capability-binding` | Delegationsketten erweitern keine Rechte | Über beliebig viele Agentenstufen hinweg bleibt die Rechtemenge die Schnittmenge aller beteiligten Whitelists mit den Nutzerrechten. | `core.agents` |
+| `agent-chain-propagates-taint` | Kontamination wandert durch die ganze Kette | Liest ein Agent auf beliebiger Stufe Fremdinhalt, gilt der gesamte übergeordnete Lauf als kontaminiert. | `core.agents` |
 | `audit-append-only` | Das Audit-Log ist unveränderlich | UPDATE und DELETE werden auf Datenbankebene abgelehnt. | `db.audit_log` |
 | `audit-tamper-evident` | Manipulation ist erkennbar | Änderung, Löschung oder Umsortierung von Einträgen bricht die Hash-Kette. | `core.audit.chain` |
 | `audit-survives-erasure` | Löschpflicht und Kette schließen sich nicht aus | Die Pseudonymisierung eines Nutzers lässt die Hash-Kette unversehrt, weil user_id nicht gehasht wird. | `core.audit.chain` |
 | `layering-contracts-independent` | Verträge hängen von nichts ab | packages/contracts importiert nichts aus dem Projekt. | `repo` |
 | `layering-no-provider-sdk-in-core` | Kein Provider-SDK im Kern | Weder core noch contracts importieren Anbieter-SDKs oder Agenten-Frameworks. | `repo` |
-
-## Noch offen
-
-Ausdrücklich ausgewiesen, damit nicht der Eindruck entsteht, etwas sei
-abgesichert, bevor der Kontrollpunkt existiert.
-
-| Kennung | Invariante | Wird gebraucht, weil | Komponente |
-|---|---|---|---|
-| `agent-chain-preserves-capability-binding` | Delegationsketten erweitern keine Rechte | Die bisherige Prüfung deckt eine Stufe ab. Bei A → B → C darf C nicht die Fähigkeiten von B erben, nur weil B ihn aufgerufen hat — sonst ist die Kette der Umweg um jede Beschränkung. | `core.agents` |
-| `agent-chain-propagates-taint` | Kontamination wandert durch die ganze Kette | Andernfalls genügte eine Zwischenstufe als Waschmaschine: Agent B liest die Mail, meldet ein „sauberes“ Ergebnis nach oben, und A sendet. | `core.agents` |
