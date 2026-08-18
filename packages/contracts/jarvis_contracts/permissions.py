@@ -384,6 +384,11 @@ class PolicyRequest(BaseModel):
     """Automatisierte Auslöser werden strenger behandelt — es ist niemand da,
     der bestätigen könnte."""
 
+    @property
+    def trigger_is_supervised(self) -> bool:
+        """Ist ein Mensch anwesend, der eine Aktion beaufsichtigen könnte?"""
+        return self.trigger == "user"
+
     allowed_data_class: DataClass = DataClass.P3
     """Höchste Klasse, die in diesem Kontext verarbeitet werden darf."""
 

@@ -2238,6 +2238,11 @@
               "default": null,
               "title": "Email Id"
             },
+            "from_tainted_run": {
+              "default": false,
+              "title": "From Tainted Run",
+              "type": "boolean"
+            },
             "message_id": {
               "anyOf": [
                 {
@@ -2535,6 +2540,11 @@
               "default": null,
               "title": "Email Id"
             },
+            "from_tainted_run": {
+              "default": false,
+              "title": "From Tainted Run",
+              "type": "boolean"
+            },
             "message_id": {
               "anyOf": [
                 {
@@ -2816,6 +2826,11 @@
               ],
               "default": null,
               "title": "Email Id"
+            },
+            "from_tainted_run": {
+              "default": false,
+              "title": "From Tainted Run",
+              "type": "boolean"
             },
             "message_id": {
               "anyOf": [
@@ -3948,6 +3963,11 @@
           ],
           "default": null,
           "title": "Email Id"
+        },
+        "from_tainted_run": {
+          "default": false,
+          "title": "From Tainted Run",
+          "type": "boolean"
         },
         "message_id": {
           "anyOf": [
@@ -7047,6 +7067,13 @@
           "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
           "title": "Name",
           "type": "string"
+        },
+        "outbound_fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Outbound Fields",
+          "type": "array"
         },
         "parameters": {
           "additionalProperties": true,

@@ -142,6 +142,23 @@ class ToolSpec(BaseModel):
 
     Standard ist ``FREEFORM`` — die sichere Annahme. Werkzeuge müssen sich
     ausdrücklich als vollständig prüfbar erklären, nicht umgekehrt.
+
+    Achtung: Dies ist die *statische* Einstufung. Die tatsächlich gültige
+    ergibt sich aus ``effective_inspectability()`` und kann je Aufruf strenger
+    ausfallen — siehe ``outbound_fields``.
+    """
+
+    outbound_fields: list[str] = Field(default_factory=list)
+    """Felder, deren Befüllung eine Nachricht an Dritte auslöst.
+
+    Hintergrund: Ein Kalendereintrag *ohne* Teilnehmer ist eine private Notiz
+    und vollständig prüfbar. Derselbe Eintrag *mit* Teilnehmern verschickt
+    Einladungen — das ist Außenwirkung, unabhängig davon, wie strukturiert der
+    Payload aussieht. Eine Einstufung allein auf Werkzeugebene wäre hier zu
+    grob und würde genau den Angriff durchlassen, bei dem eine präparierte
+    Mail einen zusätzlichen Teilnehmer einschmuggelt.
+
+    Beispiel: ``calendar.create`` → ``["attendees"]``.
     """
 
     plugin: str | None = None
@@ -176,7 +193,29 @@ class ToolSpec(BaseModel):
             return True
         return self.risk > SAFE_WHEN_TAINTED_MAX_RISK
 
-    def taint_gate(self, *, tainted: bool) -> TaintGateOutcome:
+    def effective_inspectability(
+        self, arguments: dict[str, Any] | None = None
+    ) -> PayloadInspectability:
+        """Prüfbarkeit für *diesen konkreten* Aufruf.
+
+        Ohne Argumente wird die statische Einstufung zurückgegeben. Sind
+        Argumente vorhanden und ist mindestens ein ``outbound_fields``-Feld
+        belegt, gilt der Aufruf als ``FREEFORM`` — er wirkt nach außen.
+        """
+        if self.payload_inspectability is not PayloadInspectability.STRUCTURED:
+            return self.payload_inspectability
+        if arguments is None:
+            return self.payload_inspectability
+
+        for field in self.outbound_fields:
+            value = arguments.get(field)
+            if value:  # nicht None, nicht leere Liste, nicht leerer String
+                return PayloadInspectability.FREEFORM
+        return PayloadInspectability.STRUCTURED
+
+    def taint_gate(
+        self, *, tainted: bool, arguments: dict[str, Any] | None = None
+    ) -> TaintGateOutcome:
         """Entscheidet über die Behandlung in einem kontaminierten Lauf.
 
         Siehe docs/16-v1.1-review.md §1. Diese Methode löst den Widerspruch
@@ -196,7 +235,9 @@ class ToolSpec(BaseModel):
         if self.risk is RiskLevel.CRITICAL:
             return TaintGateOutcome.BLOCKED
 
-        if self.payload_inspectability.clearable_by_confirmation:
+        # Bewusst die *effektive* Einstufung: Ein Kalendereintrag mit
+        # eingeschmuggeltem Teilnehmer ist keine private Notiz mehr.
+        if self.effective_inspectability(arguments).clearable_by_confirmation:
             return TaintGateOutcome.SANITIZABLE
 
         return TaintGateOutcome.BLOCKED

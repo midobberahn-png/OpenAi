@@ -88,6 +88,16 @@ class Provenance(BaseModel):
     run_id: UUID | None = None
     note: str | None = None
 
+    from_tainted_run: bool = False
+    """Der Ursprungslauf hatte Fremdinhalt verarbeitet.
+
+    Ohne dieses Feld wäre das Gedächtnis ein zeitversetzter Injection-Kanal:
+    Ein kontaminierter Lauf schreibt einen „Fakt", der Wochen später einen
+    sauberen Lauf beeinflusst — vorbei an jeder Taint-Sperre, weil die nur für
+    die Dauer eines Laufs gilt. Solche Einträge werden nie automatisch
+    übernommen (siehe ``MemoryCandidate.auto_acceptable``).
+    """
+
     def describe(self) -> str:
         """Menschenlesbare Antwort auf 'woher weißt du das?'"""
         match self.source_type:
@@ -149,11 +159,19 @@ class MemoryCandidate(BaseModel):
 
     def auto_acceptable(self, *, threshold: float = 0.9) -> bool:
         """Automatisch übernommen werden nur ausdrückliche Aussagen mit hoher
-        Konfidenz und ohne Widerspruch."""
+        Konfidenz, ohne Widerspruch — und nicht aus kontaminierten Läufen.
+
+        Die letzte Bedingung schließt den zeitversetzten Injection-Kanal: Eine
+        präparierte Mail könnte sonst einen „Fakt" ins Langzeitgedächtnis
+        schreiben, der spätere, saubere Läufe beeinflusst. Die Taint-Sperre
+        selbst greift dort nicht mehr, weil sie nur für die Dauer eines Laufs
+        gilt.
+        """
         return (
             self.provenance.source_type.auto_acceptable
             and self.confidence >= threshold
             and not self.conflicts_with
+            and not self.provenance.from_tainted_run
         )
 
 
