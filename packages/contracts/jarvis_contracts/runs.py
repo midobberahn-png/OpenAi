@@ -18,6 +18,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .classification import DataClass, TaintLevel
+from .run_state import RunState
 
 __all__ = [
     "BUDGET_PRESETS",
@@ -369,6 +370,9 @@ class Run(BaseModel):
     data_class: DataClass = DataClass.P1
     budget: RunBudget = Field(default_factory=RunBudget)
     usage: Usage = Field(default_factory=Usage)
+    state: RunState = Field(default_factory=RunState)
+    """Typisierter Zwischenzustand — Grundlage der Wiederaufnahme."""
+
     trace_id: str
     error: dict[str, str] | None = None
     started_at: datetime

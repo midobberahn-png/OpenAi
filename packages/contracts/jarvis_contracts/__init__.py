@@ -79,6 +79,7 @@ from .permissions import (
     ScopeSpec,
     TimeWindow,
 )
+from .run_state import Correction, RunState, StepOutcome
 from .runs import (
     BUDGET_PRESETS,
     Capability,
@@ -142,6 +143,9 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "InvocationStatus",
     "Source",
     # runs
+    "RunState",
+    "StepOutcome",
+    "Correction",
     "RunStatus",
     "RunTrigger",
     "Intent",

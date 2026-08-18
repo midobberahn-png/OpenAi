@@ -1,0 +1,1 @@
+"""Protokolle. Enthält keine Implementierungen."""

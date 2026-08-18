@@ -5,6 +5,7 @@ description = "Persönliches KI-Assistenzsystem"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "jarvis-contracts",
+    "jarvis-core",
 ]
 
 [dependency-groups]
@@ -27,6 +28,7 @@ members = ["packages/*", "apps/api"]
 
 [tool.uv.sources]
 jarvis-contracts = { workspace = true }
+jarvis-core = { workspace = true }
 
 
 # --------------------------------------------------------------------------
@@ -61,16 +63,25 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "TID251"]
+# Die Schichtgrenze unten (banned-api) wirkt in Ruff global. Gemeint ist aber
+# nur eine Richtung: aus `contracts` heraus darf nichts nach oben importiert
+# werden. Deshalb bleibt TID251 ausschließlich in packages/contracts aktiv;
+# überall sonst ist der Import der eigenen bzw. tieferen Schicht legitim.
+"packages/core/**" = ["TID251"]
+"apps/**" = ["TID251"]
+"scripts/**" = ["TID251"]
 # PgUUID hält den PostgreSQL-Typ vom gleichnamigen uuid.UUID auseinander;
 # die Umbenennung ist Absicht.
 "apps/api/jarvis_api/db/*.py" = ["N811"]
 "apps/api/jarvis_api/migrations/versions/*.py" = ["N811", "E501"]
 
-# Schichtgrenzen erzwingen (docs/02-repo-struktur.md §1):
-# contracts importiert nichts aus dem Projekt, core kennt keine Provider.
+# Schichtgrenze erzwingen (docs/02-repo-struktur.md §1). Wirksam nur in
+# packages/contracts — siehe per-file-ignores oben. Erlaubte Richtung:
+#   apps → core → contracts,  providers/integrations → core → contracts
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"jarvis_core".msg = "contracts darf nicht aus core importieren."
+"jarvis_core".msg = "contracts importiert nichts aus dem Projekt (Schichtgrenze)."
+"jarvis_api".msg = "contracts importiert nichts aus dem Projekt (Schichtgrenze)."
 "jarvis_providers".msg = "Nur über Ports in jarvis_core.ports zugreifen."
 "jarvis_integrations".msg = "Nur über Ports in jarvis_core.ports zugreifen."
 

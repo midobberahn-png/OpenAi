@@ -1455,6 +1455,35 @@
       "title": "CoreProfile",
       "type": "object"
     },
+    "Correction": {
+      "description": "Eine Nutzerkorrektur während des Laufs.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "invalidated_steps": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Invalidated Steps",
+          "type": "array"
+        },
+        "text": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "at"
+      ],
+      "title": "Correction",
+      "type": "object"
+    },
     "DomainPreference": {
       "$defs": {
         "PreferenceDomain": {
@@ -4201,6 +4230,35 @@
           "title": "Complexity",
           "type": "string"
         },
+        "Correction": {
+          "description": "Eine Nutzerkorrektur während des Laufs.",
+          "properties": {
+            "at": {
+              "format": "date-time",
+              "title": "At",
+              "type": "string"
+            },
+            "invalidated_steps": {
+              "items": {
+                "type": "integer"
+              },
+              "title": "Invalidated Steps",
+              "type": "array"
+            },
+            "text": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "at"
+          ],
+          "title": "Correction",
+          "type": "object"
+        },
         "DataClass": {
           "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
           "enum": [
@@ -4410,6 +4468,89 @@
           "title": "RunBudget",
           "type": "object"
         },
+        "RunState": {
+          "description": "Vollständiger Zwischenzustand eines Laufs.\n\nWird nach jedem Schritt persistiert. Aus dieser Struktur allein muss ein\nWorker-Neustart den Lauf fortsetzen können — sie darf keine Verweise auf\nObjekte im Speicher enthalten.",
+          "properties": {
+            "awaiting_action_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Awaiting Action Id"
+            },
+            "completed_steps": {
+              "items": {
+                "$ref": "#/$defs/StepOutcome"
+              },
+              "title": "Completed Steps",
+              "type": "array"
+            },
+            "corrections": {
+              "items": {
+                "$ref": "#/$defs/Correction"
+              },
+              "title": "Corrections",
+              "type": "array"
+            },
+            "current_step": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Current Step"
+            },
+            "interrupted_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Interrupted At"
+            },
+            "partial_output": {
+              "default": "",
+              "maxLength": 200000,
+              "title": "Partial Output",
+              "type": "string"
+            },
+            "replan_count": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Replan Count",
+              "type": "integer"
+            },
+            "sanitized_payload_hash": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sanitized Payload Hash"
+            }
+          },
+          "title": "RunState",
+          "type": "object"
+        },
         "RunStatus": {
           "enum": [
             "queued",
@@ -4435,6 +4576,38 @@
           ],
           "title": "RunTrigger",
           "type": "string"
+        },
+        "StepOutcome": {
+          "description": "Ergebnis eines abgeschlossenen Planschritts.\n\nBleibt bei einer Korrektur erhalten — genau das ist der Unterschied\nzwischen Korrektur und Abbruch (docs/16-v1.1-review.md §5).",
+          "properties": {
+            "finished_at": {
+              "format": "date-time",
+              "title": "Finished At",
+              "type": "string"
+            },
+            "ok": {
+              "title": "Ok",
+              "type": "boolean"
+            },
+            "seq": {
+              "minimum": 1,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "summary": {
+              "maxLength": 2000,
+              "title": "Summary",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "ok",
+            "summary",
+            "finished_at"
+          ],
+          "title": "StepOutcome",
+          "type": "object"
         },
         "TaintLevel": {
           "description": "Kontaminationszustand eines Laufs.\n\nSiehe docs/07-security-permissions.md §4. Der Zustand ist *monoton*:\neinmal ``TAINTED``, für den Lauf nicht mehr entfernbar.",
@@ -4668,6 +4841,9 @@
           "title": "Started At",
           "type": "string"
         },
+        "state": {
+          "$ref": "#/$defs/RunState"
+        },
         "status": {
           "$ref": "#/$defs/RunStatus",
           "default": "queued"
@@ -4752,6 +4928,152 @@
         }
       },
       "title": "RunBudget",
+      "type": "object"
+    },
+    "RunState": {
+      "$defs": {
+        "Correction": {
+          "description": "Eine Nutzerkorrektur während des Laufs.",
+          "properties": {
+            "at": {
+              "format": "date-time",
+              "title": "At",
+              "type": "string"
+            },
+            "invalidated_steps": {
+              "items": {
+                "type": "integer"
+              },
+              "title": "Invalidated Steps",
+              "type": "array"
+            },
+            "text": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "at"
+          ],
+          "title": "Correction",
+          "type": "object"
+        },
+        "StepOutcome": {
+          "description": "Ergebnis eines abgeschlossenen Planschritts.\n\nBleibt bei einer Korrektur erhalten — genau das ist der Unterschied\nzwischen Korrektur und Abbruch (docs/16-v1.1-review.md §5).",
+          "properties": {
+            "finished_at": {
+              "format": "date-time",
+              "title": "Finished At",
+              "type": "string"
+            },
+            "ok": {
+              "title": "Ok",
+              "type": "boolean"
+            },
+            "seq": {
+              "minimum": 1,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "summary": {
+              "maxLength": 2000,
+              "title": "Summary",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "ok",
+            "summary",
+            "finished_at"
+          ],
+          "title": "StepOutcome",
+          "type": "object"
+        }
+      },
+      "description": "Vollständiger Zwischenzustand eines Laufs.\n\nWird nach jedem Schritt persistiert. Aus dieser Struktur allein muss ein\nWorker-Neustart den Lauf fortsetzen können — sie darf keine Verweise auf\nObjekte im Speicher enthalten.",
+      "properties": {
+        "awaiting_action_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Awaiting Action Id"
+        },
+        "completed_steps": {
+          "items": {
+            "$ref": "#/$defs/StepOutcome"
+          },
+          "title": "Completed Steps",
+          "type": "array"
+        },
+        "corrections": {
+          "items": {
+            "$ref": "#/$defs/Correction"
+          },
+          "title": "Corrections",
+          "type": "array"
+        },
+        "current_step": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current Step"
+        },
+        "interrupted_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interrupted At"
+        },
+        "partial_output": {
+          "default": "",
+          "maxLength": 200000,
+          "title": "Partial Output",
+          "type": "string"
+        },
+        "replan_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Replan Count",
+          "type": "integer"
+        },
+        "sanitized_payload_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sanitized Payload Hash"
+        }
+      },
+      "title": "RunState",
       "type": "object"
     },
     "RunStep": {
@@ -6187,6 +6509,38 @@
         "ref"
       ],
       "title": "Source",
+      "type": "object"
+    },
+    "StepOutcome": {
+      "description": "Ergebnis eines abgeschlossenen Planschritts.\n\nBleibt bei einer Korrektur erhalten — genau das ist der Unterschied\nzwischen Korrektur und Abbruch (docs/16-v1.1-review.md §5).",
+      "properties": {
+        "finished_at": {
+          "format": "date-time",
+          "title": "Finished At",
+          "type": "string"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "summary": {
+          "maxLength": 2000,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "ok",
+        "summary",
+        "finished_at"
+      ],
+      "title": "StepOutcome",
       "type": "object"
     },
     "TimeWindow": {
