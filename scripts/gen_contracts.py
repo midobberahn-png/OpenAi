@@ -83,6 +83,15 @@ def generate_enums_ts() -> list[Path]:
         ("CoreState", jc.CoreState),
         ("MemoryKind", jc.MemoryKind),
         ("Intent", jc.Intent),
+        # V1.1
+        ("PayloadInspectability", jc.PayloadInspectability),
+        ("TaintGateOutcome", jc.TaintGateOutcome),
+        ("InterruptKind", jc.InterruptKind),
+        ("GoalHorizon", jc.GoalHorizon),
+        ("GoalStatus", jc.GoalStatus),
+        ("EntityKind", jc.EntityKind),
+        ("Proactivity", jc.Proactivity),
+        ("ResponseLength", jc.ResponseLength),
     ]
     for name, enum_cls in enums:
         values = " | ".join(f'"{m.value}"' for m in enum_cls)

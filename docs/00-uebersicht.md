@@ -198,23 +198,26 @@ sequenceDiagram
     CA-->>O: Vorschlag 14:00–15:00
 
     O->>P: Schritt 3 — calendar.create_event (Risiko: MEDIUM)
+    P->>P: taint_gate: Lauf tainted,<br/>Payload 'structured' → SANITIZABLE
     P-->>O: CONFIRM erforderlich
     O->>UI: pending_action + Preview (Titel, Zeit, Teilnehmer)
     UI->>U: "Ich würde 14:00–15:00 blocken. Soll ich?"
     U->>UI: "Ja"
     UI->>P: confirm(action_id, nonce)
-    P->>CA: ausführen
+    P->>P: SanitizedPayload einfrieren (Hash)<br/>NEUER Lauf: taint=clean, kein Kontext
+    P->>CA: genau diesen Payload ausführen
     CA-->>O: Termin erstellt
 
     O->>UI: Antwort streamen + state=SPEAKING
     O->>O: Audit-Log (hash-verkettet) + Episodic Memory
 ```
 
-Die drei architektonisch wichtigen Momente in diesem Ablauf:
+Die vier architektonisch wichtigen Momente in diesem Ablauf:
 
 - **Schritt 9/10:** Sobald Fremdinhalt gelesen wurde, verliert der Kontext seine Schreibrechte. Eine in der Mail versteckte Anweisung kann keinen Versand auslösen.
-- **Schritt 15:** Die Bestätigung zeigt den *tatsächlichen* Payload, nicht eine LLM-Zusammenfassung davon. Die UI rendert das validierte Argument-Objekt.
-- **Schritt 19:** Audit-Log und episodisches Gedächtnis sind zwei getrennte Schreibvorgänge mit unterschiedlicher Aufbewahrung — das Audit-Log ist unveränderlich, das Gedächtnis löschbar.
+- **Schritt 14 (V1.1):** Das **Taint-Sanitization-Gate** entscheidet, ob eine Bestätigung die Kontamination aufheben darf. Ein Kalendereintrag ist vollständig prüfbar — ein E-Mail-Body nicht. Deshalb wäre derselbe Ablauf mit `send_email` an dieser Stelle endgültig gesperrt (`07-security-permissions.md §4a`).
+- **Schritt 17:** Die Bestätigung zeigt den *tatsächlichen* Payload, nicht eine LLM-Zusammenfassung davon. Die UI rendert das validierte Argument-Objekt. Nach der Bestätigung wird der Payload eingefroren und in einem neuen, sauberen Lauf ohne Zugriff auf den kontaminierten Kontext ausgeführt.
+- **Schritt 21:** Audit-Log und episodisches Gedächtnis sind zwei getrennte Schreibvorgänge mit unterschiedlicher Aufbewahrung — das Audit-Log ist unveränderlich, das Gedächtnis löschbar.
 
 ---
 
@@ -271,3 +274,5 @@ Die Klassifikation wird an der Quelle vergeben (der Mail-Connector markiert alle
 | `13-deployment.md` | Dev/Prod-Topologie, Netzwerk, Backup, Monitoring |
 | `14-roadmap.md` | Phasen 1–8 mit Meilensteinen, Abnahmekriterien, Aufwandsschätzung |
 | `15-testing.md` | Test- und Evaluationsstrategie inkl. Router- und Agenten-Evals |
+| `16-v1.1-review.md` | **Architektur-Review V1.1** — Bewertung externer Reviews, übernommene und abgelehnte Punkte mit Begründung |
+| `17-identity-goals.md` | **Identity & Preference Engine**, Ziele, Projekte, Entitätenschicht |

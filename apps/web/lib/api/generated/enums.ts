@@ -25,6 +25,30 @@ export const MemoryKindValues = ["semantic_fact", "preference", "episodic", "ent
 export type Intent = "chat" | "question" | "task" | "command" | "research" | "creative" | "code" | "clarification";
 export const IntentValues = ["chat", "question", "task", "command", "research", "creative", "code", "clarification"] as const;
 
+export type PayloadInspectability = "structured" | "freeform" | "opaque";
+export const PayloadInspectabilityValues = ["structured", "freeform", "opaque"] as const;
+
+export type TaintGateOutcome = "permitted" | "sanitizable" | "blocked";
+export const TaintGateOutcomeValues = ["permitted", "sanitizable", "blocked"] as const;
+
+export type InterruptKind = "cancel" | "pause" | "resume" | "correct";
+export const InterruptKindValues = ["cancel", "pause", "resume", "correct"] as const;
+
+export type GoalHorizon = "tag" | "woche" | "monat" | "quartal" | "jahr" | "offen";
+export const GoalHorizonValues = ["tag", "woche", "monat", "quartal", "jahr", "offen"] as const;
+
+export type GoalStatus = "aktiv" | "pausiert" | "erreicht" | "verworfen";
+export const GoalStatusValues = ["aktiv", "pausiert", "erreicht", "verworfen"] as const;
+
+export type EntityKind = "person" | "organisation" | "projekt" | "ort" | "goal" | "thema";
+export const EntityKindValues = ["person", "organisation", "projekt", "ort", "goal", "thema"] as const;
+
+export type Proactivity = "aus" | "dezent" | "normal" | "aktiv";
+export const ProactivityValues = ["aus", "dezent", "normal", "aktiv"] as const;
+
+export type ResponseLength = "knapp" | "normal" | "ausführlich";
+export const ResponseLengthValues = ["knapp", "normal", "ausführlich"] as const;
+
 export const dataClassLevel: Record<DataClass, number> = {
   "P0": 0,
   "P1": 1,

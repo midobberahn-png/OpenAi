@@ -165,6 +165,56 @@ flowchart TB
 
 ---
 
+## 4a. Taint-Sanitization-Gate (V1.1)
+
+**Der Befund.** In der Erstfassung sperrte die Regel aus §4 den häufigsten
+Alltagsablauf überhaupt: *„Prüfe meine Mails und plane mir Zeit für das
+wichtigste Thema ein."* Nach dem Lesen ist der Lauf kontaminiert, und
+`calendar.create` wäre dauerhaft blockiert — obwohl das Ablaufdiagramm in
+`00-uebersicht.md §6` diesen Fall als erfolgreich zeigte. Beides zugleich kann
+nicht stimmen.
+
+Ein Sicherheitsmechanismus, der den Normalfall blockiert, wird abgeschaltet.
+Dann ist er wirkungslos. Das ist kein Randfall, sondern ein Konstruktionsfehler.
+
+**Die Auflösung.** Kontamination lässt sich aufheben — aber nur dort, wo die
+Bestätigung eine *echte* Prüfung ist. Das setzt voraus, dass der Mensch den
+Payload vollständig erfassen kann:
+
+| Payload-Klasse | Beispiel | Sanierung |
+|---|---|---|
+| `structured` — kurze, typisierte Felder | `calendar.create`, `tasks.create` | ✅ nach Bestätigung |
+| `freeform` — Freitext mit Außenwirkung | `send_email`, `chat.send` | ❌ nie |
+| `opaque` — nicht darstellbar | `shell.exec` | ❌ nie |
+| beliebig, aber `CRITICAL` | `files.delete` | ❌ nie |
+
+Ein Kalendereintrag ist in zwei Sekunden vollständig erfasst. Ein E-Mail-Body
+mit 2.000 Wörtern nicht: Eine um eine Ziffer veränderte IBAN oder eine
+ausgetauschte URL im Fließtext übersieht auch ein aufmerksamer Leser — genau
+darauf zielen reale Angriffe. Dort bleibt es bei der Sperre; der Nutzer kann
+die Aktion selbst formulieren, dann entsteht von Anfang an ein sauberer Lauf.
+
+**Vier Invarianten des sanierten Laufs** — ohne sie wäre das Gate eine
+Umgehung des Schutzes statt seiner Ergänzung:
+
+1. **Payload eingefroren.** Was bestätigt wurde, wird byte-identisch
+   ausgeführt. `SanitizedPayload` ist unveränderlich und trägt einen
+   SHA-256-Hash, den der Executor vor der Ausführung erneut prüft.
+2. **Keine Kontextvererbung.** Der saubere Lauf sieht den Herkunftslauf nicht,
+   auch nicht dessen Zusammenfassung.
+3. **Genau ein Werkzeugaufruf.** Er plant nicht und delegiert nicht.
+4. **Im Audit verknüpft.** `runs.sanitized_from_run_id` erhält die
+   Nachvollziehbarkeit; ein Datenbank-CHECK erzwingt, dass ein sanierter Lauf
+   sauber startet.
+
+Die Entscheidung trifft `ToolSpec.taint_gate()`; die Klassifikation steht in
+`ToolSpec.payload_inspectability` und ist standardmäßig `freeform` — Werkzeuge
+müssen sich ausdrücklich als prüfbar erklären, nicht umgekehrt.
+
+Herleitung und verworfene Alternativen: `16-v1.1-review.md §1`.
+
+---
+
 ## 5. Bestätigungen
 
 ```python
@@ -248,9 +298,10 @@ Plugins sind die größte Angriffsfläche im Erweiterungspfad. Drei Stufen, in d
 
 | Stufe | Isolation | Für wen |
 |---|---|---|
-| **1 — MCP-Subprozess** | Eigener Prozess, Kommunikation nur über MCP-Protokoll, keine geteilten Objekte | Standard für Fremdplugins |
-| **2 — In-Process** | Direkter Import | Nur eigene, geprüfte Plugins |
-| **3 — Container** | Eigener Container, Netzwerkpolicy, ohne Dateisystemzugriff | Nicht vertrauenswürdige Plugins |
+| **1 — MCP-Subprozess** | Eigener Prozess, Kommunikation nur über MCP-Protokoll, keine geteilten Objekte | **Standard für alle Plugins** |
+| **2 — Container** | Eigener Container, Netzwerkpolicy, ohne Dateisystemzugriff | Nicht vertrauenswürdige Plugins |
+
+> **Änderung in V1.1:** Die frühere Stufe „In-Process" für eigene, geprüfte Plugins entfällt. Sie war eine pragmatische Ausnahme, die die strukturelle Zusicherung aufweichte — ein Fehler im eigenen Plugin hätte Zugriff auf den Speicher des Kernprozesses und damit auf entpackte Secrets bedeutet. Es gibt keinen Grund, diese Angriffsfläche für gesparte Millisekunden offenzuhalten.
 
 Ein Plugin erhält **nie** direkten Datenbank- oder Dateisystemzugriff. Es deklariert benötigte Scopes im Manifest; diese müssen einzeln freigegeben werden und laufen durch dieselbe Policy Engine wie eingebaute Tools. Plugin-Tools erben `forbidden_when_tainted` anhand ihrer Risikoklasse.
 

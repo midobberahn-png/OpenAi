@@ -374,6 +374,26 @@ class Run(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
 
+    sanitized_from_run_id: UUID | None = None
+    """Gesetzt, wenn dieser Lauf aus einem Taint-Sanitization-Gate hervorging.
+
+    Der Lauf ist ``clean``, führt genau einen bestätigten Werkzeugaufruf aus
+    und hat **keinen** Zugriff auf den Herkunftslauf — die Verknüpfung dient
+    ausschließlich der Nachvollziehbarkeit im Audit
+    (docs/16-v1.1-review.md §1).
+    """
+
+    @model_validator(mode="after")
+    def _sanitized_runs_are_clean(self) -> Run:
+        """Ein sanierter Lauf, der selbst kontaminiert startet, wäre sinnlos —
+        und ein stiller Weg, die Sperre zu umgehen."""
+        if self.sanitized_from_run_id is not None and self.taint_level is TaintLevel.TAINTED:
+            raise ValueError(
+                "Ein sanierter Lauf muss sauber starten; sonst hebt das Gate die "
+                "Sperre nicht auf, sondern umgeht sie."
+            )
+        return self
+
     def with_taint(self, level: TaintLevel) -> Run:
         """Kontamination ist monoton — sie kann nur hinzukommen, nie verschwinden."""
         return self.model_copy(update={"taint_level": self.taint_level.merge(level)})

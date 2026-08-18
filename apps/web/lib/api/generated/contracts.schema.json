@@ -634,6 +634,95 @@
       "title": "AmountConstraints",
       "type": "object"
     },
+    "BehaviourRule": {
+      "$defs": {
+        "PreferenceDomain": {
+          "enum": [
+            "mail",
+            "calendar",
+            "tasks",
+            "research",
+            "voice",
+            "models",
+            "smarthome"
+          ],
+          "title": "PreferenceDomain",
+          "type": "string"
+        },
+        "SourceType": {
+          "enum": [
+            "user_stated",
+            "inferred",
+            "imported",
+            "observed"
+          ],
+          "title": "SourceType",
+          "type": "string"
+        }
+      },
+      "description": "Do/Don't-Regel für Stil und Verhalten.\n\n**Steuert niemals Berechtigungen.** „Frag nicht jedes Mal nach\" ist eine\nStilregel und darf keine Policy-Entscheidung verändern; wer weniger\nBestätigungen will, ändert das im Permission Center — dort ist die Änderung\nsichtbar, auditiert und widerrufbar.\n\nOhne diese Trennung wäre eine per Prompt Injection eingeschleuste\n„Verhaltensregel\" ein Weg zur Rechteerweiterung.",
+      "properties": {
+        "domain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PreferenceDomain"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "do",
+            "dont"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "priority": {
+          "default": 3,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "rule": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Rule",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "kind",
+        "rule",
+        "source"
+      ],
+      "title": "BehaviourRule",
+      "type": "object"
+    },
     "ClientMessage": {
       "$defs": {
         "ActionRespond": {
@@ -826,6 +915,17 @@
           "title": "EdgeWake",
           "type": "object"
         },
+        "InterruptKind": {
+          "description": "Art einer Unterbrechung.\n\nV1.0 kannte nur Abbruch. Der Fall „Suche mir die besten Laptops unter\n2.000 —\" / „Nein, stopp. Ich meinte unter 1.000 Euro.\" ist aber keine\nUnterbrechung, sondern eine **Korrektur**: Ein Abbruch mit anschließendem\nNeustart verwirft alle Zwischenergebnisse und kostet die volle Latenz\nerneut (docs/16-v1.1-review.md §5).",
+          "enum": [
+            "cancel",
+            "pause",
+            "resume",
+            "correct"
+          ],
+          "title": "InterruptKind",
+          "type": "string"
+        },
         "MicState": {
           "enum": [
             "on",
@@ -849,6 +949,22 @@
         },
         "UserInterrupt": {
           "properties": {
+            "correction": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Correction"
+            },
+            "kind": {
+              "$ref": "#/$defs/InterruptKind",
+              "default": "cancel"
+            },
             "run_id": {
               "format": "uuid",
               "title": "Run Id",
@@ -1229,6 +1345,410 @@
       "title": "ContextRequest",
       "type": "object"
     },
+    "CoreProfile": {
+      "$defs": {
+        "Formality": {
+          "enum": [
+            "du",
+            "sie"
+          ],
+          "title": "Formality",
+          "type": "string"
+        },
+        "Proactivity": {
+          "description": "Wie oft darf JARVIS ungefragt sprechen?",
+          "enum": [
+            "aus",
+            "dezent",
+            "normal",
+            "aktiv"
+          ],
+          "title": "Proactivity",
+          "type": "string"
+        },
+        "ResponseLength": {
+          "enum": [
+            "knapp",
+            "normal",
+            "ausführlich"
+          ],
+          "title": "ResponseLength",
+          "type": "string"
+        },
+        "TimeWindow": {
+          "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+          "properties": {
+            "end": {
+              "format": "time",
+              "title": "End",
+              "type": "string"
+            },
+            "start": {
+              "format": "time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "TimeWindow",
+          "type": "object"
+        }
+      },
+      "description": "Bei jedem Turn im Prompt. Klein gehalten, weil es überall mitfährt.",
+      "properties": {
+        "address_as": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Address As",
+          "type": "string"
+        },
+        "formality": {
+          "$ref": "#/$defs/Formality",
+          "default": "du"
+        },
+        "hard_rules": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Hard Rules",
+          "type": "array"
+        },
+        "language": {
+          "default": "de",
+          "maxLength": 10,
+          "minLength": 2,
+          "title": "Language",
+          "type": "string"
+        },
+        "proactivity": {
+          "$ref": "#/$defs/Proactivity",
+          "default": "dezent"
+        },
+        "response_length": {
+          "$ref": "#/$defs/ResponseLength",
+          "default": "normal"
+        },
+        "timezone": {
+          "default": "Europe/Berlin",
+          "title": "Timezone",
+          "type": "string"
+        },
+        "working_hours": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "address_as"
+      ],
+      "title": "CoreProfile",
+      "type": "object"
+    },
+    "DomainPreference": {
+      "$defs": {
+        "PreferenceDomain": {
+          "enum": [
+            "mail",
+            "calendar",
+            "tasks",
+            "research",
+            "voice",
+            "models",
+            "smarthome"
+          ],
+          "title": "PreferenceDomain",
+          "type": "string"
+        },
+        "SourceType": {
+          "enum": [
+            "user_stated",
+            "inferred",
+            "imported",
+            "observed"
+          ],
+          "title": "SourceType",
+          "type": "string"
+        }
+      },
+      "description": "Domänenspezifische Präferenz — nur geladen, wenn die Domäne im Spiel ist.",
+      "properties": {
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "domain": {
+          "$ref": "#/$defs/PreferenceDomain"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "key": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "domain",
+        "key",
+        "value",
+        "source",
+        "updated_at"
+      ],
+      "title": "DomainPreference",
+      "type": "object"
+    },
+    "Entity": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "EntityKind": {
+          "enum": [
+            "person",
+            "organisation",
+            "projekt",
+            "ort",
+            "goal",
+            "thema"
+          ],
+          "title": "EntityKind",
+          "type": "string"
+        }
+      },
+      "description": "Eine benannte Sache, auf die sich Gespräche und Objekte beziehen.",
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Aliases",
+          "type": "array"
+        },
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "canonical_name": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Canonical Name",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P2"
+        },
+        "gender": {
+          "default": "unknown",
+          "enum": [
+            "m",
+            "f",
+            "n",
+            "unknown"
+          ],
+          "title": "Gender",
+          "type": "string"
+        },
+        "goal_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Goal Id"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EntityKind"
+        },
+        "last_mentioned_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Mentioned At"
+        },
+        "mention_count": {
+          "default": 0,
+          "title": "Mention Count",
+          "type": "integer"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "kind",
+        "canonical_name",
+        "created_at"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "EntityLink": {
+      "description": "Verknüpfung einer Entität mit einem beliebigen Objekt.\n\nErsetzt den vorgeschlagenen Knowledge Graph: „Was habe ich letzte Woche mit\nThomas besprochen?\" ist ein Join über ``entity_id`` plus Zeitfilter, kein\nÄhnlichkeitsproblem (docs/16-v1.1-review.md §3+4).",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "entity_id": {
+          "format": "uuid",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "maxLength": 60,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "target_id": {
+          "format": "uuid",
+          "title": "Target Id",
+          "type": "string"
+        },
+        "target_kind": {
+          "enum": [
+            "memory",
+            "document",
+            "task",
+            "goal",
+            "message",
+            "event"
+          ],
+          "title": "Target Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "target_kind",
+        "target_id",
+        "created_at"
+      ],
+      "title": "EntityLink",
+      "type": "object"
+    },
+    "EntityRelation": {
+      "description": "Beziehung zwischen zwei Entitäten.\n\nBewusst schlicht gehalten: gerichtete Kante mit Typ. Reicht für „Thomas\narbeitet an Projekt X\" und „Projekt X gehört zu Ziel Y\", ohne eine zweite\nAbfragesprache einzuführen.",
+      "properties": {
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "from_entity_id": {
+          "format": "uuid",
+          "title": "From Entity Id",
+          "type": "string"
+        },
+        "relation": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Relation",
+          "type": "string"
+        },
+        "to_entity_id": {
+          "format": "uuid",
+          "title": "To Entity Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_entity_id",
+        "to_entity_id",
+        "relation",
+        "created_at"
+      ],
+      "title": "EntityRelation",
+      "type": "object"
+    },
     "FilesConstraints": {
       "$defs": {
         "TimeWindow": {
@@ -1294,6 +1814,231 @@
         "allowed_roots"
       ],
       "title": "FilesConstraints",
+      "type": "object"
+    },
+    "Goal": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "GoalHorizon": {
+          "enum": [
+            "tag",
+            "woche",
+            "monat",
+            "quartal",
+            "jahr",
+            "offen"
+          ],
+          "title": "GoalHorizon",
+          "type": "string"
+        },
+        "GoalStatus": {
+          "enum": [
+            "aktiv",
+            "pausiert",
+            "erreicht",
+            "verworfen"
+          ],
+          "title": "GoalStatus",
+          "type": "string"
+        }
+      },
+      "description": "Ein Ziel, Projekt oder Meilenstein.\n\nBewusst kein Memory-Eintrag: Ein Ziel hat einen Zustand, einen Horizont,\nFortschritt und Randbedingungen — und andere Objekte verweisen darauf.\nEin Retrieval-Treffer beantwortet „Wie weit bin ich?\" nicht.\n\nProjekte sind Ziele mit ``horizon <= quartal``, Meilensteine solche mit\n``parent_id``. Eine eigene Tabelle je Ebene brächte keinen Gewinn.",
+      "properties": {
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "constraints": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Constraints",
+          "type": "array"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P2"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 4000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "horizon": {
+          "$ref": "#/$defs/GoalHorizon",
+          "default": "offen"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "priority": {
+          "default": 3,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "progress_note": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Progress Note"
+        },
+        "status": {
+          "$ref": "#/$defs/GoalStatus",
+          "default": "aktiv"
+        },
+        "target_date": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Date"
+        },
+        "title": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "title",
+        "created_at",
+        "updated_at"
+      ],
+      "title": "Goal",
+      "type": "object"
+    },
+    "GoalProgress": {
+      "description": "Belegter Fortschritt eines Ziels.\n\nJARVIS leitet Fortschritt **nicht** aus Gesprächsverläufen ab, sondern\nausschließlich aus verknüpften Objekten: erledigte Aufgaben, gehaltene\nTermine, erstellte Dokumente. Was sich nicht belegen lässt, wird als offen\nausgewiesen — ein Assistent, der Fortschritt erfindet, ist schlimmer als\neiner, der keinen ausweist.",
+      "properties": {
+        "goal_id": {
+          "format": "uuid",
+          "title": "Goal Id",
+          "type": "string"
+        },
+        "last_activity_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Activity At"
+        },
+        "linked_documents": {
+          "default": 0,
+          "title": "Linked Documents",
+          "type": "integer"
+        },
+        "linked_events": {
+          "default": 0,
+          "title": "Linked Events",
+          "type": "integer"
+        },
+        "sub_goals_reached": {
+          "default": 0,
+          "title": "Sub Goals Reached",
+          "type": "integer"
+        },
+        "sub_goals_total": {
+          "default": 0,
+          "title": "Sub Goals Total",
+          "type": "integer"
+        },
+        "tasks_done": {
+          "default": 0,
+          "title": "Tasks Done",
+          "type": "integer"
+        },
+        "tasks_open": {
+          "default": 0,
+          "title": "Tasks Open",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "goal_id"
+      ],
+      "title": "GoalProgress",
       "type": "object"
     },
     "HealthEntry": {
@@ -3905,6 +4650,19 @@
           ],
           "default": null
         },
+        "sanitized_from_run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sanitized From Run Id"
+        },
         "started_at": {
           "format": "date-time",
           "title": "Started At",
@@ -4222,6 +4980,51 @@
         "mentioned_at"
       ],
       "title": "SalientEntity",
+      "type": "object"
+    },
+    "SanitizedPayload": {
+      "description": "Ein vom Nutzer bestätigter, eingefrorener Werkzeug-Payload.\n\nGrundlage des sanierten Laufs (docs/16-v1.1-review.md §1). Vier\nInvarianten machen das Gate zur Ergänzung des Taint-Schutzes statt zu\nseiner Umgehung:\n\n1. **Eingefroren** — ``frozen=True``; was bestätigt wurde, wird ausgeführt.\n2. **Keine Kontextvererbung** — der saubere Lauf sieht den Herkunftslauf\n   nicht, auch nicht dessen Zusammenfassung.\n3. **Genau ein Aufruf** — der sanierte Lauf plant nicht und delegiert nicht.\n4. **Verknüpft im Audit** — ``origin_run_id`` erhält die Nachvollziehbarkeit.",
+      "properties": {
+        "approved_at": {
+          "format": "date-time",
+          "title": "Approved At",
+          "type": "string"
+        },
+        "approved_by": {
+          "format": "uuid",
+          "title": "Approved By",
+          "type": "string"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "origin_run_id": {
+          "format": "uuid",
+          "title": "Origin Run Id",
+          "type": "string"
+        },
+        "payload_hash": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Payload Hash",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "arguments",
+        "origin_run_id",
+        "approved_at",
+        "approved_by",
+        "payload_hash"
+      ],
+      "title": "SanitizedPayload",
       "type": "object"
     },
     "ScopeConstraints": {
@@ -5841,6 +6644,16 @@
           "title": "DataClass",
           "type": "string"
         },
+        "PayloadInspectability": {
+          "description": "Kann ein Mensch diesen Payload vollständig prüfen?\n\nEntscheidet, ob eine Bestätigung Kontamination aufheben darf\n(docs/16-v1.1-review.md §1). Eine Bestätigung ist nur dann eine echte\nSicherheitsprüfung, wenn der Mensch tatsächlich sieht, was er freigibt.",
+          "enum": [
+            "structured",
+            "freeform",
+            "opaque"
+          ],
+          "title": "PayloadInspectability",
+          "type": "string"
+        },
         "RiskLevel": {
           "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
           "enum": [
@@ -5885,6 +6698,10 @@
           "additionalProperties": true,
           "title": "Parameters",
           "type": "object"
+        },
+        "payload_inspectability": {
+          "$ref": "#/$defs/PayloadInspectability",
+          "default": "freeform"
         },
         "plugin": {
           "anyOf": [

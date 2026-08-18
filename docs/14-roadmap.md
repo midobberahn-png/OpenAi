@@ -1,4 +1,4 @@
-# Entwicklungsplan: MVP bis vollständiges System
+# Entwicklungsplan: MVP bis zur ersten vollständigen Plattformversion
 
 Aufwandsangaben in **Wochen für eine erfahrene Person in Vollzeit**. Bei Teilzeit entsprechend skalieren. Die Schätzungen sind ehrlich gemeint, nicht optimistisch — Integrationen mit OAuth und Fremdsystemen kosten regelmäßig mehr Zeit als erwartet.
 
@@ -24,6 +24,8 @@ gantt
 ```
 
 **Nach Phase 4 (≈19 Wochen) ist das System täglich nutzbar.** Alles danach erhöht Komfort und Reichweite, nicht die Grundtauglichkeit.
+
+**Zur Formulierung „nach 36 Wochen fertig":** Die gibt es nicht. Phase 8 markiert die **erste vollständige Plattformversion** — den Punkt, ab dem alle Architekturbausteine stehen und neue Fähigkeiten additiv hinzukommen, ohne Umbau. Ein System dieser Art ist danach nicht abgeschlossen, sondern in kontinuierlicher Weiterentwicklung. Ein Enddatum zu suggerieren erzeugt die falsche Erwartung und den falschen Umgang mit dem Backlog.
 
 ---
 

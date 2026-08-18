@@ -137,6 +137,10 @@ Hybrid-Retrieval (BM25 + Vektor) funktioniert in einer Query, weil beide Indizes
 
 **Alternativen:** Alles in ENV-Variablen (funktioniert nicht für Nutzer-Tokens, die zur Laufzeit entstehen); Vault von Anfang an (zu schwer für Phase 1); SOPS-verschlüsselte Dateien (gut für Konfiguration, ungeeignet für Laufzeit-Tokens).
 
+**Verschärfung V1.1 — der KEK verlässt seine Instanz nie.** Die ursprüngliche Fassung ließ offen, *wo* entpackt wird. Bei `KEY_PROVIDER=file` läge der KEK im Speicher desselben Prozesses, der HTTP annimmt — eine Schwachstelle im Web-Layer gäbe damit alle Postfach-Tokens preis.
+
+In Produktion entpackt der API-Prozess deshalb **nicht selbst**: Er sendet den `wrapped_dek` an eine Entpack-Instanz (Vault Transit oder ein lokaler Unix-Socket-Dienst unter eigener Benutzerkennung) und erhält nur den DEK zurück. `KEY_PROVIDER=file` bleibt ausschließlich für die Entwicklung zulässig und wird beim Start in Produktion abgelehnt.
+
 ---
 
 ## ADR-009 — LLM-Provider: eigenes Protokoll über nativen SDKs

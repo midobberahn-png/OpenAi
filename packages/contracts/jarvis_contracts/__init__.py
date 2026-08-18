@@ -25,8 +25,29 @@ from .events import (
     ClientMessage,
     CoreState,
     HealthEntry,
+    InterruptKind,
     MicState,
     ServerMessage,
+)
+from .goals import (
+    Entity,
+    EntityKind,
+    EntityLink,
+    EntityRelation,
+    Goal,
+    GoalHorizon,
+    GoalProgress,
+    GoalStatus,
+)
+from .identity import (
+    CORE_PROFILE_TOKEN_BUDGET,
+    BehaviourRule,
+    CoreProfile,
+    DomainPreference,
+    Formality,
+    PreferenceDomain,
+    Proactivity,
+    ResponseLength,
 )
 from .memory import (
     DEFAULT_RETRIEVAL_WEIGHTS,
@@ -77,7 +98,10 @@ from .runs import (
 )
 from .tools import (
     InvocationStatus,
+    PayloadInspectability,
+    SanitizedPayload,
     Source,
+    TaintGateOutcome,
     ToolInvocation,
     ToolResult,
     ToolSpec,
@@ -109,6 +133,9 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "PreviewField",
     "PendingAction",
     # tools
+    "PayloadInspectability",
+    "TaintGateOutcome",
+    "SanitizedPayload",
     "ToolSpec",
     "ToolResult",
     "ToolInvocation",
@@ -156,12 +183,31 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "AgentResult",
     "AgentStatus",
     # events
+    "InterruptKind",
     "CoreState",
     "MicState",
     "CameraState",
     "ClientMessage",
     "ServerMessage",
     "HealthEntry",
+    # identity & preferences (V1.1)
+    "CoreProfile",
+    "DomainPreference",
+    "BehaviourRule",
+    "Formality",
+    "ResponseLength",
+    "Proactivity",
+    "PreferenceDomain",
+    "CORE_PROFILE_TOKEN_BUDGET",
+    # goals & entities (V1.1)
+    "Goal",
+    "GoalHorizon",
+    "GoalStatus",
+    "GoalProgress",
+    "Entity",
+    "EntityKind",
+    "EntityLink",
+    "EntityRelation",
     # errors
     "ErrorCode",
     "Remediation",

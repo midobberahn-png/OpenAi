@@ -21,7 +21,10 @@ from .permissions import PolicyEffect, RiskLevel, ScopeName
 __all__ = [
     "SAFE_WHEN_TAINTED_MAX_RISK",
     "InvocationStatus",
+    "PayloadInspectability",
+    "SanitizedPayload",
     "Source",
+    "TaintGateOutcome",
     "ToolInvocation",
     "ToolResult",
     "ToolSpec",
@@ -31,6 +34,48 @@ __all__ = [
 SAFE_WHEN_TAINTED_MAX_RISK = RiskLevel.LOW
 """Höchste Risikoklasse, die in einem kontaminierten Kontext noch zulässig ist,
 wenn ein Werkzeug ``forbidden_when_tainted`` nicht ausdrücklich setzt."""
+
+
+class PayloadInspectability(StrEnum):
+    """Kann ein Mensch diesen Payload vollständig prüfen?
+
+    Entscheidet, ob eine Bestätigung Kontamination aufheben darf
+    (docs/16-v1.1-review.md §1). Eine Bestätigung ist nur dann eine echte
+    Sicherheitsprüfung, wenn der Mensch tatsächlich sieht, was er freigibt.
+    """
+
+    STRUCTURED = "structured"
+    """Kurze, typisierte Felder — Datum, Zeit, ID, Titel. In Sekunden erfassbar.
+    Beispiel: ``calendar.create``."""
+
+    FREEFORM = "freeform"
+    """Enthält Freitext mit Außenwirkung. Eine um eine Ziffer veränderte IBAN
+    oder eine ausgetauschte URL im Fließtext übersieht auch ein aufmerksamer
+    Leser — genau darauf zielen reale Angriffe. Beispiel: ``send_email``."""
+
+    OPAQUE = "opaque"
+    """Nicht sinnvoll darstellbar: Binärdaten, Skripte, Befehle.
+    Beispiel: ``shell.exec``."""
+
+    @property
+    def clearable_by_confirmation(self) -> bool:
+        """Nur strukturierte Payloads dürfen Kontamination aufheben."""
+        return self is PayloadInspectability.STRUCTURED
+
+
+class TaintGateOutcome(StrEnum):
+    """Ergebnis der Taint-Prüfung eines Werkzeugaufrufs."""
+
+    PERMITTED = "permitted"
+    """Nicht kontaminiert oder Werkzeug unbedenklich — normale Ausführung."""
+
+    SANITIZABLE = "sanitizable"
+    """Kontaminiert, aber der Payload ist vollständig prüfbar. Nach Bestätigung
+    wird ein neuer, sauberer Lauf mit eingefrorenem Payload gestartet."""
+
+    BLOCKED = "blocked"
+    """Kontaminiert und nicht sanierbar. Der Nutzer muss die Aktion selbst
+    anstoßen — dann entsteht von Anfang an ein sauberer Lauf."""
 
 
 class Source(BaseModel):
@@ -92,6 +137,13 @@ class ToolSpec(BaseModel):
     timeout_s: float = Field(default=30.0, gt=0, le=600)
     supports_undo: bool = False
 
+    payload_inspectability: PayloadInspectability = PayloadInspectability.FREEFORM
+    """Kann ein Mensch den Payload vollständig prüfen?
+
+    Standard ist ``FREEFORM`` — die sichere Annahme. Werkzeuge müssen sich
+    ausdrücklich als vollständig prüfbar erklären, nicht umgekehrt.
+    """
+
     plugin: str | None = None
     """Herkunftsplugin, falls das Werkzeug nicht eingebaut ist."""
 
@@ -106,6 +158,16 @@ class ToolSpec(BaseModel):
             raise ValueError(
                 f"Werkzeug {self.name!r}: Risiko {self.risk} ohne Scope ist unzulässig."
             )
+        if (
+            self.payload_inspectability is PayloadInspectability.STRUCTURED
+            and not self.requires_preview
+            and self.risk is not RiskLevel.LOW
+        ):
+            raise ValueError(
+                f"Werkzeug {self.name!r}: 'structured' erlaubt Taint-Sanierung und "
+                "verlangt deshalb requires_preview=True — ohne Vorschau gäbe es "
+                "nichts zu prüfen."
+            )
         return self
 
     def is_blocked_by_taint(self) -> bool:
@@ -113,6 +175,31 @@ class ToolSpec(BaseModel):
         if self.forbidden_when_tainted:
             return True
         return self.risk > SAFE_WHEN_TAINTED_MAX_RISK
+
+    def taint_gate(self, *, tainted: bool) -> TaintGateOutcome:
+        """Entscheidet über die Behandlung in einem kontaminierten Lauf.
+
+        Siehe docs/16-v1.1-review.md §1. Diese Methode löst den Widerspruch
+        aus V1.0 auf: Ohne sie wäre der häufigste Alltagsablauf — Mails lesen
+        und daraus einen Termin anlegen — dauerhaft gesperrt. Ein
+        Sicherheitsmechanismus, der den Normalfall blockiert, wird abgeschaltet
+        und ist damit wirkungslos.
+
+        Die Sanierung ist eng gefasst: Sie setzt voraus, dass der Mensch den
+        Payload tatsächlich vollständig prüfen kann.
+        """
+        if not tainted or not self.is_blocked_by_taint():
+            return TaintGateOutcome.PERMITTED
+
+        # Irreversibles wird nie saniert — dort ist der Preis eines Fehlers
+        # zu hoch, um ihn gegen Komfort abzuwägen.
+        if self.risk is RiskLevel.CRITICAL:
+            return TaintGateOutcome.BLOCKED
+
+        if self.payload_inspectability.clearable_by_confirmation:
+            return TaintGateOutcome.SANITIZABLE
+
+        return TaintGateOutcome.BLOCKED
 
     def effective_risk(self, declared: RiskLevel | None = None) -> RiskLevel:
         """Ein Plugin darf seine eigene Risikoeinstufung nicht senken.
@@ -122,6 +209,38 @@ class ToolSpec(BaseModel):
         if declared is None:
             return self.risk
         return max(self.risk, declared)
+
+
+class SanitizedPayload(BaseModel):
+    """Ein vom Nutzer bestätigter, eingefrorener Werkzeug-Payload.
+
+    Grundlage des sanierten Laufs (docs/16-v1.1-review.md §1). Vier
+    Invarianten machen das Gate zur Ergänzung des Taint-Schutzes statt zu
+    seiner Umgehung:
+
+    1. **Eingefroren** — ``frozen=True``; was bestätigt wurde, wird ausgeführt.
+    2. **Keine Kontextvererbung** — der saubere Lauf sieht den Herkunftslauf
+       nicht, auch nicht dessen Zusammenfassung.
+    3. **Genau ein Aufruf** — der sanierte Lauf plant nicht und delegiert nicht.
+    4. **Verknüpft im Audit** — ``origin_run_id`` erhält die Nachvollziehbarkeit.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    tool_name: str
+    arguments: dict[str, Any]
+    """Byte-identisch das, was der Nutzer in der Vorschau gesehen hat."""
+
+    origin_run_id: UUID
+    """Der kontaminierte Lauf, aus dem der Payload stammt. Nur für das Audit —
+    der saubere Lauf greift nicht darauf zu."""
+
+    approved_at: datetime
+    approved_by: UUID
+    payload_hash: str = Field(min_length=64, max_length=64)
+    """SHA-256 über die kanonisierten Argumente. Der Executor prüft ihn vor der
+    Ausführung erneut: Ohne diese Prüfung könnte zwischen Bestätigung und
+    Ausführung etwas anderes eingeschleust werden."""
 
 
 class InvocationStatus(StrEnum):

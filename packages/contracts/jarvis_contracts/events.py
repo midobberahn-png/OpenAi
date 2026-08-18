@@ -15,7 +15,7 @@ from enum import StrEnum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .classification import DataClass
 from .permissions import PendingAction
@@ -26,6 +26,7 @@ __all__ = [
     "ClientMessage",
     "CoreState",
     "HealthEntry",
+    "InterruptKind",
     "MicState",
     "ServerMessage",
 ]
@@ -74,9 +75,44 @@ class UserMessage(_Msg):
     attachment_ids: list[UUID] = Field(default_factory=list)
 
 
+class InterruptKind(StrEnum):
+    """Art einer Unterbrechung.
+
+    V1.0 kannte nur Abbruch. Der Fall „Suche mir die besten Laptops unter
+    2.000 —" / „Nein, stopp. Ich meinte unter 1.000 Euro." ist aber keine
+    Unterbrechung, sondern eine **Korrektur**: Ein Abbruch mit anschließendem
+    Neustart verwirft alle Zwischenergebnisse und kostet die volle Latenz
+    erneut (docs/16-v1.1-review.md §5).
+    """
+
+    CANCEL = "cancel"
+    """Lauf beenden, Teilergebnis verwerfen."""
+
+    PAUSE = "pause"
+    RESUME = "resume"
+
+    CORRECT = "correct"
+    """Randbedingung ändern. Abgeschlossene Planschritte bleiben erhalten; nur
+    die betroffenen werden neu geplant. ``Plan.depends_on`` weiß bereits,
+    welche das sind — es fehlte nur der Auslöser."""
+
+    @property
+    def keeps_completed_steps(self) -> bool:
+        return self in {InterruptKind.PAUSE, InterruptKind.RESUME, InterruptKind.CORRECT}
+
+
 class UserInterrupt(_Msg):
     t: Literal["user.interrupt"] = "user.interrupt"
     run_id: UUID
+    kind: InterruptKind = InterruptKind.CANCEL
+    correction: str | None = None
+    """Bei ``CORRECT``: die geänderte Randbedingung im Wortlaut."""
+
+    @model_validator(mode="after")
+    def _correction_needs_text(self) -> UserInterrupt:
+        if self.kind is InterruptKind.CORRECT and not (self.correction or "").strip():
+            raise ValueError("Eine Korrektur ohne Text ist nicht auswertbar.")
+        return self
 
 
 class ActionRespond(_Msg):

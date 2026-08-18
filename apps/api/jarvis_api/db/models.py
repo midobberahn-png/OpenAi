@@ -12,7 +12,7 @@ Gestaltungsprinzipien, die hier sichtbar werden:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -23,6 +23,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Computed,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -310,6 +311,16 @@ class Run(Base):
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    sanitized_from_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("runs.id", ondelete="SET NULL")
+    )
+    """Herkunft eines Laufs aus dem Taint-Sanitization-Gate.
+
+    Der Lauf ist sauber, fuehrt genau einen bestaetigten Werkzeugaufruf aus und
+    hat keinen Zugriff auf den Herkunftslauf — die Verknuepfung dient
+    ausschliesslich der Nachvollziehbarkeit im Audit.
+    """
+
     steps: Mapped[list[RunStep]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="RunStep.seq"
     )
@@ -325,6 +336,10 @@ class Run(Base):
             ),
         ),
         CheckConstraint("taint_level IN ('clean','tainted')", name="taint_valid"),
+        CheckConstraint(
+            "sanitized_from_run_id IS NULL OR taint_level = 'clean'",
+            name="sanitized_runs_are_clean",
+        ),
         CheckConstraint("data_class IN ('P0','P1','P2','P3')", name="data_class_valid"),
     )
 
@@ -738,4 +753,226 @@ class SystemHealth(Base):
 
     __table_args__ = (
         CheckConstraint("status IN ('ok','degraded','down','unknown')", name="status_valid"),
+    )
+
+
+# ==========================================================================
+# V1.1 — Identity, Ziele, Entitäten
+#
+# Siehe docs/16-v1.1-review.md und docs/17-identity-goals.md.
+# Diese Schicht ist der Unterschied zwischen einem sicheren Agentensystem und
+# einem persönlichen Assistenten.
+# ==========================================================================
+
+
+class DomainPreference(Base, TimestampMixin):
+    """Domänenspezifische Präferenz — nur geladen, wenn die Domäne im Spiel ist.
+
+    Getrennt vom Kernprofil in ``users.preferences``, weil dieses bei jedem
+    Turn mitfährt und deshalb hart budgetiert ist (400 Token).
+    """
+
+    __tablename__ = "domain_preferences"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    domain: Mapped[str] = mapped_column(String(24), nullable=False)
+    key: Mapped[str] = mapped_column(String(80), nullable=False)
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("1.0"))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "domain", "key", name="uq_domain_pref"),
+        CheckConstraint("confidence BETWEEN 0 AND 1", name="confidence_range"),
+    )
+
+
+class BehaviourRule(Base, TimestampMixin):
+    """Do/Don't-Regel für Stil und Verhalten.
+
+    Steuert ausdrücklich **keine** Berechtigungen — sonst wäre eine per
+    Injection eingeschleuste Regel ein Weg zur Rechteerweiterung. Die
+    Durchsetzung liegt in der Anwendungsvalidierung; die Policy Engine liest
+    diese Tabelle gar nicht erst.
+    """
+
+    __tablename__ = "behaviour_rules"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    rule: Mapped[str] = mapped_column(String(200), nullable=False)
+    domain: Mapped[str | None] = mapped_column(String(24))
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("3"))
+    source_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('do','dont')", name="kind_valid"),
+        CheckConstraint("priority BETWEEN 1 AND 5", name="priority_range"),
+    )
+
+
+class Goal(Base, TimestampMixin):
+    """Ziel, Projekt oder Meilenstein.
+
+    Bewusst keine Memory-Zeile: Ein Ziel hat Zustand, Horizont, Fortschritt und
+    Randbedingungen — ein Retrieval-Treffer beantwortet „Wie weit bin ich?" nicht.
+    """
+
+    __tablename__ = "goals"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    horizon: Mapped[str] = mapped_column(String(12), nullable=False, server_default="offen")
+    status: Mapped[str] = mapped_column(String(12), nullable=False, server_default="aktiv")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("3"))
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("goals.id", ondelete="SET NULL")
+    )
+    constraints: Mapped[list[str]] = mapped_column(
+        ARRAY(String), nullable=False, server_default=text("'{}'::varchar[]")
+    )
+    target_date: Mapped[date | None] = mapped_column(Date)
+    progress_note: Mapped[str | None] = mapped_column(Text)
+    data_class: Mapped[str] = mapped_column(String(2), nullable=False, server_default="P2")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    search_tsv: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "to_tsvector('german', title || ' ' || coalesce(description, ''))", persisted=True
+        ),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("ix_goals_user_status", "user_id", "status"),
+        Index("ix_goals_search_tsv", "search_tsv", postgresql_using="gin"),
+        CheckConstraint(
+            "horizon IN ('tag','woche','monat','quartal','jahr','offen')", name="horizon_valid"
+        ),
+        CheckConstraint(
+            "status IN ('aktiv','pausiert','erreicht','verworfen')", name="status_valid"
+        ),
+        CheckConstraint("priority BETWEEN 1 AND 5", name="priority_range"),
+        CheckConstraint("data_class IN ('P0','P1','P2','P3')", name="data_class_valid"),
+        # Ein erreichtes Ziel ohne Abschlussdatum wäre eine unbelegte Behauptung.
+        CheckConstraint(
+            "status <> 'erreicht' OR completed_at IS NOT NULL", name="completed_needs_date"
+        ),
+        CheckConstraint("parent_id IS NULL OR parent_id <> id", name="no_self_parent"),
+    )
+
+
+class Entity(Base, TimestampMixin):
+    """Eine benannte Sache, auf die sich Gespräche und Objekte beziehen.
+
+    Trägt drei getrennt entstandene Anforderungen zugleich: Referenzauflösung,
+    Ziele/Projekte und präzises Retrieval ohne Vektorrauschen. Genau deshalb
+    braucht es keinen zusätzlichen Graph-Layer (docs/16-v1.1-review.md §3+4).
+    """
+
+    __tablename__ = "entities"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    aliases: Mapped[list[str]] = mapped_column(
+        ARRAY(String), nullable=False, server_default=text("'{}'::varchar[]")
+    )
+    gender: Mapped[str] = mapped_column(String(8), nullable=False, server_default="unknown")
+    attributes: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    data_class: Mapped[str] = mapped_column(String(2), nullable=False, server_default="P2")
+    goal_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("goals.id", ondelete="CASCADE")
+    )
+    last_mentioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    mention_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", "canonical_name", name="uq_entity_identity"),
+        Index("ix_entities_user_kind", "user_id", "kind"),
+        # Salienz-Abfrage der Referenzauflösung läuft über diesen Index.
+        Index("ix_entities_salience", "user_id", "last_mentioned_at"),
+        Index("ix_entities_aliases", "aliases", postgresql_using="gin"),
+        CheckConstraint(
+            "kind IN ('person','organisation','projekt','ort','goal','thema')", name="kind_valid"
+        ),
+        CheckConstraint("gender IN ('m','f','n','unknown')", name="gender_valid"),
+        CheckConstraint("data_class IN ('P0','P1','P2','P3')", name="data_class_valid"),
+        CheckConstraint("kind <> 'goal' OR goal_id IS NOT NULL", name="goal_kind_needs_goal"),
+    )
+
+
+class EntityLink(Base):
+    """Verknüpfung einer Entität mit einem beliebigen Objekt.
+
+    „Was habe ich letzte Woche mit Thomas besprochen?" ist ein Join über diese
+    Tabelle plus Zeitfilter — kein Ähnlichkeitsproblem.
+
+    Bewusst ohne Fremdschlüssel auf das Ziel: Die Zieltabelle wechselt je
+    ``target_kind``. Die referentielle Integrität wird beim Löschen über die
+    Aufräumroutine hergestellt, nicht über sechs sich ausschließende Spalten.
+    """
+
+    __tablename__ = "entity_links"
+
+    entity_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
+    )
+    target_kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    target_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True)
+    role: Mapped[str | None] = mapped_column(String(60))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_entity_links_target", "target_kind", "target_id"),
+        CheckConstraint(
+            "target_kind IN ('memory','document','task','goal','message','event')",
+            name="target_kind_valid",
+        ),
+    )
+
+
+class EntityRelation(Base):
+    """Gerichtete Beziehung zwischen zwei Entitäten.
+
+    Bewusst schlicht: reicht für „Thomas arbeitet an Projekt X", ohne eine
+    zweite Abfragesprache einzuführen.
+    """
+
+    __tablename__ = "entity_relations"
+
+    from_entity_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
+    )
+    to_entity_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("entities.id", ondelete="CASCADE"), primary_key=True
+    )
+    relation: Mapped[str] = mapped_column(String(60), primary_key=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("1.0"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("from_entity_id <> to_entity_id", name="no_self_relation"),
+        CheckConstraint("confidence BETWEEN 0 AND 1", name="confidence_range"),
     )
