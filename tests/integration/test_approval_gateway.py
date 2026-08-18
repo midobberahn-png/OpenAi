@@ -32,6 +32,7 @@ from jarvis_core.policy import (
     ApprovalGateway,
     ExecutionDenied,
     PolicyEngine,
+    UnverifiedSessions,
     build_preview,
 )
 from jarvis_core.ports.approval import BurnResult
@@ -108,7 +109,9 @@ async def _seed(conn: AsyncConnection) -> tuple[uuid.UUID, uuid.UUID]:
 def _gateway(conn: AsyncConnection, perms: MutablePermissions) -> ApprovalGateway:
     registry = ToolRegistry()
     registry.register(CALENDAR_CREATE)
-    return ApprovalGateway(PostgresApprovalStore(conn), PolicyEngine(registry, perms))
+    return ApprovalGateway(
+        PostgresApprovalStore(conn), PolicyEngine(registry, perms), sessions=UnverifiedSessions()
+    )
 
 
 async def _request(
@@ -795,7 +798,11 @@ class TestGateOhneBestaetigung:
         registry.register(CALENDAR_CREATE, handler)
         perms = MutablePermissions()
         perms.allow("calendar.create")
-        gw = ApprovalGateway(PostgresApprovalStore(conn), PolicyEngine(registry, perms))
+        gw = ApprovalGateway(
+            PostgresApprovalStore(conn),
+            PolicyEngine(registry, perms),
+            sessions=UnverifiedSessions(),
+        )
 
         grant = await gw.authorize_allowed(
             request=PolicyRequest(

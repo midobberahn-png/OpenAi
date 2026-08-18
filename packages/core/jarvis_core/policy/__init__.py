@@ -6,6 +6,8 @@ from .approval import (
     ApprovalOutcome,
     ExecutionDenied,
     ExecutionGrant,
+    SessionVerifier,
+    UnverifiedSessions,
     canonical_arguments,
     payload_hash,
 )
@@ -22,6 +24,8 @@ __all__ = [
     "Invariant",
     "InvariantStatus",
     "PolicyEngine",
+    "SessionVerifier",
+    "UnverifiedSessions",
     "build_preview",
     "canonical_arguments",
     "invariant_ids",

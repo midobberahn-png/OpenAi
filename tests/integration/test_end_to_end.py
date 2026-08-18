@@ -54,7 +54,7 @@ from jarvis_core.orchestrator import (
     plan_turn,
     route,
 )
-from jarvis_core.policy import ApprovalGateway, PolicyEngine
+from jarvis_core.policy import ApprovalGateway, PolicyEngine, UnverifiedSessions
 from tests.fakes import (
     CALENDAR_CREATE,
     build_registry,
@@ -216,7 +216,9 @@ class TestKompletterAblauf:
         permissions = DbPermissions(conn, user_id)
         tools, spies = build_registry()
         policy = PolicyEngine(tools, permissions)
-        gateway = ApprovalGateway(PostgresApprovalStore(conn), policy)
+        gateway = ApprovalGateway(
+            PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
+        )
         audit = ChainAudit()
         executor = ToolExecutor(
             registry=tools,
@@ -398,7 +400,9 @@ class TestKompletterAblauf:
         executor = ToolExecutor(
             registry=tools,
             policy=policy,
-            gateway=ApprovalGateway(PostgresApprovalStore(conn), policy),
+            gateway=ApprovalGateway(
+                PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
+            ),
             invocations=PostgresInvocationStore(conn),
             clock=lambda: NOW,
         )
@@ -463,7 +467,9 @@ class TestKompletterAblaufMitAgenten:
         executor = ToolExecutor(
             registry=tools,
             policy=policy,
-            gateway=ApprovalGateway(PostgresApprovalStore(conn), policy),
+            gateway=ApprovalGateway(
+                PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
+            ),
             invocations=PostgresInvocationStore(conn),
             clock=lambda: NOW,
         )

@@ -30,7 +30,7 @@ from jarvis_core.agents import (
     UnknownAgent,
 )
 from jarvis_core.orchestrator import BudgetTracker, ToolExecutor
-from jarvis_core.policy import ApprovalGateway, PolicyEngine
+from jarvis_core.policy import ApprovalGateway, PolicyEngine, UnverifiedSessions
 from tests.fakes import (
     NOW,
     SESSION,
@@ -90,7 +90,7 @@ def _agents() -> AgentRegistry:
 def _runtime(perms: FakePermissions, *, audit: RecordingAudit | None = None):
     tools, spies = build_registry()
     policy = PolicyEngine(tools, perms)
-    gateway = ApprovalGateway(InMemoryApprovalStore(), policy)
+    gateway = ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions())
     executor = ToolExecutor(
         registry=tools, policy=policy, gateway=gateway, audit=audit, clock=lambda: NOW
     )

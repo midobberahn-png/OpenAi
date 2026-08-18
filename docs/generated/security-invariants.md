@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 31/31**
+**Security Invariant Coverage: 32/32**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -29,6 +29,7 @@ nicht nachträglich passend machen.
 | `approval-nonce-single-use` | Bestätigungen sind einmalig | Eine Nonce lässt sich genau einmal einlösen, auch unter Nebenläufigkeit. | `core.policy.approval` |
 | `approval-not-forgeable-by-model` | Ein Modell kann keine Bestätigung erzeugen | Bestätigungen entstehen ausschließlich aus einer Nutzerinteraktion; Modellausgaben und Werkzeugargumente haben keinen Einfluss darauf. | `core.policy.engine` |
 | `approval-channel-bound` | Bestätigt wird dort, wo angezeigt wurde | Eine Bestätigung ist an Nutzer, Sitzung und Anzeigekanal gebunden und lässt sich nicht über einen anderen Kanal oder eine andere Sitzung einlösen. | `core.policy.approval` |
+| `session-verified-before-approval` | Eine Bestätigung verlangt eine echte Sitzung | Eine Bestätigung wird nur eingelöst, wenn der vorgelegte Sitzungstoken zu genau dieser Sitzung dieses Nutzers gehört und die Sitzung weder abgelaufen noch widerrufen ist. | `core.auth` |
 | `approval-critical-ui-only` | Irreversibles wird nur in der Oberfläche bestätigt | CRITICAL-Aktionen akzeptieren keine Sprach- oder Gestenbestätigung. | `contracts.permissions` |
 | `policy-single-entry-point` | Die Policy Engine ist der einzige Weg | Kein Werkzeug wird ohne Policy-Entscheidung ausgeführt: Die Registry gibt keinen Handler heraus und verlangt eine ExecutionAuthorization. | `core.policy.engine` |
 | `grant-bound-to-run` | Eine Erlaubnis gilt für einen Aufruf in einem Lauf | Die Registry führt einen Grant nur aus, wenn Lauf und Nutzer des Grants dem Kontext entsprechen, in dem tatsächlich ausgeführt wird. | `core.tools.registry` |

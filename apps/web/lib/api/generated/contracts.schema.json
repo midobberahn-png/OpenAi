@@ -2124,6 +2124,95 @@
       "title": "HealthEntry",
       "type": "object"
     },
+    "IssuedSession": {
+      "$defs": {
+        "Session": {
+          "description": "Eine angemeldete Sitzung.\n\nEnthält **kein** Token. Der Token existiert genau einmal — bei der Ausgabe\n— und liegt danach nur als Hash in der Datenbank. Ein Sitzungsobjekt, das\nsein Geheimnis mitführt, landet über Logs, Fehlerberichte und Serialisierung\nan Stellen, an denen es nicht sein darf.",
+          "properties": {
+            "channel": {
+              "default": "ui",
+              "enum": [
+                "ui",
+                "voice",
+                "edge"
+              ],
+              "title": "Channel",
+              "type": "string"
+            },
+            "client": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Client",
+              "type": "string"
+            },
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "title": "Expires At",
+              "type": "string"
+            },
+            "id": {
+              "format": "uuid",
+              "title": "Id",
+              "type": "string"
+            },
+            "last_seen_at": {
+              "format": "date-time",
+              "title": "Last Seen At",
+              "type": "string"
+            },
+            "revoked_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Revoked At"
+            },
+            "user_id": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "user_id",
+            "created_at",
+            "last_seen_at",
+            "expires_at"
+          ],
+          "title": "Session",
+          "type": "object"
+        }
+      },
+      "description": "Frisch ausgestellte Sitzung — der einzige Ort, an dem der Token vorkommt.\n\nDer Typ ist bewusst schwer zu verwechseln: Wer ihn weiterreicht, reicht ein\nGeheimnis weiter, und das soll im Code sichtbar sein. Persistiert und\nzurückgegeben wird sonst überall ``Session``.",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "token": {
+          "minLength": 32,
+          "title": "Token",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "token"
+      ],
+      "title": "IssuedSession",
+      "type": "object"
+    },
     "MailSendConstraints": {
       "$defs": {
         "TimeWindow": {
@@ -6649,6 +6738,74 @@
           "$ref": "#/$defs/Pong"
         }
       ]
+    },
+    "Session": {
+      "description": "Eine angemeldete Sitzung.\n\nEnthält **kein** Token. Der Token existiert genau einmal — bei der Ausgabe\n— und liegt danach nur als Hash in der Datenbank. Ein Sitzungsobjekt, das\nsein Geheimnis mitführt, landet über Logs, Fehlerberichte und Serialisierung\nan Stellen, an denen es nicht sein darf.",
+      "properties": {
+        "channel": {
+          "default": "ui",
+          "enum": [
+            "ui",
+            "voice",
+            "edge"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "client": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Client",
+          "type": "string"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "last_seen_at": {
+          "format": "date-time",
+          "title": "Last Seen At",
+          "type": "string"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revoked At"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "created_at",
+        "last_seen_at",
+        "expires_at"
+      ],
+      "title": "Session",
+      "type": "object"
     },
     "Source": {
       "description": "Quellenbeleg. Pflicht bei Recherche- und Dokumentergebnissen.",

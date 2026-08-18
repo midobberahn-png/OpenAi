@@ -83,6 +83,54 @@ class User(Base, TimestampMixin):
     )
 
 
+class Session(Base):
+    """Angemeldete Sitzung.
+
+    ``token_hash`` statt Token: Wer diese Tabelle liest — über ein Backup, eine
+    fehlgeleitete Abfrage, einen Zugriff aus zweiter Hand —, findet nichts,
+    womit er sich anmelden könnte. Der Klartext existiert genau einmal, bei der
+    Ausgabe.
+
+    Zwei Fristen, weil sie verschiedene Fälle abdecken: ``expires_at`` ist
+    absolut und wird nie verlängert (eine gestohlene Sitzung ist endlich, auch
+    wenn der Dieb sie aktiv hält); ``last_seen_at`` trägt die Leerlauffrist
+    (ein vergessenes Gerät wird von selbst wertlos).
+    """
+
+    __tablename__ = "sessions"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    """SHA-256 des Tokens als Hex. Eindeutig — zwei Sitzungen mit demselben
+    Token wären ein Fehler, den die Datenbank melden soll."""
+
+    client: Mapped[str] = mapped_column(String(200), nullable=False, server_default="")
+    """Gerätebezeichnung für die Sitzungsübersicht. Stammt vom Client und wird
+    nie geprüft; es darf keine Entscheidung davon abhängen."""
+
+    channel: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ui")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint("channel IN ('ui','voice','edge')", name="session_channel_valid"),
+        Index(
+            "ix_sessions_active",
+            "user_id",
+            postgresql_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+
 class WebAuthnCredential(Base, TimestampMixin):
     __tablename__ = "webauthn_credentials"
 

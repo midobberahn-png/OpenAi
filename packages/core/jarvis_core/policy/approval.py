@@ -28,7 +28,7 @@ import hashlib
 import json
 import secrets
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
@@ -54,6 +54,8 @@ __all__ = [
     "ApprovalOutcome",
     "ExecutionDenied",
     "ExecutionGrant",
+    "SessionVerifier",
+    "UnverifiedSessions",
     "canonical_arguments",
     "payload_hash",
 ]
@@ -100,6 +102,34 @@ def payload_hash(tool_name: str, arguments: dict[str, Any]) -> str:
     digest.update(b"\x00")
     digest.update(canonical_arguments(arguments))
     return digest.hexdigest()
+
+
+class SessionVerifier(Protocol):
+    """Prüft, ob ein Token zu genau dieser Sitzung dieses Nutzers gehört.
+
+    Erfüllt von ``jarvis_core.auth.SessionManager``. Als Protokoll geführt,
+    damit die Policy-Schicht nicht von der Auth-Schicht abhängt — die
+    Richtung wäre sonst umgekehrt zur Schichtung.
+    """
+
+    async def belongs_to(
+        self, token: str, *, user_id: UUID, session_id: UUID, now: datetime | None = None
+    ) -> bool: ...
+
+
+class UnverifiedSessions:
+    """Prüft nichts — und heißt deshalb so.
+
+    Notwendig, solange es keine Anmeldung gibt, und nützlich für Tests, die
+    nicht die Sitzungslogik prüfen. Der Name ist der Punkt: Ein
+    Vorgabewert ``sessions=None`` hätte dieselbe Wirkung, aber niemand sähe
+    im Aufruf, dass die Sitzungsbindung ausgeschaltet ist. Hier steht es da.
+    """
+
+    async def belongs_to(
+        self, token: str, *, user_id: UUID, session_id: UUID, now: datetime | None = None
+    ) -> bool:
+        return True
 
 
 class ExecutionDenied(Exception):
@@ -189,10 +219,12 @@ class ApprovalGateway:
         store: ApprovalStore,
         policy: PolicyEngine,
         *,
+        sessions: SessionVerifier,
         ttl: timedelta = DEFAULT_TTL,
     ) -> None:
         self._store = store
         self._policy = policy
+        self._sessions = sessions
         self._ttl = ttl
 
     # -- 1. Anfrage ------------------------------------------------------
@@ -244,6 +276,7 @@ class ApprovalGateway:
         approve: bool,
         user_id: UUID,
         session_id: UUID,
+        session_token: str = "",
         channel: ApprovalChannel,
         now: datetime,
     ) -> ApprovalOutcome:
@@ -270,6 +303,17 @@ class ApprovalGateway:
                     "Bestätigung gehört zu einer anderen Sitzung. Bitte dort bestätigen, "
                     "wo die Vorschau angezeigt wurde."
                 ),
+            )
+        # Die Sitzungs-ID allein ist nur eine Behauptung des Aufrufers. Erst
+        # diese Prüfung macht die Sitzungsbindung zu einer Zusicherung: Der
+        # vorgelegte Token muss zu genau dieser Sitzung dieses Nutzers gehören
+        # und darf nicht abgelaufen oder widerrufen sein.
+        if not await self._sessions.belongs_to(
+            session_token, user_id=user_id, session_id=session_id, now=now
+        ):
+            return ApprovalOutcome(
+                approved=False,
+                reason="Die Sitzung ist nicht angemeldet, abgelaufen oder beendet.",
             )
         if not action.allows_channel(channel):
             return ApprovalOutcome(

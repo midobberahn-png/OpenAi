@@ -144,7 +144,7 @@ async def test_geplanter_schritt_ist_keine_berechtigung() -> None:
     erneut.
     """
     from jarvis_core.orchestrator import BudgetTracker, ToolExecutor
-    from jarvis_core.policy import ApprovalGateway, PolicyEngine
+    from jarvis_core.policy import ApprovalGateway, PolicyEngine, UnverifiedSessions
     from tests.fakes import SESSION, FakePermissions, InMemoryApprovalStore, build_run
 
     registry, spies = build_registry()
@@ -158,7 +158,9 @@ async def test_geplanter_schritt_ist_keine_berechtigung() -> None:
     # Der Berechtigungsspeicher weiß nichts von mail.send.
     policy = PolicyEngine(registry, FakePermissions())
     executor = ToolExecutor(
-        registry=registry, policy=policy, gateway=ApprovalGateway(InMemoryApprovalStore(), policy)
+        registry=registry,
+        policy=policy,
+        gateway=ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions()),
     )
     outcome = await executor.execute_tool(
         build_run(),

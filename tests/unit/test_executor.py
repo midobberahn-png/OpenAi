@@ -22,7 +22,7 @@ import pytest
 
 from jarvis_contracts import DataClass, PolicyEffect, RunStatus, TaintLevel
 from jarvis_core.orchestrator import BudgetTracker, ToolExecutor
-from jarvis_core.policy import ApprovalGateway, PolicyEngine
+from jarvis_core.policy import ApprovalGateway, PolicyEngine, UnverifiedSessions
 from tests.fakes import (
     NOW,
     SESSION,
@@ -44,7 +44,7 @@ def _setup(
 ):
     registry, spies = build_registry()
     policy = PolicyEngine(registry, perms)
-    gateway = ApprovalGateway(InMemoryApprovalStore(), policy)
+    gateway = ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions())
     executor = ToolExecutor(
         registry=registry,
         policy=policy,

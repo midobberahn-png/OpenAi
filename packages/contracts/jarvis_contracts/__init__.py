@@ -8,6 +8,12 @@ docs/02-repo-struktur.md §3).
 from __future__ import annotations
 
 from .agents import AgentRequest, AgentResult, AgentSpec, AgentStatus
+from .auth import (
+    DEFAULT_IDLE_TIMEOUT,
+    DEFAULT_SESSION_TTL,
+    IssuedSession,
+    Session,
+)
 from .classification import DataClass, TaintLevel, escalate
 from .context import (
     CONTEXT_BUDGETS,
@@ -117,6 +123,11 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "DataClass",
     "TaintLevel",
     "escalate",
+    # auth
+    "Session",
+    "IssuedSession",
+    "DEFAULT_SESSION_TTL",
+    "DEFAULT_IDLE_TIMEOUT",
     # permissions
     "ApprovalChannel",
     "RiskLevel",

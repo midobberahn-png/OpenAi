@@ -200,6 +200,23 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.policy.approval",
     ),
     Invariant(
+        id="session-verified-before-approval",
+        title="Eine Bestätigung verlangt eine echte Sitzung",
+        statement=(
+            "Eine Bestätigung wird nur eingelöst, wenn der vorgelegte Sitzungstoken zu "
+            "genau dieser Sitzung dieses Nutzers gehört und die Sitzung weder abgelaufen "
+            "noch widerrufen ist."
+        ),
+        why=(
+            "Ohne diese Prüfung war die Sitzungsbindung aus approval-channel-bound ein "
+            "Vergleich zweier UUIDs, die beide vom Aufrufer stammten. Erst die "
+            "Verifikation macht daraus eine Zusicherung — und erst damit beendet ein "
+            "Nutzer, der sein Gerät verloren hat, auch die offenen Bestätigungen."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.auth",
+    ),
+    Invariant(
         id="approval-critical-ui-only",
         title="Irreversibles wird nur in der Oberfläche bestätigt",
         statement="CRITICAL-Aktionen akzeptieren keine Sprach- oder Gestenbestätigung.",
