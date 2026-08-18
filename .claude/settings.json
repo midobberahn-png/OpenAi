@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest *)",
+      "Bash(uv run ruff check *)",
+      "Bash(uv run ruff format *)",
+      "Bash(uv run mypy *)",
+      "Bash(uv run python scripts/gen_contracts.py)",
+      "Bash(uv run python scripts/seed.py)",
+      "Bash(docker compose ps *)"
+    ]
+  }
+}
