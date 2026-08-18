@@ -115,6 +115,9 @@ markers = [
     "integration: benötigt Postgres/Redis",
     "eval: Modellverhalten, langsam",
     "security: Injection- und Policy-Suite",
+    # Bindet einen Test an eine Invariante aus jarvis_core.policy.invariants.
+    # Ein Marker auf eine unbekannte Kennung lässt die Suite fehlschlagen.
+    "invariant(id): belegt eine Sicherheits-Invariante",
 ]
 
 [tool.coverage.run]

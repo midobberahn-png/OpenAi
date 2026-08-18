@@ -53,12 +53,14 @@ class TestDataClass:
 
 
 class TestTaintLevel:
+    @pytest.mark.invariant("taint-monotonic")
     def test_kontamination_ist_monoton(self) -> None:
         clean = TaintLevel.CLEAN
         assert clean.merge(TaintLevel.CLEAN) is TaintLevel.CLEAN
         tainted = clean.merge(TaintLevel.TAINTED)
         assert tainted is TaintLevel.TAINTED
 
+    @pytest.mark.invariant("taint-monotonic")
     def test_kontamination_laesst_sich_nicht_entfernen(self) -> None:
         """Kein Werkzeug darf einen Lauf 'säubern' — das wäre der Ausweg,
         über den ein Angreifer die Sperre umginge."""

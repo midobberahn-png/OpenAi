@@ -48,6 +48,7 @@ def _tool(**kw: object) -> ToolSpec:
 class TestNormalfallBleibtBenutzbar:
     """Der Befund, der das Gate nötig machte."""
 
+    @pytest.mark.invariant("taint-no-implicit-clearing")
     def test_kalendereintrag_nach_mail_lesen_ist_sanierbar(self) -> None:
         calendar_create = _tool(
             name="calendar.create",
@@ -78,6 +79,7 @@ class TestNormalfallBleibtBenutzbar:
 class TestGateBleibtEng:
     """Gegenprobe: Das Gate darf den Schutz nicht aufweichen."""
 
+    @pytest.mark.invariant("payload-freeform-never-sanitizable")
     def test_freitext_mit_aussenwirkung_ist_nie_sanierbar(self) -> None:
         """Eine um eine Ziffer veränderte IBAN im Fließtext übersieht auch ein
         aufmerksamer Leser. Bestätigung ist dort keine echte Prüfung."""
@@ -103,6 +105,7 @@ class TestGateBleibtEng:
         )
         assert delete.taint_gate(tainted=True) is TaintGateOutcome.BLOCKED
 
+    @pytest.mark.invariant("payload-freeform-never-sanitizable")
     def test_opaque_ist_nie_sanierbar(self) -> None:
         shell = _tool(
             name="shell.exec",
@@ -114,6 +117,7 @@ class TestGateBleibtEng:
         )
         assert shell.taint_gate(tainted=True) is TaintGateOutcome.BLOCKED
 
+    @pytest.mark.invariant("taint-no-implicit-clearing")
     def test_standard_ist_die_sichere_annahme(self) -> None:
         """Werkzeuge müssen sich ausdrücklich als prüfbar erklären."""
         assert _tool().payload_inspectability is PayloadInspectability.FREEFORM
@@ -150,6 +154,7 @@ class TestSanierterLauf:
         base.update(kw)
         return Run(**base)  # type: ignore[arg-type]
 
+    @pytest.mark.invariant("taint-cross-run-isolation")
     def test_sanierter_lauf_muss_sauber_starten(self) -> None:
         """Sonst hebt das Gate die Sperre nicht auf, sondern umgeht sie."""
         with pytest.raises(ValidationError, match="umgeht"):

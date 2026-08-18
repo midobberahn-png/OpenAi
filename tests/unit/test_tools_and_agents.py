@@ -66,6 +66,7 @@ class TestToolSpec:
         s = _spec(risk=RiskLevel.MEDIUM, scopes=["calendar.create"], forbidden_when_tainted=False)
         assert s.is_blocked_by_taint()
 
+    @pytest.mark.invariant("tool-risk-not-self-declared")
     def test_plugin_darf_risiko_nicht_senken(self) -> None:
         """docs/12-plugins.md §4 — der Kern nimmt immer den höheren Wert."""
         s = _spec(risk=RiskLevel.HIGH, scopes=["chat.send"], requires_preview=True)
@@ -88,6 +89,7 @@ class TestToolResult:
 
 
 class TestAgentSpec:
+    @pytest.mark.invariant("agent-no-capability-escalation")
     def test_fremdinhalt_lesender_agent_darf_nicht_senden(self) -> None:
         """Der strukturelle Kern des Schutzes: Der Research Agent kann keinen
         Versand auslösen, weil er das Werkzeug gar nicht führen darf."""

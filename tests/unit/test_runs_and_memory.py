@@ -270,6 +270,7 @@ class TestGedaechtnisAlsTaintKanal:
             confidence=1.0,
         )
 
+    @pytest.mark.invariant("taint-memory-quarantine")
     @pytest.mark.security
     def test_eintrag_aus_kontaminiertem_lauf_wird_nie_automatisch_uebernommen(self) -> None:
         assert not self._cand(from_tainted_run=True).auto_acceptable()
@@ -277,6 +278,7 @@ class TestGedaechtnisAlsTaintKanal:
     def test_eintrag_aus_sauberem_lauf_wird_uebernommen(self) -> None:
         assert self._cand(from_tainted_run=False).auto_acceptable()
 
+    @pytest.mark.invariant("taint-memory-quarantine")
     @pytest.mark.security
     def test_hohe_konfidenz_hebt_die_quarantaene_nicht_auf(self) -> None:
         """Eine präparierte Mail kann beliebig überzeugend formuliert sein —

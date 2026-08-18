@@ -34,6 +34,7 @@ class TestAuditLogUnveraenderlichkeit:
         )
         assert result.scalar_one() > 0
 
+    @pytest.mark.invariant("audit-append-only")
     async def test_update_wird_abgelehnt(self, conn: AsyncConnection) -> None:
         await conn.execute(
             text("INSERT INTO audit_log (actor, action, entry_hash) VALUES ('test', 'x', :h)"),
@@ -42,6 +43,7 @@ class TestAuditLogUnveraenderlichkeit:
         with pytest.raises(DBAPIError, match="append-only"):
             await conn.execute(text("UPDATE audit_log SET action = 'manipuliert'"))
 
+    @pytest.mark.invariant("audit-append-only")
     async def test_delete_wird_abgelehnt(self, conn: AsyncConnection) -> None:
         await conn.execute(
             text("INSERT INTO audit_log (actor, action, entry_hash) VALUES ('test', 'x', :h)"),
@@ -50,6 +52,7 @@ class TestAuditLogUnveraenderlichkeit:
         with pytest.raises(DBAPIError, match="append-only"):
             await conn.execute(text("DELETE FROM audit_log"))
 
+    @pytest.mark.invariant("audit-append-only")
     async def test_pseudonymisierung_darf_nichts_anderes_aendern(
         self, conn: AsyncConnection
     ) -> None:

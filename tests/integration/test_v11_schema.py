@@ -30,6 +30,7 @@ async def _user(conn: AsyncConnection) -> uuid.UUID:
 class TestSanitisierteLaeufe:
     """docs/16-v1.1-review.md §1 — das Gate darf den Schutz nicht umgehen."""
 
+    @pytest.mark.invariant("taint-cross-run-isolation")
     async def test_sanierter_lauf_darf_nicht_kontaminiert_sein(self, conn: AsyncConnection) -> None:
         uid = await _user(conn)
         origin = uuid.uuid4()

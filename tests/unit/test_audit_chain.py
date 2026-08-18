@@ -72,6 +72,7 @@ class TestKanonisierung:
         b = _entry(1, details={"a": 1, "b": 2})
         assert canonical_payload(a) == canonical_payload(b)
 
+    @pytest.mark.invariant("audit-survives-erasure")
     def test_user_id_geht_nicht_in_den_hash(self) -> None:
         """Der entscheidende Punkt: Die DSGVO-Löschung setzt user_id auf NULL.
         Wäre die Kennung Teil des Hashes, zerriss jede Nutzerlöschung die Kette
@@ -115,6 +116,7 @@ class TestKettenpruefung:
     def test_leere_kette_ist_unversehrt(self) -> None:
         assert verify_chain([]) == []
 
+    @pytest.mark.invariant("audit-tamper-evident")
     def test_veraenderter_inhalt_wird_erkannt(self) -> None:
         rows = _chain(5)
         rows[2] = rows[2].model_copy(update={"action": "harmlos"})
@@ -132,6 +134,7 @@ class TestKettenpruefung:
         breaks = verify_chain(rows)
         assert [b.row_id for b in breaks] == [5]
 
+    @pytest.mark.invariant("audit-tamper-evident")
     def test_entfernter_eintrag_wird_erkannt(self) -> None:
         """Der häufigste Manipulationsversuch: eine Zeile löschen."""
         rows = _chain(5)
@@ -165,6 +168,7 @@ class TestKettenpruefung:
         breaks = verify_chain(rows)
         assert breaks, "Ein eingeschobener Eintrag verschiebt alle folgenden prev_hash-Verweise"
 
+    @pytest.mark.invariant("audit-survives-erasure")
     def test_pseudonymisierung_bricht_die_kette_nicht(self) -> None:
         """Die Zusammenführung beider Anforderungen: Löschpflicht und
         Unveränderlichkeit müssen gleichzeitig erfüllbar sein."""

@@ -44,6 +44,7 @@ def test_contracts_verzeichnis_existiert() -> None:
     assert CORE.is_dir()
 
 
+@pytest.mark.invariant("layering-contracts-independent")
 @pytest.mark.parametrize("path", _python_files(CONTRACTS), ids=lambda p: p.name)
 def test_contracts_importiert_nichts_aus_dem_projekt(path: Path) -> None:
     """``contracts`` ist die Quelle der Wahrheit und darf von nichts abhängen.
@@ -66,6 +67,7 @@ def test_core_kennt_keine_konkreten_provider(path: Path) -> None:
     assert not violations, f"{path.name} importiert eine Implementierung: {sorted(violations)}"
 
 
+@pytest.mark.invariant("layering-no-provider-sdk-in-core")
 def test_kein_provider_sdk_im_kern() -> None:
     """Kein OpenAI-, Anthropic- oder Google-Typ existiert außerhalb der
     Adapterschicht (Architekturprinzip 2)."""

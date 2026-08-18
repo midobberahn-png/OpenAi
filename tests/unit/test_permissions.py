@@ -36,6 +36,7 @@ class TestRiskLevel:
         assert RiskLevel.HIGH.needs_confirmation
         assert RiskLevel.CRITICAL.needs_confirmation
 
+    @pytest.mark.invariant("approval-critical-ui-only")
     def test_critical_nur_in_der_ui(self) -> None:
         assert RiskLevel.CRITICAL.ui_only_confirmation
         assert not RiskLevel.HIGH.ui_only_confirmation

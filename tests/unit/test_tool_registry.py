@@ -39,6 +39,7 @@ class TestRegistrierung:
         assert "system.time" in reg
         assert reg.require("system.time").name == "system.time"
 
+    @pytest.mark.invariant("tool-no-silent-override")
     @pytest.mark.security
     def test_doppelte_registrierung_wird_abgelehnt(self) -> None:
         """Ein überschriebenes Werkzeug wäre ein stiller Wechsel der

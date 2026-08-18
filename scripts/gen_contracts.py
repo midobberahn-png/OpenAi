@@ -168,6 +168,59 @@ def generate_scope_catalog() -> list[Path]:
     return [path] if _write(path, "\n".join(lines)) else []
 
 
+def generate_invariant_table() -> list[Path]:
+    """Sicherheits-Invarianten als lesbare Tabelle.
+
+    Generiert, nicht gepflegt: Eine handgeschriebene Tabelle behauptet nach der
+    ersten Änderung Dinge, die nicht mehr stimmen.
+    """
+    from jarvis_core.policy.invariants import INVARIANTS, InvariantStatus
+
+    enforced = [i for i in INVARIANTS if i.status is InvariantStatus.ENFORCED]
+    planned = [i for i in INVARIANTS if i.status is InvariantStatus.PLANNED]
+
+    lines = [
+        "# Sicherheits-Invarianten",
+        "",
+        "> GENERIERT aus `packages/core/jarvis_core/policy/invariants.py`.",
+        "",
+        "Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf",
+        "*kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;",
+        "diese Tabelle sagt es.",
+        "",
+        f"**Security Invariant Coverage: {len(enforced)}/{len(INVARIANTS)}**",
+        "",
+        "Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine",
+        "als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich",
+        "nicht nachträglich passend machen.",
+        "",
+        "## Durchgesetzt",
+        "",
+        "| Kennung | Invariante | Gilt | Komponente |",
+        "|---|---|---|---|",
+    ]
+    for inv in enforced:
+        lines.append(f"| `{inv.id}` | {inv.title} | {inv.statement} | `{inv.component}` |")
+
+    if planned:
+        lines += [
+            "",
+            "## Noch offen",
+            "",
+            "Ausdrücklich ausgewiesen, damit nicht der Eindruck entsteht, etwas sei",
+            "abgesichert, bevor der Kontrollpunkt existiert.",
+            "",
+            "| Kennung | Invariante | Wird gebraucht, weil | Komponente |",
+            "|---|---|---|---|",
+        ]
+        for inv in planned:
+            lines.append(f"| `{inv.id}` | {inv.title} | {inv.why} | `{inv.component}` |")
+    lines.append("")
+
+    path = DOCS_GEN / "security-invariants.md"
+    return [path] if _write(path, "\n".join(lines)) else []
+
+
 def generate_openapi() -> list[Path]:
     """OpenAPI-Schema — sobald die FastAPI-App existiert (Block 2)."""
     try:
@@ -188,6 +241,7 @@ def main() -> int:
         generate_model_schemas,
         generate_enums_ts,
         generate_scope_catalog,
+        generate_invariant_table,
         generate_openapi,
     ):
         changed += step()
