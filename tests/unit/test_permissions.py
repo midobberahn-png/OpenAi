@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from jarvis_contracts import (
     ActionPreview,
+    ApprovalChannel,
     FilesConstraints,
     MailSendConstraints,
     PendingAction,
@@ -160,17 +161,21 @@ class TestPolicyDecision:
 
 
 class TestPendingAction:
-    def _action(self, risk: RiskLevel) -> PendingAction:
+    def _action(self, risk: RiskLevel, channel: ApprovalChannel = "ui") -> PendingAction:
         now = datetime.now(UTC)
         return PendingAction(
             id=uuid4(),
+            run_id=uuid4(),
             invocation_id=uuid4(),
             user_id=uuid4(),
+            session_id=uuid4(),
             tool_name="x",
             preview=ActionPreview(tool_name="x", title="X", risk=risk),
             risk=risk,
             reason="Test",
-            nonce="0123456789abcdef0123",
+            payload_hash="a" * 64,
+            nonce="0123456789abcdef0123456789abcdef0123",
+            requested_channel=channel,
             expires_at=now + timedelta(minutes=10),
             created_at=now,
         )
@@ -181,10 +186,24 @@ class TestPendingAction:
         assert a.is_expired(datetime.now(UTC) + timedelta(minutes=11))
 
     def test_high_ist_per_sprache_bestaetigbar(self) -> None:
-        a = self._action(RiskLevel.HIGH)
-        assert a.allows_channel("voice")
-        assert a.allows_channel("gesture")
+        """Eine in der Oberfläche angezeigte Vorschau darf per Sprache bestätigt
+        werden — der Nutzer sieht sie dabei."""
+        a = self._action(RiskLevel.HIGH, channel="ui")
         assert a.allows_channel("ui")
+        assert a.allows_channel("voice")
+
+    def test_geste_kann_einen_ui_dialog_nicht_bestaetigen(self) -> None:
+        """Kanalbindung: Eine Geste aus der Entfernung gibt einen ungelesenen
+        Dialog frei — keine informierte Zustimmung."""
+        a = self._action(RiskLevel.HIGH, channel="ui")
+        assert not a.allows_channel("gesture")
+
+    def test_sprachdialog_wird_nicht_in_der_ui_bestaetigt(self) -> None:
+        """Umgekehrt gilt die Ausnahme nicht: Was per Sprache angekündigt wurde,
+        hat der Nutzer nicht zwingend gesehen."""
+        a = self._action(RiskLevel.HIGH, channel="voice")
+        assert a.allows_channel("voice")
+        assert not a.allows_channel("ui")
 
     def test_critical_nur_in_der_ui(self) -> None:
         """Spracherkennung ist zu fehleranfällig für Irreversibles — und aus
@@ -195,16 +214,42 @@ class TestPendingAction:
         assert not a.allows_channel("gesture")
 
     def test_nonce_muss_ausreichend_lang_sein(self) -> None:
+        """32 Zeichen Mindestlänge — Erraten darf kein Angriffsweg sein."""
         with pytest.raises(ValidationError):
             PendingAction(
                 id=uuid4(),
+                run_id=uuid4(),
                 invocation_id=uuid4(),
                 user_id=uuid4(),
+                session_id=uuid4(),
                 tool_name="x",
                 preview=ActionPreview(tool_name="x", title="X", risk=RiskLevel.HIGH),
                 risk=RiskLevel.HIGH,
                 reason="t",
-                nonce="kurz",
+                payload_hash="a" * 64,
+                nonce="zu-kurz",
+                requested_channel="ui",
+                expires_at=datetime.now(UTC),
+                created_at=datetime.now(UTC),
+            )
+
+    def test_payload_hash_muss_hexstring_sein(self) -> None:
+        """Ein abweichendes Format wäre ein stiller Ausfall des Vergleichs vor
+        der Ausführung."""
+        with pytest.raises(ValidationError):
+            PendingAction(
+                id=uuid4(),
+                run_id=uuid4(),
+                invocation_id=uuid4(),
+                user_id=uuid4(),
+                session_id=uuid4(),
+                tool_name="x",
+                preview=ActionPreview(tool_name="x", title="X", risk=RiskLevel.HIGH),
+                risk=RiskLevel.HIGH,
+                reason="t",
+                payload_hash="NICHT-HEX" + "0" * 55,
+                nonce="0123456789abcdef0123456789abcdef0123",
+                requested_channel="ui",
                 expires_at=datetime.now(UTC),
                 created_at=datetime.now(UTC),
             )

@@ -64,6 +64,7 @@ from .memory import (
 from .permissions import (
     ActionPreview,
     AmountConstraints,
+    ApprovalChannel,
     ConstraintViolation,
     FilesConstraints,
     MailSendConstraints,
@@ -117,6 +118,7 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "TaintLevel",
     "escalate",
     # permissions
+    "ApprovalChannel",
     "RiskLevel",
     "PermissionMode",
     "PolicyEffect",

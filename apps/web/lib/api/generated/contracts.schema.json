@@ -3206,7 +3206,7 @@
           "type": "string"
         }
       },
-      "description": "Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt.",
+      "description": "Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt.\n\nDie Bestätigung gilt **nicht** für eine Aktion, sondern für einen konkreten\nPayload: Sie bedeutet „ich stimme genau diesem Inhalt zu\", nicht „ich stimme\ndieser Art von Aktion grundsätzlich zu\".",
       "properties": {
         "created_at": {
           "format": "date-time",
@@ -3229,8 +3229,15 @@
           "type": "string"
         },
         "nonce": {
-          "minLength": 16,
+          "minLength": 32,
           "title": "Nonce",
+          "type": "string"
+        },
+        "payload_hash": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Payload Hash",
           "type": "string"
         },
         "preview": {
@@ -3240,8 +3247,74 @@
           "title": "Reason",
           "type": "string"
         },
+        "requested_channel": {
+          "enum": [
+            "ui",
+            "voice",
+            "gesture"
+          ],
+          "title": "Requested Channel",
+          "type": "string"
+        },
+        "responded_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Responded At"
+        },
+        "responded_via": {
+          "anyOf": [
+            {
+              "enum": [
+                "ui",
+                "voice",
+                "gesture"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Responded Via"
+        },
+        "response": {
+          "anyOf": [
+            {
+              "enum": [
+                "approved",
+                "rejected",
+                "expired"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Response"
+        },
         "risk": {
           "$ref": "#/$defs/RiskLevel"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "title": "Session Id",
+          "type": "string"
         },
         "tool_name": {
           "title": "Tool Name",
@@ -3255,13 +3328,17 @@
       },
       "required": [
         "id",
+        "run_id",
         "invocation_id",
         "user_id",
+        "session_id",
         "tool_name",
         "preview",
         "risk",
         "reason",
+        "payload_hash",
         "nonce",
+        "requested_channel",
         "expires_at",
         "created_at"
       ],
@@ -5714,7 +5791,7 @@
           "type": "string"
         },
         "PendingAction": {
-          "description": "Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt.",
+          "description": "Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt.\n\nDie Bestätigung gilt **nicht** für eine Aktion, sondern für einen konkreten\nPayload: Sie bedeutet „ich stimme genau diesem Inhalt zu\", nicht „ich stimme\ndieser Art von Aktion grundsätzlich zu\".",
           "properties": {
             "created_at": {
               "format": "date-time",
@@ -5737,8 +5814,15 @@
               "type": "string"
             },
             "nonce": {
-              "minLength": 16,
+              "minLength": 32,
               "title": "Nonce",
+              "type": "string"
+            },
+            "payload_hash": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Payload Hash",
               "type": "string"
             },
             "preview": {
@@ -5748,8 +5832,74 @@
               "title": "Reason",
               "type": "string"
             },
+            "requested_channel": {
+              "enum": [
+                "ui",
+                "voice",
+                "gesture"
+              ],
+              "title": "Requested Channel",
+              "type": "string"
+            },
+            "responded_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Responded At"
+            },
+            "responded_via": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ui",
+                    "voice",
+                    "gesture"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Responded Via"
+            },
+            "response": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "approved",
+                    "rejected",
+                    "expired"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Response"
+            },
             "risk": {
               "$ref": "#/$defs/RiskLevel"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "session_id": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
             },
             "tool_name": {
               "title": "Tool Name",
@@ -5763,13 +5913,17 @@
           },
           "required": [
             "id",
+            "run_id",
             "invocation_id",
             "user_id",
+            "session_id",
             "tool_name",
             "preview",
             "risk",
             "reason",
+            "payload_hash",
             "nonce",
+            "requested_channel",
             "expires_at",
             "created_at"
           ],

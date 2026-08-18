@@ -8,6 +8,8 @@ bestimmt, was ein Modell überhaupt sieht.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from jarvis_contracts import DataClass, PayloadInspectability, RiskLevel, ToolSpec
@@ -60,28 +62,79 @@ class TestRegistrierung:
         reg = ToolRegistry()
         with pytest.raises(UnknownTool):
             reg.require("gibt.es.nicht")
-        with pytest.raises(UnknownTool):
-            reg.handler("gibt.es.nicht")
 
-    def test_werkzeug_ohne_implementierung(self) -> None:
-        """Spezifikation und Implementierung sind getrennt: Wer Berechtigungen
-        prüfen will, braucht den Handler nicht."""
-        reg = ToolRegistry()
-        reg.register(_spec("system.time"))
-        assert reg.get("system.time") is not None
-        with pytest.raises(UnknownTool, match="keine Implementierung"):
-            reg.handler("system.time")
+    @pytest.mark.security
+    @pytest.mark.invariant("policy-single-entry-point")
+    def test_registry_gibt_keinen_handler_heraus(self) -> None:
+        """Es gibt bewusst keine Methode, die den Handler zurückgibt.
 
-    async def test_handler_wird_zurueckgegeben(self) -> None:
+        Wer ein Werkzeug ausführen will, braucht eine ExecutionAuthorization.
+        Eine Methode wie ``handler(name)`` wäre der zweite Ausführungspfad —
+        also der Pfad, den niemand prüft.
+        """
+        assert not hasattr(ToolRegistry, "handler")
+        assert hasattr(ToolRegistry, "execute")
+
+    @pytest.mark.security
+    @pytest.mark.invariant("policy-single-entry-point")
+    async def test_ausfuehrung_verlangt_passenden_hash(self) -> None:
+        """Ein Grant mit fremdem Hash darf nicht ausführen — die Registry prüft
+        eigenständig nach, weil Autorisierung und Ausführung getrennte Aufrufe
+        sind."""
         from jarvis_contracts import ToolResult
 
-        async def handler() -> ToolResult:
+        called: list[dict[str, object]] = []
+
+        async def handler(**kwargs: object) -> ToolResult:
+            called.append(kwargs)
             return ToolResult(ok=True, display="fertig")
 
         reg = ToolRegistry()
         reg.register(_spec("system.time"), handler)
-        result = await reg.handler("system.time")()
+
+        class FakeAuth:
+            tool_name = "system.time"
+            arguments: ClassVar[dict[str, object]] = {}
+            verified_hash = "0" * 64
+
+        with pytest.raises(UnknownTool, match="weichen von der Autorisierung ab"):
+            await reg.execute(FakeAuth())  # type: ignore[arg-type]
+        assert not called, "Der Handler darf bei falschem Hash nicht laufen"
+
+    async def test_ausfuehrung_mit_gueltigem_grant(self) -> None:
+        from jarvis_contracts import ToolResult
+        from jarvis_core.policy.approval import payload_hash
+
+        async def handler(**kwargs: object) -> ToolResult:
+            return ToolResult(ok=True, display="fertig")
+
+        reg = ToolRegistry()
+        reg.register(_spec("system.time"), handler)
+
+        class Auth:
+            tool_name = "system.time"
+            arguments: ClassVar[dict[str, object]] = {}
+            verified_hash = payload_hash("system.time", {})
+
+        result = await reg.execute(Auth())  # type: ignore[arg-type]
         assert result.ok
+
+    async def test_werkzeug_ohne_implementierung(self) -> None:
+        """Spezifikation und Implementierung sind getrennt: Wer Berechtigungen
+        prüfen will, braucht den Handler nicht."""
+        from jarvis_core.policy.approval import payload_hash
+
+        reg = ToolRegistry()
+        reg.register(_spec("system.time"))
+        assert reg.get("system.time") is not None
+
+        class Auth:
+            tool_name = "system.time"
+            arguments: ClassVar[dict[str, object]] = {}
+            verified_hash = payload_hash("system.time", {})
+
+        with pytest.raises(UnknownTool, match="keine Implementierung"):
+            await reg.execute(Auth())  # type: ignore[arg-type]
 
 
 class TestAbfragen:

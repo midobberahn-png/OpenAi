@@ -7,12 +7,12 @@ Komponente, die über jede Werkzeugausführung entscheidet, keine Nebensache.
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from jarvis_contracts import PermissionGrant, ToolSpec
 
-__all__ = ["PermissionStore", "RateLimiter", "ToolLookup"]
+__all__ = ["ExecutionAuthorization", "PermissionStore", "RateLimiter", "ToolLookup"]
 
 
 class PermissionStore(Protocol):
@@ -37,3 +37,25 @@ class RateLimiter(Protocol):
     """Betriebsgrenzen je Nutzer und Werkzeug."""
 
     async def exceeded(self, user_id: UUID, tool_name: str, limit: str) -> bool: ...
+
+
+class ExecutionAuthorization(Protocol):
+    """Nachweis, dass ein Werkzeugaufruf das Ausführungs-Gate durchlaufen hat.
+
+    Strukturell typisiert statt per Import, damit die Registry nicht von der
+    Policy-Schicht abhängt — sonst entstünde ein Zyklus, weil die Policy die
+    Registry für die Werkzeugauflösung braucht.
+
+    Erfüllt wird das Protokoll ausschließlich von
+    ``jarvis_core.policy.approval.ExecutionGrant``, dessen Konstruktor gegen
+    Fremderzeugung gesichert ist.
+    """
+
+    @property
+    def tool_name(self) -> str: ...
+
+    @property
+    def verified_hash(self) -> str: ...
+
+    @property
+    def arguments(self) -> dict[str, Any]: ...

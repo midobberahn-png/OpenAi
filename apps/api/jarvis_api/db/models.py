@@ -431,8 +431,37 @@ class PendingAction(Base):
     """Der validierte, tatsächlich auszuführende Payload — nicht eine vom
     Modell formulierte Beschreibung (docs/07-security §5)."""
 
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    """Welches Werkzeug bestaetigt wird. Geht in den Payload-Hash ein, damit
+    eine Bestaetigung nicht auf ein anderes Werkzeug uebertragbar ist."""
+
     risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
+
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    """SHA-256 der kanonisierten Argumente zum Zeitpunkt der Anfrage.
+
+    Wird unmittelbar vor der Ausfuehrung erneut gebildet und verglichen. Ohne
+    diesen Wert waere die Bestaetigung eine Pauschalfreigabe fuer die
+    Aktionsart statt eine Zustimmung zu einem konkreten Inhalt.
+    """
+
+    frozen_arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    """Die eingefrorenen Argumente. Getrennt von ``preview`` gehalten: Die
+    Vorschau ist fuer Menschen, diese Werte sind fuer die Ausfuehrung."""
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), nullable=False)
+    """Bindung an die anfordernde Sitzung — begrenzt den Schaden eines
+    gestohlenen Sitzungstokens auf Aktionen dieser Sitzung."""
+
+    requested_channel: Mapped[str] = mapped_column(String(10), nullable=False)
+    """Kanal, auf dem die Vorschau angezeigt wurde. Bestaetigt werden darf nur
+    dort — eine Geste, die einen ungelesenen Dialog freigibt, ist keine
+    informierte Zustimmung."""
+
     nonce: Mapped[str] = mapped_column(String(128), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -452,6 +481,13 @@ class PendingAction(Base):
             "responded_via IS NULL OR responded_via IN ('ui','voice','gesture')",
             name="responded_via_valid",
         ),
+        CheckConstraint(
+            "requested_channel IN ('ui','voice','gesture')", name="requested_channel_valid"
+        ),
+        # Der Hash ist ein Hexstring fester Laenge. Ein kuerzerer Wert waere
+        # ein stiller Ausfall des Vergleichs vor der Ausfuehrung.
+        CheckConstraint("payload_hash ~ '^[0-9a-f]{64}$'", name="payload_hash_format"),
+        CheckConstraint("length(nonce) >= 32", name="nonce_min_entropy"),
     )
 
 

@@ -487,35 +487,98 @@ class PreviewField(BaseModel):
     truncated: bool = False
 
 
+ApprovalChannel = Literal["ui", "voice", "gesture"]
+
+
 class PendingAction(BaseModel):
-    """Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt."""
+    """Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt.
+
+    Die Bestätigung gilt **nicht** für eine Aktion, sondern für einen konkreten
+    Payload: Sie bedeutet „ich stimme genau diesem Inhalt zu", nicht „ich stimme
+    dieser Art von Aktion grundsätzlich zu".
+    """
 
     id: UUID
+    run_id: UUID
     invocation_id: UUID
     user_id: UUID
+    session_id: UUID
+    """Bindung an die Sitzung, in der die Bestätigung angefordert wurde.
+
+    Begrenzt den Schaden eines gestohlenen Sitzungstokens auf Aktionen, die
+    diese Sitzung selbst angestoßen hat — eine andere Sitzung desselben Nutzers
+    kann eine fremde Bestätigung nicht einlösen.
+    """
+
     tool_name: str
     preview: ActionPreview
     risk: RiskLevel
     reason: str
-    nonce: str = Field(min_length=16)
-    """HMAC-signiert, an Nutzer und Sitzung gebunden — gegen gefälschte
-    Bestätigungen."""
+
+    payload_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    """SHA-256 über die kanonisierten Argumente zum Zeitpunkt der Anfrage.
+
+    Der Kern der Bindung: Vor der Ausführung wird der Hash des tatsächlich
+    auszuführenden Payloads erneut gebildet und verglichen. Ohne diesen Wert
+    wäre die Bestätigung eine Pauschalfreigabe.
+    """
+
+    nonce: str = Field(min_length=32)
+    """Serverseitig erzeugte Zufallsfolge, genau einmal einlösbar.
+
+    Bewusst *ohne* zusätzliche HMAC-Signatur: Die Nonce hat ausreichend
+    Entropie, wird serverseitig erzeugt, in der Datenbank gehalten und atomar
+    verbraucht. Eine HMAC-Schicht darüber schützt gegen nichts in unserem
+    Bedrohungsmodell — wer die Datenbank lesen kann, kann auch Schlüssel lesen.
+    Kryptografie ohne Angreifermodell ist Dekoration.
+
+    Wichtig: Die Nonce ist **nicht** die Sicherheitsidentität. Die trägt die
+    vollständige Bindung aus Nutzer, Sitzung, Lauf, Aktion, Payload-Hash,
+    Kanal und Ablaufzeit.
+    """
+
+    requested_channel: ApprovalChannel
+    """Kanal, auf dem die Vorschau angezeigt wurde."""
 
     expires_at: datetime
     created_at: datetime
 
+    response: Literal["approved", "rejected", "expired"] | None = None
+    """``None`` heißt: noch offen. Der Übergang von ``None`` auf einen Wert ist
+    der Nonce-Verbrauch und wird von der Datenbank atomar erzwungen."""
+
+    responded_at: datetime | None = None
+    responded_via: ApprovalChannel | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self.response is None
+
     def is_expired(self, now: datetime) -> bool:
         return now >= self.expires_at
 
-    def allows_channel(self, channel: Literal["ui", "voice", "gesture"]) -> bool:
-        """CRITICAL verlangt eine Interaktion in der UI.
+    def allows_channel(self, channel: ApprovalChannel) -> bool:
+        """Darf über diesen Kanal bestätigt werden?
 
-        Spracherkennung und Gestenerkennung sind zu fehleranfällig für
-        irreversible Aktionen — und aus einem anderen Raum auslösbar.
+        Zwei getrennte Gründe, die hier zusammenkommen:
+
+        1. **Irreversibles nur in der Oberfläche.** Sprach- und Gestenerkennung
+           sind zu fehleranfällig für ``CRITICAL`` — und aus einem anderen Raum
+           auslösbar.
+        2. **Kanalbindung.** Bestätigt werden darf nur dort, wo die Vorschau
+           auch angezeigt wurde. Eine Geste aus vier Metern Entfernung, die
+           einen ungelesenen Dialog freigibt, ist keine informierte Zustimmung,
+           sondern genau die Bestätigungsmüdigkeit aus Risiko R5.
+
+        Ausnahme: Eine in der Oberfläche angezeigte Vorschau darf auch per
+        Sprache bestätigt werden, solange sie nicht ``CRITICAL`` ist — der
+        Nutzer sieht sie dann ja. Umgekehrt gilt das nicht.
         """
         if self.risk.ui_only_confirmation:
             return channel == "ui"
-        return True
+        if channel == self.requested_channel:
+            return True
+        return self.requested_channel == "ui" and channel == "voice"
 
 
 ActionPreview.model_rebuild()

@@ -135,7 +135,7 @@ INVARIANTS: tuple[Invariant, ...] = (
         title="Bestätigter Payload ist unveränderlich",
         statement=("Was ausgeführt wird, ist byte-identisch mit dem, was in der Vorschau stand."),
         why="Sonst bestätigt der Nutzer A und das System führt B aus.",
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.policy.approval",
     ),
     Invariant(
@@ -146,7 +146,7 @@ INVARIANTS: tuple[Invariant, ...] = (
             "festgehalten wurde."
         ),
         why="Andernfalls ließe sich eine Bestätigung auf einen anderen Aufruf übertragen.",
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.policy.approval",
     ),
     Invariant(
@@ -160,7 +160,7 @@ INVARIANTS: tuple[Invariant, ...] = (
             "Eine Bestätigung von 14:00 darf nicht um 04:00 ausgeführt werden, und ein "
             "entzogenes Recht muss ausstehende Bestätigungen entwerten."
         ),
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.policy.approval",
     ),
     Invariant(
@@ -168,7 +168,7 @@ INVARIANTS: tuple[Invariant, ...] = (
         title="Bestätigungen sind einmalig",
         statement="Eine Nonce lässt sich genau einmal einlösen, auch unter Nebenläufigkeit.",
         why="Sonst ließe sich eine einmal bestätigte Aktion beliebig oft ausführen.",
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.policy.approval",
     ),
     Invariant(
@@ -183,6 +183,23 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.policy.engine",
     ),
     Invariant(
+        id="approval-channel-bound",
+        title="Bestätigt wird dort, wo angezeigt wurde",
+        statement=(
+            "Eine Bestätigung ist an Nutzer, Sitzung und Anzeigekanal gebunden und "
+            "lässt sich nicht über einen anderen Kanal oder eine andere Sitzung einlösen."
+        ),
+        why=(
+            "Kein kryptografischer Schutz — den trägt die Nonce —, sondern die "
+            "Absicherung informierter Zustimmung: Eine Geste aus vier Metern Entfernung, "
+            "die einen ungelesenen Dialog freigibt, ist genau die Bestätigungsmüdigkeit "
+            "aus Risiko R5. Die Sitzungsbindung begrenzt zusätzlich den Schaden eines "
+            "gestohlenen Sitzungstokens."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.policy.approval",
+    ),
+    Invariant(
         id="approval-critical-ui-only",
         title="Irreversibles wird nur in der Oberfläche bestätigt",
         statement="CRITICAL-Aktionen akzeptieren keine Sprach- oder Gestenbestätigung.",
@@ -194,12 +211,12 @@ INVARIANTS: tuple[Invariant, ...] = (
     Invariant(
         id="policy-single-entry-point",
         title="Die Policy Engine ist der einzige Weg",
-        statement="Kein Werkzeug wird ohne Policy-Entscheidung ausgeführt.",
+        statement=(
+            "Kein Werkzeug wird ohne Policy-Entscheidung ausgeführt: Die Registry "
+            "gibt keinen Handler heraus und verlangt eine ExecutionAuthorization."
+        ),
         why="Ein zweiter Pfad wäre der Pfad, den niemand prüft.",
-        # Noch nicht belegbar: Solange kein Executor existiert, gibt es keinen
-        # Ausführungspfad, dessen Alleinstellung sich prüfen ließe. Als ENFORCED
-        # zu führen wäre eine unbelegte Behauptung.
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.policy.engine",
     ),
     Invariant(

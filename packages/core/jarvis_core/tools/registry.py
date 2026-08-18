@@ -11,9 +11,11 @@ Code auszuführen.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from secrets import compare_digest
 from typing import Any
 
 from jarvis_contracts import RiskLevel, ToolResult, ToolSpec
+from jarvis_core.ports.permissions import ExecutionAuthorization
 
 __all__ = ["DuplicateTool", "ToolHandler", "ToolRegistry", "UnknownTool"]
 
@@ -62,11 +64,34 @@ class ToolRegistry:
             raise UnknownTool(f"Unbekanntes Werkzeug: {name!r}")
         return spec
 
-    def handler(self, name: str) -> ToolHandler:
-        handler = self._handlers.get(name)
+    async def execute(self, auth: ExecutionAuthorization) -> ToolResult:
+        """Führt ein Werkzeug aus — der einzige Weg dorthin.
+
+        Es gibt bewusst keine Methode, die den Handler herausgibt. Wer ein
+        Werkzeug ausführen will, braucht eine ``ExecutionAuthorization``, und
+        die entsteht ausschließlich in
+        ``ApprovalGateway.authorize_execution()`` nach Hash-Vergleich und
+        erneuter Policy-Prüfung.
+
+        Der Hash wird hier ein drittes Mal geprüft. Das ist keine Paranoia,
+        sondern die Konsequenz daraus, dass die Autorisierung und die
+        Ausführung getrennte Aufrufe sind: Zwischen ihnen könnte ein Aufrufer
+        andere Argumente einsetzen.
+        """
+        spec = self.require(auth.tool_name)
+        handler = self._handlers.get(auth.tool_name)
         if handler is None:
-            raise UnknownTool(f"Für {name!r} ist keine Implementierung registriert.")
-        return handler
+            raise UnknownTool(f"Für {auth.tool_name!r} ist keine Implementierung registriert.")
+
+        from jarvis_core.policy.approval import payload_hash  # lokal: Zyklus vermeiden
+
+        actual = payload_hash(spec.name, auth.arguments)
+        if not compare_digest(actual, auth.verified_hash):
+            raise UnknownTool(
+                f"Argumente von {spec.name!r} weichen von der Autorisierung ab — "
+                "Ausführung abgebrochen."
+            )
+        return await handler(**auth.arguments)
 
     def names(self) -> set[str]:
         return set(self._specs)
