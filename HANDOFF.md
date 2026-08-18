@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> Stand: 18.08.2026, Commit `7920dc0`. Dieses Dokument ist der Einstieg für
+> Stand: 18.08.2026, Commit `e2451d2`. Dieses Dokument ist der Einstieg für
 > eine frische Claude-Code-Sitzung. Es ersetzt kein Architekturdokument,
 > sondern sagt, wo das Projekt steht und was als Nächstes zu tun ist.
 
@@ -23,10 +23,10 @@ Docstrings, Commit-Nachrichten und Testnamen sind deutsch.
 
 | | |
 |---|---|
-| Commits | 7 (`9875468` … `7920dc0`), lokaler Branch `master`, kein Remote |
-| Tests | **319** gesamt — 90 mit `-m security`, 37 mit `-m integration` |
-| **Security Invariant Coverage** | **26/29** |
-| mypy | `strict`, sauber über 38 Dateien |
+| Commits | 11 (`9875468` … `e2451d2`), lokaler Branch `master`, kein Remote |
+| Tests | **459** gesamt — 181 mit `-m security`, 47 mit `-m integration` |
+| **Security Invariant Coverage** | **31/31** |
+| mypy | `strict`, sauber über 50 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 30 Tabellen, 4 Migrationen, bi-direktional geprüft |
 | Verträge | 95 exportierte Typen in `jarvis_contracts` |
@@ -34,6 +34,10 @@ Docstrings, Commit-Nachrichten und Testnamen sind deutsch.
 ### Commit-Historie
 
 ```
+e2451d2  feat(core): Agentenketten und der Durchstich von der Eingabe bis zum Audit
+8e23c1e  fix(core): Grant an den Lauf binden, Obergrenze aus dem Routing
+5440d37  feat(core): Planer, Executor und das Gate für unbestätigte Aufrufe
+b3a7981  feat(core): Klassifikation und deterministisches Routing
 7920dc0  chore(core): Orchestrator-Invarianten als PLANNED aufgenommen
 e0c5c05  feat(core): Approval Gateway, Ausführungs-Gate, Angriffe B/C/G geschlossen
 8baa5c0  feat(core): Security Invariant Coverage als Leitkennzahl
@@ -133,6 +137,12 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Approval Gateway | `packages/core/jarvis_core/policy/approval.py` | request → respond → authorize |
 | Invarianten-Register | `packages/core/jarvis_core/policy/invariants.py` | 29 Invarianten |
 | Postgres-Store | `apps/api/jarvis_api/db/approval_store.py` | atomares Compare-and-Set |
+| Invokations-Store | `apps/api/jarvis_api/db/invocation_store.py` | Aufruf + Entscheidung vor der Wirkung |
+| Klassifikation | `packages/core/jarvis_core/orchestrator/classifier.py` | regelbasiert, stuft nur hoch |
+| Router | `packages/core/jarvis_core/orchestrator/router.py` | deterministisch, P3 strukturell lokal |
+| Planer | `packages/core/jarvis_core/orchestrator/planner.py` | drei Modi, lesend vor schreibend |
+| Executor | `packages/core/jarvis_core/orchestrator/executor.py` | FSM, Policy → Gate → Registry |
+| Agentenkette | `packages/core/jarvis_core/agents/` | Schnittmenge über alle Stufen |
 | Datenmodell | `apps/api/jarvis_api/db/models.py` | 30 Tabellen |
 
 ### Bewiesene Sicherheitseigenschaften
@@ -161,10 +171,9 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 | **Authentifizierung** | Es gibt keinen Login. `session_id` wird durchgereicht, aber von niemandem verifiziert. Die Sitzungsbindung ist erst dann eine Sicherheitsmaßnahme, wenn Sessions echt sind. |
 | **FastAPI-App** | `apps/api/jarvis_api/main.py` existiert nicht. `gen_contracts.py` überspringt die OpenAPI-Erzeugung. Keine HTTP- oder WebSocket-Endpunkte. |
 | **LLM-Provider** | Kein `LLMProvider`-Adapter. Nichts ruft ein Modell auf. |
-| **Orchestrator** | Punkt 9, der nächste Schritt. |
 | **Audit-Sink** | Das `AuditSink`-Protokoll ist definiert, die Postgres-Implementierung fehlt. Der beschriebene `pg_advisory_xact_lock` ist **noch nirgends implementiert** — ohne ihn kann die Kette bei nebenläufigen Schreibern gabeln. |
 | **Rate Limiter** | Port definiert, keine Implementierung. |
-| **Agent Runtime** | Nur Verträge (`AgentSpec`), keine Laufzeit. |
+| **Agenten-Denkschleife** | `AgentBehaviour` ist ein Protokoll; die Modellschleife dahinter fehlt. Rechte und Taint-Propagation sind vollständig, das Denken nicht. |
 | **Memory Service** | Nur Verträge und Schema, kein Retrieval-Code. |
 | **Alles ab Phase 2** | Voice, Vision, UI, Integrationen. |
 
@@ -176,7 +185,9 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
   kann das nicht vollständig verhindern; die eigentliche Absicherung ist der
   AST-Test. Das steht so im Docstring — **nicht** als „unumgehbar" darstellen.
 - Der Testhelfer `_seed()` in `tests/integration/test_approval_gateway.py`
-  setzt `invocation_id = run_id`. Nur eine Testabkürzung.
+  setzt `invocation_id = run_id`. Nur eine Testabkürzung — sie hatte allerdings
+  verdeckt, dass der Executor `tool_invocations` gar nicht schrieb. Gefunden
+  hat das erst der Durchstichtest.
 - `tests/unit/test_invariant_coverage.py` sammelt Marker per AST-Scan über
   `tests/`. Wer Tests in ein anderes Verzeichnis legt, muss den Pfad anpassen.
 
@@ -197,80 +208,56 @@ Stattdessen: 29 benannte Invarianten in
 
 Generierte Tabelle: `docs/generated/security-invariants.md`.
 
-**Stand 26/29. Offen sind genau die drei, die Punkt 9 schließen muss:**
+**Stand 31/31.** Der Nenner ist mit Punkt 9 von 29 auf 31 gestiegen: Zwei
+Invarianten kamen aus dem Review dazu (`grant-bound-to-run`,
+`data-class-monotonic-within-run`). Die Kennzahl soll den Stand zeigen, nicht
+ihn schmeicheln — eine Lücke zu schließen, ohne sie zu benennen, hätte die
+Zahl gehoben und das Wissen daran verloren.
 
-| Kennung | Was zu belegen ist |
-|---|---|
-| `orchestrator-consumes-decisions` | Der Orchestrator bildet keine eigene Meinung über Erlaubnis |
-| `agent-chain-preserves-capability-binding` | Über A → B → C bleibt die Rechtemenge die Schnittmenge |
-| `agent-chain-propagates-taint` | Eine Zwischenstufe darf nicht als Waschmaschine dienen |
+**Eine Fußnote gehört dazu, und sie ist wichtiger als die Zahl:**
+`approval-channel-bound` bindet Bestätigungen an Nutzer, Sitzung und Kanal.
+Die Tests dazu sind grün — aber `session_id` wird bislang durchgereicht, ohne
+dass irgendjemand sie verifiziert. Die Sitzungsbindung prüft heute, dass zwei
+UUIDs übereinstimmen; eine Sicherheitsmaßnahme wird sie erst mit echter
+Authentifizierung. Deshalb steht Auth als nächster Punkt und nicht der
+LLM-Provider.
 
 ---
 
-## 8. Nächster Schritt: Punkt 9 — Orchestrator-Skelett
+## 8. Nächster Schritt: Authentifizierung
 
-### Harte Vorgabe
+### Warum Auth und nicht der LLM-Provider
 
-Der Orchestrator ist **Konsument** von Sicherheitsentscheidungen, nicht ihr
-Urheber. Erlaubter Ablauf:
+Weil eine Invariante, die wir bereits als durchgesetzt führen, ohne sie
+unvollständig ist. `approval-channel-bound` bindet eine Bestätigung an Nutzer,
+Sitzung und Anzeigekanal — der Schutz gegen die Geste aus vier Metern
+Entfernung, die einen ungelesenen Dialog freigibt. Die Sitzungsbindung ist
+davon der Teil, der heute nichts trägt: `session_id` kommt vom Aufrufer und
+wird von niemandem geprüft.
 
-```
-Eingabe → klassifizieren → planen → Agent/Werkzeug wählen
-        → Policy fragen → ALLOW / CONFIRM / DENY
-        → Approval Gateway → Ausführungs-Gate → Werkzeug
-```
-
-Verboten:
-
-```
-Orchestrator
- ├── "das ist wahrscheinlich sicher"
- ├── "der Nutzer hat das bestimmt gemeint"
- ├── "das wurde gerade bestätigt"
- └── direkte Ausführung
-```
+Ein Modell anzubinden, bevor das geschlossen ist, hieße, die erste echte
+Angriffsfläche auf ein Fundament zu setzen, dessen letzte Schicht fehlt.
 
 ### Umfang
 
-1. **`packages/core/jarvis_core/orchestrator/`**
-   - `classifier.py` — `TurnClassification` (zunächst regelbasiert; das lokale
-     Modell kommt mit dem LLM-Provider)
-   - `router.py` — deterministisch, **kein LLM**; Datenklasse als hartes Filter
-   - `planner.py` — `Plan` mit `PlanStep`/`depends_on`
-   - `executor.py` — Zustandsautomat über `Run`; ruft Policy und Gateway
-   - `budget.py` — `Usage` gegen `RunBudget`
-2. **`packages/core/jarvis_core/agents/`** — Supervisor + `effective_tools`
-   über Ketten
-3. **Tests für die drei offenen Invarianten**, insbesondere
-   - Kette A → B → C: C erbt nicht die Fähigkeiten von B
-   - Zwischenstufe liest Fremdinhalt → gesamter Lauf kontaminiert
-   - AST-Test: `orchestrator/` konstruiert kein `PolicyDecision.allow()`,
-     ruft `registry.execute()` nicht ohne Grant
-4. **End-to-End-Test** der gesamten Kette (die Berater erwarten genau diesen):
+1. **`packages/core/jarvis_core/auth/`**
+   - Sitzungen: Erzeugung, Verifikation, Ablauf, Widerruf
+   - Token als Zufallswert; in der Datenbank liegt nur der Hash — wer die
+     Tabelle liest, bekommt keine gültigen Sitzungen
+2. **`packages/core/jarvis_core/ports/sessions.py`** — `SessionStore`
+3. **`apps/api/jarvis_api/db/session_store.py`** + Migration (`sessions`)
+4. **WebAuthn/Passkey** in `apps/api` — die Bibliothek gehört in die
+   Adapterschicht, nicht in den Kern (ADR-009)
+5. **Das Approval Gateway prüft die Sitzung**, statt sie entgegenzunehmen.
+   Neue Invariante: Eine Bestätigung ist nur mit einer verifizierten,
+   nicht abgelaufenen Sitzung einlösbar.
 
-```
-Eingabe „Prüfe meine Mails und blockiere mir eine Stunde für das Wichtigste"
-  → Mail-Agent → mail.read → TAINTED
-  → Calendar-Agent → calendar.read
-  → strukturierter Termin-Payload
-  → Policy → CONFIRM → Payload-Hash
-  → Re-Authorisierung → Ausführung
-  → Audit + Memory-Provenance
-```
+### Danach
 
-Werkzeuge dafür als Attrappen registrieren — es geht um die Kette, nicht um
-echte Mails.
-
-### Danach (Reihenfolge bewusst geändert)
-
-Ursprünglich war Auth + LLM-Provider vor dem Orchestrator geplant. Die
-Reihenfolge wurde umgedreht, damit das Gate existiert, bevor ein Modell zum
-ersten Mal ein Werkzeug aufrufen könnte. Nach Punkt 9 folgen daher:
-
-1. Auth (Passkey/Session) — macht `session_id` erst echt
-2. `LLMProvider` + Adapter (OpenAI, Anthropic, Ollama)
-3. FastAPI-App + WebSocket
-4. Web-UI
+1. `LLMProvider` + Adapter (OpenAI, Anthropic, Ollama) unter dem
+   Datenklassenfilter — P3 erreicht ausschließlich lokale Modelle
+2. FastAPI-App + WebSocket
+3. Web-UI
 
 ---
 
