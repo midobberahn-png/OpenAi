@@ -2,7 +2,10 @@
 
 Persönliches, selbst gehostetes KI-Assistenzsystem: Sprache, Text, Vision, Gedächtnis, Werkzeuge und Agenten — mit einem Berechtigungssystem, das jede Aktion mit Außenwirkung kontrolliert.
 
-> **Status: Architekturentwurf.** Noch kein Code. Die Implementierung beginnt nach Freigabe.
+> **Status: Phase 1 in Arbeit.** Sicherheitssockel steht (Policy Engine, Taint-Gate,
+> Approval Gateway, Audit-Kette). Als Nächstes: Orchestrator-Skelett.
+>
+> **Neue Sitzung startet hier: [HANDOFF.md](HANDOFF.md)**
 
 ---
 
@@ -50,4 +53,9 @@ Phasen 5–8 (≈17 Wochen) sind additiv — UI-Ausbau, Vision, Agenten, Plugins
 
 ## Nächster Schritt
 
-Freigabe der Architektur, dann Beginn mit **Phase 1, Woche 1**: Monorepo-Gerüst, Datenbankschema, Contracts-Paket, CI.
+**Punkt 9 — Orchestrator-Skelett.** Der Sicherheitssockel steht; der Orchestrator
+führt ihn zusammen und muss dabei drei noch offene Invarianten belegen
+(`orchestrator-consumes-decisions`, `agent-chain-preserves-capability-binding`,
+`agent-chain-propagates-taint`).
+
+Vollständiger Stand, Umgebung und Fallstricke: **[HANDOFF.md](HANDOFF.md)**
