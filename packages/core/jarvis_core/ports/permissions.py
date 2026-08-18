@@ -49,6 +49,12 @@ class ExecutionAuthorization(Protocol):
     Erfüllt wird das Protokoll ausschließlich von
     ``jarvis_core.policy.approval.ExecutionGrant``, dessen Konstruktor gegen
     Fremderzeugung gesichert ist.
+
+    ``run_id`` und ``user_id`` gehören zum Protokoll, weil die Registry sie
+    prüft: Ein Grant ist die Erlaubnis für *einen* Aufruf in *einem* Lauf. Ohne
+    diese Felder wäre er ein Wertobjekt, das überall dort gilt, wo Werkzeugname
+    und Argumente zufällig passen — und dann hinge die Bindung allein daran,
+    dass niemand ihn weiterreicht.
     """
 
     @property
@@ -59,3 +65,9 @@ class ExecutionAuthorization(Protocol):
 
     @property
     def arguments(self) -> dict[str, Any]: ...
+
+    @property
+    def run_id(self) -> UUID: ...
+
+    @property
+    def user_id(self) -> UUID: ...

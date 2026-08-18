@@ -145,11 +145,29 @@ class ExecutionGrant(BaseModel):
     def __init__(self, /, _sentinel: object = None, **data: Any) -> None:
         if _sentinel is not _GRANT_SENTINEL:
             raise RuntimeError(
-                "ExecutionGrant darf nur von ApprovalGateway.authorize_execution() "
-                "erzeugt werden. Ein selbst gebauter Grant wäre die Umgehung des "
-                "Ausführungs-Gates."
+                "ExecutionGrant darf nur vom ApprovalGateway erzeugt werden. Ein "
+                "selbst gebauter Grant wäre die Umgehung des Ausführungs-Gates."
             )
         super().__init__(**data)
+
+    @classmethod
+    def model_construct(  # type: ignore[override]
+        cls, _fields_set: set[str] | None = None, **values: Any
+    ) -> ExecutionGrant:
+        """Der bequemste Weg am Wächter vorbei — deshalb geschlossen.
+
+        ``model_construct`` ist Pydantics Schnellpfad und ruft ``__init__``
+        nicht auf; der Sentinel oben liefe damit ins Leere. Ein Angreifer
+        braucht dafür bereits Codeausführung im Prozess und hat dann ohnehin
+        andere Wege — aber ein Wächter, an dem eine dokumentierte Methode
+        vorbeiführt, ist schlechter als keiner: Er erzeugt Vertrauen, das er
+        nicht trägt.
+        """
+        raise RuntimeError(
+            "ExecutionGrant.model_construct() ist gesperrt — es umginge den "
+            "Wächter im Konstruktor. Grants entstehen ausschließlich im "
+            "ApprovalGateway."
+        )
 
 
 class ApprovalOutcome(BaseModel):

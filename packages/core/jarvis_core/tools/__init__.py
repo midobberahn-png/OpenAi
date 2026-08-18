@@ -1,5 +1,11 @@
 """Werkzeugkatalog."""
 
-from .registry import DuplicateTool, ToolHandler, ToolRegistry, UnknownTool
+from .registry import DuplicateTool, ForgedAuthorization, ToolHandler, ToolRegistry, UnknownTool
 
-__all__ = ["DuplicateTool", "ToolHandler", "ToolRegistry", "UnknownTool"]
+__all__ = [
+    "DuplicateTool",
+    "ForgedAuthorization",
+    "ToolHandler",
+    "ToolRegistry",
+    "UnknownTool",
+]

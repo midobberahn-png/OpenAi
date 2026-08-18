@@ -22,6 +22,7 @@ from jarvis_contracts import (
     PayloadInspectability,
     PermissionGrant,
     PermissionMode,
+    PolicyRequest,
     RiskLevel,
     ScopeConstraints,
     TaintLevel,
@@ -643,3 +644,168 @@ class TestBindung:
         stored = await PostgresApprovalStore(conn).get(action.id)
         assert stored is not None
         assert stored.response == "expired", "Abgelaufenes darf nicht offen bleiben"
+
+
+# ==========================================================================
+# Der zweite Grant-Pfad — gegen die echte Datenbank
+# ==========================================================================
+
+
+class TestGateOhneBestaetigung:
+    """``authorize_allowed()`` ist der Weg für Aufrufe ohne Bestätigung.
+
+    Er wurde nötig, weil ein Grant sonst nur aus dem Bestätigungspfad entstehen
+    konnte und ein unbedenkliches Werkzeug damit gar nicht ausführbar gewesen
+    wäre. Die Prüfungen gehören deshalb hierher — gegen dieselbe Persistenz,
+    gegen die auch der Bestätigungspfad geprüft wird.
+    """
+
+    @pytest.mark.invariant("policy-single-entry-point")
+    async def test_erlaubter_aufruf_erhaelt_einen_grant(self, conn: AsyncConnection) -> None:
+        uid, rid = await _seed(conn)
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+
+        grant = await gw.authorize_allowed(
+            request=PolicyRequest(
+                user_id=uid, run_id=rid, tool_name="calendar.create", arguments=ARGS
+            ),
+            spec=CALENDAR_CREATE,
+            taint=TaintLevel.CLEAN,
+            invocation_id=rid,
+            now=NOW,
+        )
+        assert grant.run_id == rid
+        assert grant.user_id == uid
+
+    @pytest.mark.invariant("approval-toctou-protected")
+    async def test_entzogenes_recht_verhindert_den_grant(self, conn: AsyncConnection) -> None:
+        """Stale Authorization: Die Policy sagte eben noch ALLOW, das Recht ist
+        inzwischen weg. Das Gate fragt selbst — eine mitgebrachte Entscheidung
+        gäbe es hier nicht zu verwerten."""
+        uid, rid = await _seed(conn)
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+        request = PolicyRequest(
+            user_id=uid, run_id=rid, tool_name="calendar.create", arguments=ARGS
+        )
+
+        assert await gw.authorize_allowed(
+            request=request,
+            spec=CALENDAR_CREATE,
+            taint=TaintLevel.CLEAN,
+            invocation_id=rid,
+            now=NOW,
+        )
+
+        perms.revoke("calendar.create")
+        with pytest.raises(ExecutionDenied) as denied:
+            await gw.authorize_allowed(
+                request=request,
+                spec=CALENDAR_CREATE,
+                taint=TaintLevel.CLEAN,
+                invocation_id=rid,
+                now=NOW,
+            )
+        assert denied.value.code == "policy-denied"
+
+    @pytest.mark.invariant("policy-single-entry-point")
+    async def test_geprueftes_und_auszufuehrendes_werkzeug_muessen_gleich_sein(
+        self, conn: AsyncConnection
+    ) -> None:
+        """Tool Swap: Die Anfrage nennt das harmlose Werkzeug, die Spezifikation
+        das schärfere. Geprüft würde das eine, ausgeführt das andere."""
+        uid, rid = await _seed(conn)
+        perms = MutablePermissions()
+        perms.allow("calendar.read")
+        gw = _gateway(conn, perms)
+
+        with pytest.raises(ExecutionDenied) as denied:
+            await gw.authorize_allowed(
+                request=PolicyRequest(
+                    user_id=uid, run_id=rid, tool_name="calendar.read", arguments=ARGS
+                ),
+                spec=CALENDAR_CREATE,
+                taint=TaintLevel.CLEAN,
+                invocation_id=rid,
+                now=NOW,
+            )
+        assert denied.value.code == "tool-mismatch"
+
+    @pytest.mark.invariant("taint-precedes-permission")
+    async def test_kontamination_verhindert_den_grant(self, conn: AsyncConnection) -> None:
+        """Ein Termin *mit Teilnehmern* wirkt nach außen und ist nach dem Lesen
+        von Fremdinhalt gesperrt — auch auf diesem Pfad."""
+        uid, rid = await _seed(conn)
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+
+        with pytest.raises(ExecutionDenied) as denied:
+            await gw.authorize_allowed(
+                request=PolicyRequest(
+                    user_id=uid,
+                    run_id=rid,
+                    tool_name="calendar.create",
+                    arguments={**ARGS, "attendees": ["attacker@example.com"]},
+                ),
+                spec=CALENDAR_CREATE,
+                taint=TaintLevel.TAINTED,
+                invocation_id=rid,
+                now=NOW,
+            )
+        assert denied.value.code == "policy-denied"
+
+    @pytest.mark.invariant("grant-bound-to-run")
+    async def test_grant_aus_lauf_a_fuehrt_in_lauf_b_nicht_aus(self, conn: AsyncConnection) -> None:
+        """Grant Confusion gegen die echte Persistenz: zwei Läufe desselben
+        Nutzers, derselbe Werkzeugaufruf, identische Argumente. Der Grant aus
+        dem einen darf im anderen nicht ausführen — sonst wäre die Laufbindung
+        reine Konvention."""
+        from jarvis_contracts import ToolResult
+        from jarvis_core.tools import ForgedAuthorization
+
+        uid, rid_a = await _seed(conn)
+        rid_b = uuid.uuid4()
+        await conn.execute(
+            text(
+                "INSERT INTO runs (id, user_id, trace_id, budget) "
+                "VALUES (:rid, :uid, 'trace-b', '{}'::jsonb)"
+            ),
+            {"rid": rid_b, "uid": uid},
+        )
+
+        called: list[dict[str, Any]] = []
+
+        async def handler(**kwargs: Any) -> ToolResult:
+            called.append(kwargs)
+            return ToolResult(ok=True, display="angelegt")
+
+        registry = ToolRegistry()
+        registry.register(CALENDAR_CREATE, handler)
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = ApprovalGateway(PostgresApprovalStore(conn), PolicyEngine(registry, perms))
+
+        grant = await gw.authorize_allowed(
+            request=PolicyRequest(
+                user_id=uid, run_id=rid_a, tool_name="calendar.create", arguments=ARGS
+            ),
+            spec=CALENDAR_CREATE,
+            taint=TaintLevel.CLEAN,
+            invocation_id=rid_a,
+            now=NOW,
+        )
+
+        with pytest.raises(ForgedAuthorization, match="anderen Lauf"):
+            await registry.execute(grant, run_id=rid_b, user_id=uid)
+        with pytest.raises(ForgedAuthorization, match="anderen Lauf"):
+            await registry.execute(grant, run_id=rid_a, user_id=uuid.uuid4())
+        assert not called, "Ein laufsfremder Grant darf den Handler nicht erreichen"
+
+        # Gegenprobe: Im eigenen Lauf führt derselbe Grant aus.
+        result = await registry.execute(grant, run_id=rid_a, user_id=uid)
+        assert result.ok
+        assert len(called) == 1

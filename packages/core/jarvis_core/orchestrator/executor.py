@@ -119,7 +119,6 @@ class ToolExecutor:
         seq: int,
         session_id: UUID,
         channel: ApprovalChannel = "ui",
-        allowed_data_class: DataClass | None = None,
         agent_name: str | None = None,
     ) -> StepExecution:
         """Ein Werkzeugschritt: fragen, gegebenenfalls bestätigen lassen, ausführen."""
@@ -137,11 +136,7 @@ class ToolExecutor:
 
         spec = self._registry.require(tool_name)
         request = self._policy_request(
-            run,
-            tool_name=tool_name,
-            arguments=arguments,
-            allowed_data_class=allowed_data_class,
-            agent_name=agent_name,
+            run, tool_name=tool_name, arguments=arguments, agent_name=agent_name
         )
         decision = await self._policy.decide(request, taint=run.taint_level, now=now)
 
@@ -201,7 +196,6 @@ class ToolExecutor:
         arguments: dict[str, Any],
         tool_name: str,
         seq: int,
-        allowed_data_class: DataClass | None = None,
     ) -> StepExecution:
         """Führt einen bestätigten Aufruf aus — nach erneuter Prüfung im Gate.
 
@@ -228,7 +222,7 @@ class ToolExecutor:
                 arguments=arguments,
                 spec=spec,
                 taint=run.taint_level,
-                allowed_data_class=allowed_data_class or run.data_class,
+                allowed_data_class=_ceiling(run),
                 now=now,
             )
         except ExecutionDenied as denied:
@@ -355,7 +349,7 @@ class ToolExecutor:
         """
         tracker.record_tool_call()
         try:
-            result = await self._registry.execute(grant)
+            result = await self._registry.execute(grant, run_id=run.id, user_id=run.user_id)
         except Exception as error:
             # Breit gefangen mit Absicht: Ein Werkzeug, das mit einer
             # unerwarteten Ausnahme abbricht, darf den Lauf nicht mitreißen —
@@ -408,7 +402,6 @@ class ToolExecutor:
         *,
         tool_name: str,
         arguments: dict[str, Any],
-        allowed_data_class: DataClass | None,
         agent_name: str | None,
     ) -> PolicyRequest:
         """Baut die Anfrage **aus dem Lauf**, nicht aus einer Modellausgabe.
@@ -416,8 +409,14 @@ class ToolExecutor:
         ``trigger`` und ``allowed_data_class`` sind die beiden Felder, mit
         denen sich die Prüfung mildern ließe: Ein als ``user`` ausgegebener
         nächtlicher Automationslauf umginge die strengere Behandlung
-        unbeaufsichtigter Auslöser. Beide stammen deshalb ausschließlich aus
-        dem persistierten ``Run``.
+        unbeaufsichtigter Auslöser, und eine hochgesetzte Obergrenze ließe
+        P3-Werkzeuge in einem Kontext zu, der dafür nicht geroutet wurde.
+
+        Beide sind deshalb **keine Parameter**. Ein früherer Entwurf nahm
+        ``allowed_data_class`` entgegen — bequem, aber damit bestimmte der
+        Aufrufer seine eigene Obergrenze, und eine selbst gewählte Obergrenze
+        ist keine. Ein Strukturtest hält fest, dass ``PolicyRequest`` im
+        gesamten Orchestrator nur an dieser einen Stelle entsteht.
         """
         return PolicyRequest(
             user_id=run.user_id,
@@ -425,7 +424,7 @@ class ToolExecutor:
             tool_name=tool_name,
             arguments=arguments,
             trigger=run.trigger.value,
-            allowed_data_class=allowed_data_class or run.data_class,
+            allowed_data_class=_ceiling(run),
             agent_name=agent_name,
         )
 
@@ -464,6 +463,20 @@ class ToolExecutor:
                 user_id=run.user_id,
             )
         )
+
+
+def _ceiling(run: Run) -> DataClass:
+    """Höchste Datenklasse, die in diesem Lauf verarbeitet werden darf.
+
+    Quelle ist die Routing-Entscheidung: Sie hält fest, was das *tatsächlich
+    gewählte* Modell führen darf. Ohne Routing — ein Lauf, der noch nicht
+    geroutet wurde — gilt die Klasse des Laufs selbst. Das ist die engere
+    Annahme: Ein Werkzeug oberhalb der bisherigen Laufklasse wird dann
+    abgelehnt, statt auf Verdacht zugelassen.
+    """
+    if run.routing is not None:
+        return run.routing.max_data_class
+    return run.data_class
 
 
 def _taints(spec: ToolSpec, result: ToolResult) -> bool:

@@ -119,6 +119,7 @@ def route(
                 model=wish.name,
                 provider=wish.provider,
                 reason=f"Ausdrücklich angefordert: „{classification.explicit_model_request}“.",
+                max_data_class=wish.max_data_class,
                 rejected=rejected,
             )
         rejected.setdefault(
@@ -135,6 +136,7 @@ def route(
         model=best.name,
         provider=best.provider,
         reason=_reason(best, classification, weights),
+        max_data_class=best.max_data_class,
         rejected=rejected,
     )
 
@@ -219,6 +221,7 @@ def _fallback(
         model=best.name,
         provider=best.provider,
         reason="Rückfall auf ein lokales Modell — kein regulärer Kandidat verfügbar.",
+        max_data_class=best.max_data_class,
         is_fallback=True,
         rejected=rejected,
     )

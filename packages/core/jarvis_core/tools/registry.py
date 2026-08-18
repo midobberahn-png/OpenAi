@@ -13,11 +13,18 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from secrets import compare_digest
 from typing import Any
+from uuid import UUID
 
 from jarvis_contracts import RiskLevel, ToolResult, ToolSpec
 from jarvis_core.ports.permissions import ExecutionAuthorization
 
-__all__ = ["DuplicateTool", "ToolHandler", "ToolRegistry", "UnknownTool"]
+__all__ = [
+    "DuplicateTool",
+    "ForgedAuthorization",
+    "ToolHandler",
+    "ToolRegistry",
+    "UnknownTool",
+]
 
 ToolHandler = Callable[..., Awaitable[ToolResult]]
 
@@ -35,6 +42,17 @@ class UnknownTool(Exception):
 
     Tritt insbesondere bei halluzinierten Werkzeugnamen auf und muss deshalb
     klar von einem Berechtigungsfehler unterscheidbar bleiben.
+    """
+
+
+class ForgedAuthorization(Exception):
+    """Eine Autorisierung passt nicht zu dem Aufruf, für den sie vorgelegt wird.
+
+    Eigene Klasse und ausdrücklich nicht ``UnknownTool``: Ein unbekannter
+    Werkzeugname ist ein Modellfehler und alltäglich, eine nicht passende
+    Autorisierung ist ein Sicherheitsvorfall und gehört als solcher ins
+    Audit-Log. Beide unter derselben Ausnahme zu führen hieße, das eine im
+    Rauschen des anderen zu verlieren.
     """
 
 
@@ -64,19 +82,32 @@ class ToolRegistry:
             raise UnknownTool(f"Unbekanntes Werkzeug: {name!r}")
         return spec
 
-    async def execute(self, auth: ExecutionAuthorization) -> ToolResult:
+    async def execute(
+        self, auth: ExecutionAuthorization, *, run_id: UUID, user_id: UUID
+    ) -> ToolResult:
         """Führt ein Werkzeug aus — der einzige Weg dorthin.
 
         Es gibt bewusst keine Methode, die den Handler herausgibt. Wer ein
         Werkzeug ausführen will, braucht eine ``ExecutionAuthorization``, und
-        die entsteht ausschließlich in
-        ``ApprovalGateway.authorize_execution()`` nach Hash-Vergleich und
-        erneuter Policy-Prüfung.
+        die entsteht ausschließlich in ``ApprovalGateway`` nach Hash-Vergleich
+        und erneuter Policy-Prüfung.
 
-        Der Hash wird hier ein drittes Mal geprüft. Das ist keine Paranoia,
-        sondern die Konsequenz daraus, dass die Autorisierung und die
-        Ausführung getrennte Aufrufe sind: Zwischen ihnen könnte ein Aufrufer
-        andere Argumente einsetzen.
+        Drei Prüfungen, die getrennte Angriffe abdecken:
+
+        1. **Hash.** Autorisierung und Ausführung sind getrennte Aufrufe;
+           zwischen ihnen könnte ein Aufrufer andere Argumente einsetzen.
+        2. **Lauf.** ``run_id`` und ``user_id`` müssen zu dem Kontext passen, in
+           dem tatsächlich ausgeführt wird. Ohne diese Prüfung wäre ein gültiger
+           Grant aus Lauf A in Lauf B verwendbar — Werkzeugname und Argumente
+           passen dort ja weiterhin. Die Bindung hinge dann allein daran, dass
+           niemand einen Grant über eine Laufgrenze trägt, und das ist keine
+           Zusicherung, sondern eine Hoffnung.
+        3. **Implementierung.** Ein registrierter Spec ohne Handler ist ein
+           Konfigurationsfehler und kein Berechtigungsproblem.
+
+        Der Aufrufer nennt ``run_id`` und ``user_id`` ausdrücklich, statt dass
+        die Registry sie dem Grant entnimmt: Ein Vergleich eines Wertes mit sich
+        selbst prüft nichts.
         """
         spec = self.require(auth.tool_name)
         handler = self._handlers.get(auth.tool_name)
@@ -87,9 +118,14 @@ class ToolRegistry:
 
         actual = payload_hash(spec.name, auth.arguments)
         if not compare_digest(actual, auth.verified_hash):
-            raise UnknownTool(
+            raise ForgedAuthorization(
                 f"Argumente von {spec.name!r} weichen von der Autorisierung ab — "
                 "Ausführung abgebrochen."
+            )
+        if auth.run_id != run_id or auth.user_id != user_id:
+            raise ForgedAuthorization(
+                f"Die Autorisierung für {spec.name!r} gehört zu einem anderen Lauf oder "
+                "Nutzer. Eine Erlaubnis gilt für genau einen Aufruf in genau einem Lauf."
             )
         return await handler(**auth.arguments)
 

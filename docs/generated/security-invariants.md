@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 27/29**
+**Security Invariant Coverage: 29/31**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -31,6 +31,8 @@ nicht nachträglich passend machen.
 | `approval-channel-bound` | Bestätigt wird dort, wo angezeigt wurde | Eine Bestätigung ist an Nutzer, Sitzung und Anzeigekanal gebunden und lässt sich nicht über einen anderen Kanal oder eine andere Sitzung einlösen. | `core.policy.approval` |
 | `approval-critical-ui-only` | Irreversibles wird nur in der Oberfläche bestätigt | CRITICAL-Aktionen akzeptieren keine Sprach- oder Gestenbestätigung. | `contracts.permissions` |
 | `policy-single-entry-point` | Die Policy Engine ist der einzige Weg | Kein Werkzeug wird ohne Policy-Entscheidung ausgeführt: Die Registry gibt keinen Handler heraus und verlangt eine ExecutionAuthorization. | `core.policy.engine` |
+| `grant-bound-to-run` | Eine Erlaubnis gilt für einen Aufruf in einem Lauf | Die Registry führt einen Grant nur aus, wenn Lauf und Nutzer des Grants dem Kontext entsprechen, in dem tatsächlich ausgeführt wird. | `core.tools.registry` |
+| `data-class-monotonic-within-run` | Die Datenklasse eines Laufs steigt nur | Innerhalb eines Laufs wird die Datenklasse nie gesenkt, und die Obergrenze eines Aufrufs stammt aus der Routing-Entscheidung, nicht vom Aufrufer. | `core.orchestrator` |
 | `policy-not-overridable-by-content` | Inhalte ändern keine Policy | Werkzeugargumente und Fremdinhalte beeinflussen die Entscheidung nicht — auch nicht bei Feldern wie „user_confirmed“. | `core.policy.engine` |
 | `agent-no-capability-escalation` | Delegation erzeugt keine Rechte | Ein Sub-Agent erhält höchstens die Schnittmenge aus eigener Whitelist und Nutzerrechten; ein anderer Agent als Anfragender ändert daran nichts. | `core.policy.engine` |
 | `tool-risk-not-self-declared` | Werkzeuge stufen sich nicht selbst herab | Ein Plugin kann seine Risikoklasse nicht senken; der Kern nimmt das Maximum. | `contracts.tools` |

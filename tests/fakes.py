@@ -308,9 +308,26 @@ def build_run(
     status: RunStatus = RunStatus.EXECUTING,
     trigger: str = "user",
     data_class: DataClass = DataClass.P2,
+    routed_to: DataClass | None = DataClass.P2,
 ) -> Run:
-    from jarvis_contracts import RunTrigger
+    """Lauf mit Routing-Entscheidung.
 
+    ``routed_to`` ist die Obergrenze des gewählten Modells — die einzige
+    Quelle, aus der der Executor die zulässige Datenklasse ableitet.
+    ``None`` bildet den noch nicht gerouteten Lauf ab.
+    """
+    from jarvis_contracts import RoutingDecision, RunTrigger
+
+    routing = (
+        RoutingDecision(
+            model="testmodell",
+            provider="test",
+            reason="Testlauf",
+            max_data_class=routed_to,
+        )
+        if routed_to is not None
+        else None
+    )
     return Run(
         id=uuid4(),
         user_id=USER,
@@ -318,6 +335,7 @@ def build_run(
         trigger=RunTrigger(trigger),
         status=status,
         data_class=data_class,
+        routing=routing,
         trace_id="trace-test",
         started_at=NOW,
     )

@@ -64,9 +64,29 @@ class TestExecutionGrant:
         unbequem und sichtbar, die eigentliche Absicherung ist der AST-Test in
         test_layering.py.
         """
-        with pytest.raises(RuntimeError, match="authorize_execution"):
+        with pytest.raises(RuntimeError, match="ApprovalGateway"):
             ExecutionGrant(
                 tool_name="calendar.create",
+                arguments={},
+                verified_hash="a" * 64,
+                run_id=uuid.uuid4(),
+                user_id=uuid.uuid4(),
+                invocation_id=uuid.uuid4(),
+                granted_at=NOW,
+            )
+
+    @pytest.mark.invariant("policy-single-entry-point")
+    def test_model_construct_ist_gesperrt(self) -> None:
+        """Der bequemste Weg am Wächter vorbei.
+
+        ``model_construct`` ist Pydantics Schnellpfad und ruft ``__init__``
+        nicht auf — der Sentinel liefe ins Leere. Ein Wächter, an dem eine
+        dokumentierte Methode vorbeiführt, erzeugt Vertrauen, das er nicht
+        trägt.
+        """
+        with pytest.raises(RuntimeError, match="model_construct"):
+            ExecutionGrant.model_construct(
+                tool_name="mail.send",
                 arguments={},
                 verified_hash="a" * 64,
                 run_id=uuid.uuid4(),

@@ -9,11 +9,20 @@ bestimmt, was ein Modell überhaupt sieht.
 from __future__ import annotations
 
 from typing import ClassVar
+from uuid import UUID, uuid4
 
 import pytest
 
 from jarvis_contracts import DataClass, PayloadInspectability, RiskLevel, ToolSpec
-from jarvis_core.tools import DuplicateTool, ToolRegistry, UnknownTool
+from jarvis_core.tools import (
+    DuplicateTool,
+    ForgedAuthorization,
+    ToolRegistry,
+    UnknownTool,
+)
+
+RUN = UUID("33333333-3333-3333-3333-333333333333")
+USER = UUID("11111111-1111-1111-1111-111111111111")
 
 
 def _spec(name: str, **kw: object) -> ToolSpec:
@@ -96,10 +105,47 @@ class TestRegistrierung:
             tool_name = "system.time"
             arguments: ClassVar[dict[str, object]] = {}
             verified_hash = "0" * 64
+            run_id = RUN
+            user_id = USER
 
-        with pytest.raises(UnknownTool, match="weichen von der Autorisierung ab"):
-            await reg.execute(FakeAuth())  # type: ignore[arg-type]
+        with pytest.raises(ForgedAuthorization, match="weichen von der Autorisierung ab"):
+            await reg.execute(FakeAuth(), run_id=RUN, user_id=USER)  # type: ignore[arg-type]
         assert not called, "Der Handler darf bei falschem Hash nicht laufen"
+
+    @pytest.mark.security
+    @pytest.mark.invariant("grant-bound-to-run")
+    async def test_grant_aus_einem_anderen_lauf_wird_abgewiesen(self) -> None:
+        """Grant Confusion: Der Grant ist gültig, Hash und Werkzeugname stimmen —
+        er gehört nur zu einem anderen Lauf.
+
+        Ohne diese Prüfung wäre die Laufbindung reine Konvention: Ein Grant, der
+        versehentlich oder absichtlich über eine Laufgrenze getragen wird, führte
+        aus, weil an ihm selbst nichts falsch ist.
+        """
+        from jarvis_contracts import ToolResult
+        from jarvis_core.policy.approval import payload_hash
+
+        called: list[dict[str, object]] = []
+
+        async def handler(**kwargs: object) -> ToolResult:
+            called.append(kwargs)
+            return ToolResult(ok=True, display="fertig")
+
+        reg = ToolRegistry()
+        reg.register(_spec("system.time"), handler)
+
+        class Auth:
+            tool_name = "system.time"
+            arguments: ClassVar[dict[str, object]] = {}
+            verified_hash = payload_hash("system.time", {})
+            run_id = RUN
+            user_id = USER
+
+        with pytest.raises(ForgedAuthorization, match="anderen Lauf"):
+            await reg.execute(Auth(), run_id=uuid4(), user_id=USER)  # type: ignore[arg-type]
+        with pytest.raises(ForgedAuthorization, match="anderen Lauf"):
+            await reg.execute(Auth(), run_id=RUN, user_id=uuid4())  # type: ignore[arg-type]
+        assert not called, "Ein fremder Grant darf den Handler nicht erreichen"
 
     async def test_ausfuehrung_mit_gueltigem_grant(self) -> None:
         from jarvis_contracts import ToolResult
@@ -115,8 +161,10 @@ class TestRegistrierung:
             tool_name = "system.time"
             arguments: ClassVar[dict[str, object]] = {}
             verified_hash = payload_hash("system.time", {})
+            run_id = RUN
+            user_id = USER
 
-        result = await reg.execute(Auth())  # type: ignore[arg-type]
+        result = await reg.execute(Auth(), run_id=RUN, user_id=USER)  # type: ignore[arg-type]
         assert result.ok
 
     async def test_werkzeug_ohne_implementierung(self) -> None:
@@ -132,9 +180,11 @@ class TestRegistrierung:
             tool_name = "system.time"
             arguments: ClassVar[dict[str, object]] = {}
             verified_hash = payload_hash("system.time", {})
+            run_id = RUN
+            user_id = USER
 
         with pytest.raises(UnknownTool, match="keine Implementierung"):
-            await reg.execute(Auth())  # type: ignore[arg-type]
+            await reg.execute(Auth(), run_id=RUN, user_id=USER)  # type: ignore[arg-type]
 
 
 class TestAbfragen:

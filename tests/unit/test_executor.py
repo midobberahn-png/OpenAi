@@ -90,13 +90,12 @@ class TestNormalfall:
         """
         executor, _, _ = _setup(FakePermissions().allow("mail.read"))
         outcome = await executor.execute_tool(
-            build_run(data_class=DataClass.P1),
+            build_run(data_class=DataClass.P1, routed_to=DataClass.P2),
             _tracker(),
             tool_name="mail.read",
             arguments={},
             seq=1,
             session_id=SESSION,
-            allowed_data_class=DataClass.P2,
         )
         assert outcome.status == "executed"
         assert outcome.run.data_class is DataClass.P2
@@ -107,7 +106,7 @@ class TestNormalfall:
         Datenklasse ist ein Filter, keine Präferenz."""
         executor, spies, _ = _setup(FakePermissions().allow("mail.read"))
         outcome = await executor.execute_tool(
-            build_run(data_class=DataClass.P1),
+            build_run(data_class=DataClass.P1, routed_to=DataClass.P1),
             _tracker(),
             tool_name="mail.read",
             arguments={},
@@ -293,6 +292,130 @@ class TestQuelltextGrenze:
                 f"{path.name}:{function.name} führt ein Werkzeug aus, ohne ein "
                 "Ausführungs-Gate zu durchlaufen oder einen ExecutionGrant zu verlangen."
             )
+
+
+# ==========================================================================
+# Request Confusion — die Herkunft der Anfragefelder
+# ==========================================================================
+
+
+class TestAnfrageherkunft:
+    """Kann ein Aufrufer die Policy-Anfrage milder machen, als der Lauf erlaubt?
+
+    Das ist der Angriff, den Berater 2 „Request Confusion“ genannt hat: Der
+    persistierte Lauf sagt das eine, die gestellte Anfrage das andere. Die
+    Antwort dieses Entwurfs ist nicht „wir prüfen die Felder“, sondern „die
+    Felder sind keine Parameter“.
+    """
+
+    @pytest.mark.invariant("data-class-monotonic-within-run")
+    def test_die_obergrenze_ist_kein_parameter(self) -> None:
+        """Ein Aufrufer, der seine eigene Obergrenze bestimmt, hat keine."""
+        import inspect
+
+        signature = inspect.signature(ToolExecutor.execute_tool)
+        assert "allowed_data_class" not in signature.parameters
+        assert "trigger" not in signature.parameters
+        assert "user_id" not in signature.parameters
+
+    @pytest.mark.invariant("data-class-monotonic-within-run")
+    async def test_obergrenze_stammt_aus_der_routing_entscheidung(self) -> None:
+        """Der Lauf hat bereits P2-Daten gesehen, wurde aber auf ein Modell mit
+        P1-Grenze geroutet. Dann ist ein P2-Werkzeug unzulässig — die
+        Laufklasse ist kein Freibrief, die Modellgrenze entscheidet.
+        """
+        executor, spies, _ = _setup(FakePermissions().allow("mail.read"))
+        outcome = await executor.execute_tool(
+            build_run(data_class=DataClass.P2, routed_to=DataClass.P1),
+            _tracker(),
+            tool_name="mail.read",
+            arguments={},
+            seq=1,
+            session_id=SESSION,
+        )
+        assert outcome.status == "blocked"
+        assert "P2" in outcome.reason
+        assert spies["mail.read"].call_count == 0
+
+    @pytest.mark.invariant("data-class-monotonic-within-run")
+    async def test_ungerouteter_lauf_faellt_auf_die_engere_annahme_zurueck(self) -> None:
+        """Ohne Routing gilt die Klasse des Laufs — nicht P3 auf Verdacht."""
+        executor, _, _ = _setup(FakePermissions().allow("mail.read"))
+        outcome = await executor.execute_tool(
+            build_run(data_class=DataClass.P1, routed_to=None),
+            _tracker(),
+            tool_name="mail.read",
+            arguments={},
+            seq=1,
+            session_id=SESSION,
+        )
+        assert outcome.status == "blocked"
+
+    @pytest.mark.invariant("data-class-monotonic-within-run")
+    async def test_datenklasse_sinkt_innerhalb_eines_laufs_nie(self) -> None:
+        """Nach dem Lesen von P2-Inhalt bleibt der Lauf P2, auch wenn der
+        folgende Schritt nur die Uhrzeit abfragt. Wer den Kontext bereinigen
+        will, startet einen neuen Lauf."""
+        perms = FakePermissions().allow("mail.read")
+        executor, _, _ = _setup(perms)
+        tracker = _tracker()
+
+        first = await executor.execute_tool(
+            build_run(data_class=DataClass.P1),
+            tracker,
+            tool_name="mail.read",
+            arguments={},
+            seq=1,
+            session_id=SESSION,
+        )
+        assert first.run.data_class is DataClass.P2
+
+        second = await executor.execute_tool(
+            first.run, tracker, tool_name="system.time", arguments={}, seq=2, session_id=SESSION
+        )
+        assert second.status == "executed"
+        assert second.run.data_class is DataClass.P2, "Die Klasse darf nicht zurückfallen"
+
+    @pytest.mark.invariant("orchestrator-consumes-decisions")
+    def test_policy_anfragen_entstehen_an_genau_einer_stelle(self) -> None:
+        """Strukturelle Sicherung gegen Rückfall: Sobald ``PolicyRequest`` an
+        einer zweiten Stelle im Orchestrator gebaut wird, kann dort wieder ein
+        Feld aus fremder Quelle einfließen, ohne dass es jemandem auffällt.
+        """
+        sites: list[str] = []
+        for path in _orchestrator_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "PolicyRequest"
+                ):
+                    sites.append(f"{path.name}:{node.lineno}")
+        assert len(sites) == 1, f"PolicyRequest wird an mehreren Stellen gebaut: {sites}"
+
+
+# ==========================================================================
+# Grant-Bindung
+# ==========================================================================
+
+
+class TestGrantBindung:
+    @pytest.mark.invariant("grant-bound-to-run")
+    async def test_registry_bekommt_lauf_und_nutzer_des_laufs(self) -> None:
+        """Der Executor reicht die Bindung durch, statt sie dem Grant zu
+        entnehmen — ein Vergleich eines Wertes mit sich selbst prüft nichts.
+
+        Belegt über den Normalfall: Passte die Bindung nicht, hätte die Registry
+        ``ForgedAuthorization`` geworfen statt auszuführen.
+        """
+        executor, spies, _ = _setup(FakePermissions().allow("mail.read"))
+        run = build_run()
+        outcome = await executor.execute_tool(
+            run, _tracker(), tool_name="mail.read", arguments={}, seq=1, session_id=SESSION
+        )
+        assert outcome.status == "executed"
+        assert spies["mail.read"].call_count == 1
 
 
 # ==========================================================================

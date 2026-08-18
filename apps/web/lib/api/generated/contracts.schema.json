@@ -4267,12 +4267,28 @@
       "type": "object"
     },
     "RoutingDecision": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        }
+      },
       "description": "Modellwahl mit Begründung. Die Begründung erscheint in der UI.",
       "properties": {
         "is_fallback": {
           "default": false,
           "title": "Is Fallback",
           "type": "boolean"
+        },
+        "max_data_class": {
+          "$ref": "#/$defs/DataClass"
         },
         "model": {
           "title": "Model",
@@ -4298,7 +4314,8 @@
       "required": [
         "model",
         "provider",
-        "reason"
+        "reason",
+        "max_data_class"
       ],
       "title": "RoutingDecision",
       "type": "object"
@@ -4484,6 +4501,9 @@
               "title": "Is Fallback",
               "type": "boolean"
             },
+            "max_data_class": {
+              "$ref": "#/$defs/DataClass"
+            },
             "model": {
               "title": "Model",
               "type": "string"
@@ -4508,7 +4528,8 @@
           "required": [
             "model",
             "provider",
-            "reason"
+            "reason",
+            "max_data_class"
           ],
           "title": "RoutingDecision",
           "type": "object"

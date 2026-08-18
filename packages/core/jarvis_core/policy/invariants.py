@@ -220,6 +220,39 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.policy.engine",
     ),
     Invariant(
+        id="grant-bound-to-run",
+        title="Eine Erlaubnis gilt für einen Aufruf in einem Lauf",
+        statement=(
+            "Die Registry führt einen Grant nur aus, wenn Lauf und Nutzer des Grants dem "
+            "Kontext entsprechen, in dem tatsächlich ausgeführt wird."
+        ),
+        why=(
+            "Ohne diese Bindung wäre ein gültiger Grant aus Lauf A in Lauf B verwendbar — "
+            "Werkzeugname und Argumente passen dort weiterhin, und der Hash stimmt. Die "
+            "Bindung hinge dann allein daran, dass niemand einen Grant über eine "
+            "Laufgrenze trägt; das ist eine Hoffnung, keine Zusicherung."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.tools.registry",
+    ),
+    Invariant(
+        id="data-class-monotonic-within-run",
+        title="Die Datenklasse eines Laufs steigt nur",
+        statement=(
+            "Innerhalb eines Laufs wird die Datenklasse nie gesenkt, und die Obergrenze "
+            "eines Aufrufs stammt aus der Routing-Entscheidung, nicht vom Aufrufer."
+        ),
+        why=(
+            "Ein Lauf, der P2-Daten gesehen hat, hält sie im Kontext — eine harmlose "
+            "Folgeaktion macht ihn nicht wieder öffentlich. Und ein Aufrufer, der seine "
+            "eigene Obergrenze bestimmt, hat keine: Ein frei übergebenes "
+            "allowed_data_class ließe P3-Werkzeuge in einem Lauf zu, der dafür nie "
+            "geroutet wurde."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.orchestrator",
+    ),
+    Invariant(
         id="policy-not-overridable-by-content",
         title="Inhalte ändern keine Policy",
         statement=(

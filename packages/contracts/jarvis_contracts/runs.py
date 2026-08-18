@@ -332,6 +332,15 @@ class RoutingDecision(BaseModel):
     model: str
     provider: str
     reason: str = Field(min_length=1)
+    max_data_class: DataClass
+    """Höchste Klasse, die das gewählte Modell verarbeiten darf.
+
+    Pflichtfeld und Teil der Entscheidung, nicht Konfiguration daneben: Der
+    Executor leitet daraus die Obergrenze jedes Werkzeugaufrufs ab. Läge der
+    Wert nicht hier, müsste ihn der Aufrufer mitgeben — und ein Aufrufer, der
+    die eigene Obergrenze bestimmt, hat keine.
+    """
+
     is_fallback: bool = False
     rejected: dict[str, str] = Field(default_factory=dict)
     """Modell → Ablehnungsgrund. Macht das Routing nachvollziehbar."""
