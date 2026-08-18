@@ -1,0 +1,114 @@
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Persönliches KI-Assistenzsystem"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "jarvis-contracts",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "freezegun>=1.5",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+# Weitere Mitglieder (apps/worker, apps/scheduler, apps/edge) werden in den
+# jeweiligen Phasen ergänzt.
+members = ["packages/*", "apps/api"]
+
+[tool.uv.sources]
+jarvis-contracts = { workspace = true }
+
+
+# --------------------------------------------------------------------------
+# Ruff
+# --------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["packages", "apps"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",      # pycodestyle
+    "F",           # pyflakes
+    "I",           # isort
+    "N",           # pep8-naming
+    "UP",          # pyupgrade
+    "B",           # bugbear
+    "C4",          # comprehensions
+    "SIM",         # simplify
+    "TID",         # tidy-imports (Schichtgrenzen)
+    "RUF",
+]
+ignore = [
+    "E501",    # Zeilenlänge übernimmt der Formatter
+    "N818",    # Fehlerklassen müssen nicht auf "Error" enden
+    "B008",    # FastAPI Depends() im Default ist idiomatisch
+    # Die Codebasis ist durchgehend deutschsprachig: Anführungszeichen („ “),
+    # Gedankenstriche (–) und das Malzeichen (×) sind gewollt, nicht
+    # versehentlich eingefügte Homoglyphen.
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+# PgUUID hält den PostgreSQL-Typ vom gleichnamigen uuid.UUID auseinander;
+# die Umbenennung ist Absicht.
+"apps/api/jarvis_api/db/*.py" = ["N811"]
+"apps/api/jarvis_api/migrations/versions/*.py" = ["N811", "E501"]
+
+# Schichtgrenzen erzwingen (docs/02-repo-struktur.md §1):
+# contracts importiert nichts aus dem Projekt, core kennt keine Provider.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"jarvis_core".msg = "contracts darf nicht aus core importieren."
+"jarvis_providers".msg = "Nur über Ports in jarvis_core.ports zugreifen."
+"jarvis_integrations".msg = "Nur über Ports in jarvis_core.ports zugreifen."
+
+[tool.ruff.lint.isort]
+known-first-party = ["jarvis_contracts", "jarvis_core", "jarvis_api"]
+
+
+# --------------------------------------------------------------------------
+# mypy
+# --------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ["^apps/web/", "build/"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+
+# --------------------------------------------------------------------------
+# pytest
+# --------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+markers = [
+    "integration: benötigt Postgres/Redis",
+    "eval: Modellverhalten, langsam",
+    "security: Injection- und Policy-Suite",
+]
+
+[tool.coverage.run]
+source = ["packages"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "\\.\\.\\."]

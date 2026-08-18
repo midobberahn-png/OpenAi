@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+dist/
+build/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Secrets — nie ins Repo (Entwicklungsregel 2 & 3)
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+!**/public*.key
+
+# Lokale Daten
+data/
+*.sqlite3
+audio_debug/
+
+# Generierte Artefakte werden committet (Drift-Prüfung in CI),
+# aber Zwischenstände nicht:
+openapi.json.tmp
+
+# macOS
+.DS_Store

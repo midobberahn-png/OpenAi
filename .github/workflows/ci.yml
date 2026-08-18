@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  UV_VERSION: "0.16.3"
+  DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@localhost:5432/jarvis
+  REDIS_URL: redis://localhost:6379/0
+
+jobs:
+  quality:
+    name: Lint, Typen, Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: jarvis
+          POSTGRES_USER: jarvis
+          POSTGRES_PASSWORD: jarvis_dev
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U jarvis -d jarvis"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: uv einrichten
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Abhängigkeiten
+        run: uv sync --all-packages --python 3.12
+
+      # 1 — Stil
+      - name: Ruff
+        run: |
+          uv run ruff check --output-format=github .
+          uv run ruff format --check .
+
+      # 2 — Typen
+      - name: mypy
+        run: uv run mypy packages apps/api
+
+      # 3 — Vertragsdrift (ADR-006)
+      # Handgepflegte Typen driften garantiert ab. Bei einem System, in dem ein
+      # falsch getyptes Tool-Argument eine Mail an die falsche Person schickt,
+      # ist Drift ein Sicherheitsproblem.
+      - name: Generierte Artefakte aktuell?
+        run: |
+          uv run python scripts/gen_contracts.py
+          git diff --exit-code -- apps/web/lib docs/generated \
+            || (echo "::error::Generierte Artefakte sind veraltet — 'make gen' ausführen."; exit 1)
+
+      # 4 — Unit-Tests
+      - name: Unit-Tests
+        run: uv run pytest -m "not integration and not eval" --cov --cov-report=term
+
+      # 5 — Migrationen und Integration
+      - name: Migrationen anwenden
+        run: cd apps/api && uv run alembic upgrade head
+
+      - name: Migration ist reversibel
+        run: |
+          cd apps/api
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+
+      - name: Integrationstests
+        run: uv run pytest -m integration
+
+      # 6 — Sicherheits-Suite: blockierend, wird nie übersprungen.
+      # Sie verhindert, dass die wichtigste Eigenschaft des Systems
+      # unbemerkt kaputtgeht (docs/15-testing.md §4.4).
+      - name: Sicherheits- und Injection-Suite
+        run: uv run pytest -m security
+
+  secrets:
+    name: Secret-Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

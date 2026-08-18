@@ -1,0 +1,6148 @@
+{
+  "$defs": {
+    "ActionPreview": {
+      "$defs": {
+        "PreviewField": {
+          "description": "Ein angezeigtes Feld der Vorschau.",
+          "properties": {
+            "emphasis": {
+              "default": "normal",
+              "enum": [
+                "normal",
+                "warn"
+              ],
+              "title": "Emphasis",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "truncated": {
+              "default": false,
+              "title": "Truncated",
+              "type": "boolean"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "value"
+          ],
+          "title": "PreviewField",
+          "type": "object"
+        },
+        "RiskLevel": {
+          "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "RiskLevel",
+          "type": "string"
+        }
+      },
+      "description": "Was tatsächlich passieren wird.\n\nWird aus dem *validierten Argument-Objekt* gebaut, nicht aus einer vom\nModell formulierten Beschreibung. Damit kann das Modell nichts anderes\nanzeigen, als es ausführt (docs/07-security-permissions.md §5).",
+      "properties": {
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/PreviewField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "reversible": {
+          "default": false,
+          "title": "Reversible",
+          "type": "boolean"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "tool_name",
+        "title",
+        "risk"
+      ],
+      "title": "ActionPreview",
+      "type": "object"
+    },
+    "AgentRequest": {
+      "$defs": {
+        "ContextBundle": {
+          "description": "Der zusammengestellte Kontext eines Turns.",
+          "properties": {
+            "budget": {
+              "title": "Budget",
+              "type": "integer"
+            },
+            "dropped": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Dropped",
+              "type": "array"
+            },
+            "fragments": {
+              "items": {
+                "$ref": "#/$defs/ContextFragment"
+              },
+              "title": "Fragments",
+              "type": "array"
+            },
+            "total_tokens": {
+              "default": 0,
+              "title": "Total Tokens",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "budget"
+          ],
+          "title": "ContextBundle",
+          "type": "object"
+        },
+        "ContextFragment": {
+          "description": "Ein Stück Kontext von einem Provider.",
+          "properties": {
+            "content": {
+              "title": "Content",
+              "type": "string"
+            },
+            "data_class": {
+              "$ref": "#/$defs/DataClass",
+              "default": "P1"
+            },
+            "is_untrusted": {
+              "default": false,
+              "title": "Is Untrusted",
+              "type": "boolean"
+            },
+            "priority": {
+              "$ref": "#/$defs/ContextPriority",
+              "default": 4
+            },
+            "relevance": {
+              "default": 1.0,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Relevance",
+              "type": "number"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "tokens": {
+              "minimum": 0,
+              "title": "Tokens",
+              "type": "integer"
+            },
+            "truncatable": {
+              "default": true,
+              "title": "Truncatable",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "source",
+            "content",
+            "tokens"
+          ],
+          "title": "ContextFragment",
+          "type": "object"
+        },
+        "ContextPriority": {
+          "description": "Verdrängungsreihenfolge bei Budgetüberschreitung.\n\nNiedrigere Werte werden zuletzt verdrängt.",
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "title": "ContextPriority",
+          "type": "integer"
+        },
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "RunBudget": {
+          "description": "Harte Grenzen eines Laufs. Überschreitung beendet sauber mit Teilergebnis.",
+          "properties": {
+            "max_agent_depth": {
+              "default": 2,
+              "maximum": 4,
+              "minimum": 0,
+              "title": "Max Agent Depth",
+              "type": "integer"
+            },
+            "max_cost_eur": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0.50",
+              "title": "Max Cost Eur"
+            },
+            "max_seconds": {
+              "default": 120.0,
+              "exclusiveMinimum": 0,
+              "title": "Max Seconds",
+              "type": "number"
+            },
+            "max_steps": {
+              "default": 20,
+              "exclusiveMinimum": 0,
+              "title": "Max Steps",
+              "type": "integer"
+            },
+            "max_tokens": {
+              "default": 120000,
+              "exclusiveMinimum": 0,
+              "title": "Max Tokens",
+              "type": "integer"
+            },
+            "max_tool_calls": {
+              "default": 15,
+              "exclusiveMinimum": 0,
+              "title": "Max Tool Calls",
+              "type": "integer"
+            }
+          },
+          "title": "RunBudget",
+          "type": "object"
+        },
+        "TaintLevel": {
+          "description": "Kontaminationszustand eines Laufs.\n\nSiehe docs/07-security-permissions.md §4. Der Zustand ist *monoton*:\neinmal ``TAINTED``, für den Lauf nicht mehr entfernbar.",
+          "enum": [
+            "clean",
+            "tainted"
+          ],
+          "title": "TaintLevel",
+          "type": "string"
+        }
+      },
+      "description": "Delegationsauftrag an einen Sub-Agenten.",
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/RunBudget"
+        },
+        "context": {
+          "$ref": "#/$defs/ContextBundle"
+        },
+        "depth": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Depth",
+          "type": "integer"
+        },
+        "inherited_taint": {
+          "$ref": "#/$defs/TaintLevel",
+          "default": "clean"
+        },
+        "parent_run_id": {
+          "format": "uuid",
+          "title": "Parent Run Id",
+          "type": "string"
+        },
+        "task": {
+          "minLength": 1,
+          "title": "Task",
+          "type": "string"
+        }
+      },
+      "required": [
+        "task",
+        "context",
+        "budget",
+        "parent_run_id"
+      ],
+      "title": "AgentRequest",
+      "type": "object"
+    },
+    "AgentResult": {
+      "$defs": {
+        "AgentStatus": {
+          "enum": [
+            "success",
+            "partial",
+            "failed",
+            "needs_confirmation",
+            "budget_exceeded"
+          ],
+          "title": "AgentStatus",
+          "type": "string"
+        },
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "Source": {
+          "description": "Quellenbeleg. Pflicht bei Recherche- und Dokumentergebnissen.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "web",
+                "document",
+                "email",
+                "calendar",
+                "memory"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "locator": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Locator"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            },
+            "retrieved_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Retrieved At"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "ref"
+          ],
+          "title": "Source",
+          "type": "object"
+        },
+        "Usage": {
+          "description": "Verbrauch eines Laufs. Wird fortlaufend gegen das Budget geprüft.",
+          "properties": {
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0",
+              "title": "Cost Eur"
+            },
+            "elapsed_s": {
+              "default": 0.0,
+              "title": "Elapsed S",
+              "type": "number"
+            },
+            "steps": {
+              "default": 0,
+              "title": "Steps",
+              "type": "integer"
+            },
+            "tokens_in": {
+              "default": 0,
+              "title": "Tokens In",
+              "type": "integer"
+            },
+            "tokens_out": {
+              "default": 0,
+              "title": "Tokens Out",
+              "type": "integer"
+            },
+            "tool_calls": {
+              "default": 0,
+              "title": "Tool Calls",
+              "type": "integer"
+            }
+          },
+          "title": "Usage",
+          "type": "object"
+        }
+      },
+      "description": "Ergebnis eines Sub-Agenten.",
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "followups": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Followups",
+          "type": "array"
+        },
+        "output": {
+          "default": "",
+          "title": "Output",
+          "type": "string"
+        },
+        "produced_data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P1"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentStatus"
+        },
+        "structured": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structured"
+        },
+        "taint_acquired": {
+          "default": false,
+          "title": "Taint Acquired",
+          "type": "boolean"
+        },
+        "tools_used": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tools Used",
+          "type": "array"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "AgentResult",
+      "type": "object"
+    },
+    "AgentSpec": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        }
+      },
+      "description": "Definition eines Agenten.",
+      "properties": {
+        "accepts_untrusted_input": {
+          "default": false,
+          "title": "Accepts Untrusted Input",
+          "type": "boolean"
+        },
+        "allowed_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Tools",
+          "type": "array"
+        },
+        "can_delegate": {
+          "default": false,
+          "title": "Can Delegate",
+          "type": "boolean"
+        },
+        "description": {
+          "minLength": 10,
+          "title": "Description",
+          "type": "string"
+        },
+        "max_data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P2"
+        },
+        "max_iterations": {
+          "default": 8,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "model_preference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Preference"
+        },
+        "name": {
+          "maxLength": 40,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "system_prompt": {
+          "minLength": 1,
+          "title": "System Prompt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "system_prompt"
+      ],
+      "title": "AgentSpec",
+      "type": "object"
+    },
+    "AmountConstraints": {
+      "$defs": {
+        "TimeWindow": {
+          "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+          "properties": {
+            "end": {
+              "format": "time",
+              "title": "End",
+              "type": "string"
+            },
+            "start": {
+              "format": "time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "TimeWindow",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Betragsgrenze für Scopes mit finanzieller Wirkung.",
+      "properties": {
+        "currency": {
+          "const": "EUR",
+          "default": "EUR",
+          "title": "Currency",
+          "type": "string"
+        },
+        "max_amount_eur": {
+          "exclusiveMinimum": 0,
+          "title": "Max Amount Eur",
+          "type": "number"
+        },
+        "time_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "max_amount_eur"
+      ],
+      "title": "AmountConstraints",
+      "type": "object"
+    },
+    "ClientMessage": {
+      "$defs": {
+        "ActionRespond": {
+          "properties": {
+            "action_id": {
+              "format": "uuid",
+              "title": "Action Id",
+              "type": "string"
+            },
+            "approve": {
+              "title": "Approve",
+              "type": "boolean"
+            },
+            "channel": {
+              "default": "ui",
+              "enum": [
+                "ui",
+                "voice",
+                "gesture"
+              ],
+              "title": "Channel",
+              "type": "string"
+            },
+            "nonce": {
+              "minLength": 16,
+              "title": "Nonce",
+              "type": "string"
+            },
+            "t": {
+              "const": "action.respond",
+              "default": "action.respond",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action_id",
+            "approve",
+            "nonce"
+          ],
+          "title": "ActionRespond",
+          "type": "object"
+        },
+        "CameraState": {
+          "enum": [
+            "on",
+            "off"
+          ],
+          "title": "CameraState",
+          "type": "string"
+        },
+        "EdgeGesture": {
+          "properties": {
+            "confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Confidence",
+              "type": "number"
+            },
+            "gesture": {
+              "title": "Gesture",
+              "type": "string"
+            },
+            "t": {
+              "const": "edge.gesture",
+              "default": "edge.gesture",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "gesture",
+            "confidence"
+          ],
+          "title": "EdgeGesture",
+          "type": "object"
+        },
+        "EdgeHello": {
+          "properties": {
+            "capabilities": {
+              "items": {
+                "enum": [
+                  "mic",
+                  "speaker",
+                  "camera"
+                ],
+                "type": "string"
+              },
+              "title": "Capabilities",
+              "type": "array"
+            },
+            "device_id": {
+              "title": "Device Id",
+              "type": "string"
+            },
+            "t": {
+              "const": "edge.hello",
+              "default": "edge.hello",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "device_id"
+          ],
+          "title": "EdgeHello",
+          "type": "object"
+        },
+        "EdgeState": {
+          "properties": {
+            "aec_active": {
+              "default": false,
+              "title": "Aec Active",
+              "type": "boolean"
+            },
+            "camera": {
+              "$ref": "#/$defs/CameraState"
+            },
+            "mic": {
+              "$ref": "#/$defs/MicState"
+            },
+            "t": {
+              "const": "edge.state",
+              "default": "edge.state",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "mic",
+            "camera"
+          ],
+          "title": "EdgeState",
+          "type": "object"
+        },
+        "EdgeTranscript": {
+          "properties": {
+            "confidence": {
+              "default": 1.0,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Confidence",
+              "type": "number"
+            },
+            "is_final": {
+              "title": "Is Final",
+              "type": "boolean"
+            },
+            "language": {
+              "default": "de",
+              "title": "Language",
+              "type": "string"
+            },
+            "t": {
+              "const": "edge.transcript",
+              "default": "edge.transcript",
+              "title": "T",
+              "type": "string"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text",
+            "is_final"
+          ],
+          "title": "EdgeTranscript",
+          "type": "object"
+        },
+        "EdgeWake": {
+          "properties": {
+            "confidence": {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Confidence",
+              "type": "number"
+            },
+            "t": {
+              "const": "edge.wake",
+              "default": "edge.wake",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "confidence"
+          ],
+          "title": "EdgeWake",
+          "type": "object"
+        },
+        "MicState": {
+          "enum": [
+            "on",
+            "off",
+            "muted"
+          ],
+          "title": "MicState",
+          "type": "string"
+        },
+        "Ping": {
+          "properties": {
+            "t": {
+              "const": "ping",
+              "default": "ping",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "title": "Ping",
+          "type": "object"
+        },
+        "UserInterrupt": {
+          "properties": {
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "t": {
+              "const": "user.interrupt",
+              "default": "user.interrupt",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "run_id"
+          ],
+          "title": "UserInterrupt",
+          "type": "object"
+        },
+        "UserMessage": {
+          "properties": {
+            "attachment_ids": {
+              "items": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": "Attachment Ids",
+              "type": "array"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "t": {
+              "const": "user.message",
+              "default": "user.message",
+              "title": "T",
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 100000,
+              "minLength": 1,
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "title": "UserMessage",
+          "type": "object"
+        }
+      },
+      "discriminator": {
+        "mapping": {
+          "action.respond": "#/$defs/ActionRespond",
+          "edge.gesture": "#/$defs/EdgeGesture",
+          "edge.hello": "#/$defs/EdgeHello",
+          "edge.state": "#/$defs/EdgeState",
+          "edge.transcript": "#/$defs/EdgeTranscript",
+          "edge.wake": "#/$defs/EdgeWake",
+          "ping": "#/$defs/Ping",
+          "user.interrupt": "#/$defs/UserInterrupt",
+          "user.message": "#/$defs/UserMessage"
+        },
+        "propertyName": "t"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UserMessage"
+        },
+        {
+          "$ref": "#/$defs/UserInterrupt"
+        },
+        {
+          "$ref": "#/$defs/ActionRespond"
+        },
+        {
+          "$ref": "#/$defs/EdgeHello"
+        },
+        {
+          "$ref": "#/$defs/EdgeWake"
+        },
+        {
+          "$ref": "#/$defs/EdgeTranscript"
+        },
+        {
+          "$ref": "#/$defs/EdgeGesture"
+        },
+        {
+          "$ref": "#/$defs/EdgeState"
+        },
+        {
+          "$ref": "#/$defs/Ping"
+        }
+      ]
+    },
+    "ConstraintViolation": {
+      "description": "Warum ein Aufruf an einer Einschränkung scheitert.",
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field",
+        "message"
+      ],
+      "title": "ConstraintViolation",
+      "type": "object"
+    },
+    "ContextBundle": {
+      "$defs": {
+        "ContextFragment": {
+          "description": "Ein Stück Kontext von einem Provider.",
+          "properties": {
+            "content": {
+              "title": "Content",
+              "type": "string"
+            },
+            "data_class": {
+              "$ref": "#/$defs/DataClass",
+              "default": "P1"
+            },
+            "is_untrusted": {
+              "default": false,
+              "title": "Is Untrusted",
+              "type": "boolean"
+            },
+            "priority": {
+              "$ref": "#/$defs/ContextPriority",
+              "default": 4
+            },
+            "relevance": {
+              "default": 1.0,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Relevance",
+              "type": "number"
+            },
+            "source": {
+              "title": "Source",
+              "type": "string"
+            },
+            "tokens": {
+              "minimum": 0,
+              "title": "Tokens",
+              "type": "integer"
+            },
+            "truncatable": {
+              "default": true,
+              "title": "Truncatable",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "source",
+            "content",
+            "tokens"
+          ],
+          "title": "ContextFragment",
+          "type": "object"
+        },
+        "ContextPriority": {
+          "description": "Verdrängungsreihenfolge bei Budgetüberschreitung.\n\nNiedrigere Werte werden zuletzt verdrängt.",
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "title": "ContextPriority",
+          "type": "integer"
+        },
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        }
+      },
+      "description": "Der zusammengestellte Kontext eines Turns.",
+      "properties": {
+        "budget": {
+          "title": "Budget",
+          "type": "integer"
+        },
+        "dropped": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dropped",
+          "type": "array"
+        },
+        "fragments": {
+          "items": {
+            "$ref": "#/$defs/ContextFragment"
+          },
+          "title": "Fragments",
+          "type": "array"
+        },
+        "total_tokens": {
+          "default": 0,
+          "title": "Total Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "budget"
+      ],
+      "title": "ContextBundle",
+      "type": "object"
+    },
+    "ContextFragment": {
+      "$defs": {
+        "ContextPriority": {
+          "description": "Verdrängungsreihenfolge bei Budgetüberschreitung.\n\nNiedrigere Werte werden zuletzt verdrängt.",
+          "enum": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "title": "ContextPriority",
+          "type": "integer"
+        },
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        }
+      },
+      "description": "Ein Stück Kontext von einem Provider.",
+      "properties": {
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P1"
+        },
+        "is_untrusted": {
+          "default": false,
+          "title": "Is Untrusted",
+          "type": "boolean"
+        },
+        "priority": {
+          "$ref": "#/$defs/ContextPriority",
+          "default": 4
+        },
+        "relevance": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Relevance",
+          "type": "number"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "tokens": {
+          "minimum": 0,
+          "title": "Tokens",
+          "type": "integer"
+        },
+        "truncatable": {
+          "default": true,
+          "title": "Truncatable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "source",
+        "content",
+        "tokens"
+      ],
+      "title": "ContextFragment",
+      "type": "object"
+    },
+    "ContextRequest": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        }
+      },
+      "description": "Anforderung an die Context Engine.",
+      "properties": {
+        "channel": {
+          "default": "text",
+          "enum": [
+            "voice",
+            "text",
+            "agent"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "exclude_providers": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Exclude Providers",
+          "type": "array"
+        },
+        "max_data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P3"
+        },
+        "now": {
+          "format": "date-time",
+          "title": "Now",
+          "type": "string"
+        },
+        "query": {
+          "title": "Query",
+          "type": "string"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id",
+        "query",
+        "now"
+      ],
+      "title": "ContextRequest",
+      "type": "object"
+    },
+    "FilesConstraints": {
+      "$defs": {
+        "TimeWindow": {
+          "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+          "properties": {
+            "end": {
+              "format": "time",
+              "title": "End",
+              "type": "string"
+            },
+            "start": {
+              "format": "time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "TimeWindow",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Einschränkungen für ``files.read`` / ``files.write``.",
+      "properties": {
+        "allowed_roots": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Allowed Roots",
+          "type": "array"
+        },
+        "forbidden_extensions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Forbidden Extensions",
+          "type": "array"
+        },
+        "max_file_size_mb": {
+          "default": 50,
+          "maximum": 10000,
+          "minimum": 1,
+          "title": "Max File Size Mb",
+          "type": "integer"
+        },
+        "time_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "allowed_roots"
+      ],
+      "title": "FilesConstraints",
+      "type": "object"
+    },
+    "HealthEntry": {
+      "properties": {
+        "checked_at": {
+          "format": "date-time",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "component": {
+          "title": "Component",
+          "type": "string"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Ms"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "degraded",
+            "down",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component",
+        "status",
+        "checked_at"
+      ],
+      "title": "HealthEntry",
+      "type": "object"
+    },
+    "MailSendConstraints": {
+      "$defs": {
+        "TimeWindow": {
+          "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+          "properties": {
+            "end": {
+              "format": "time",
+              "title": "End",
+              "type": "string"
+            },
+            "start": {
+              "format": "time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "TimeWindow",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Einschränkungen für ``mail.send``.",
+      "properties": {
+        "max_recipients": {
+          "default": 5,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Max Recipients",
+          "type": "integer"
+        },
+        "recipients_allowlist": {
+          "items": {
+            "format": "email",
+            "type": "string"
+          },
+          "title": "Recipients Allowlist",
+          "type": "array"
+        },
+        "require_draft_review": {
+          "default": true,
+          "title": "Require Draft Review",
+          "type": "boolean"
+        },
+        "time_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "MailSendConstraints",
+      "type": "object"
+    },
+    "MemoryCandidate": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "MemoryKind": {
+          "enum": [
+            "semantic_fact",
+            "preference",
+            "episodic",
+            "entity",
+            "procedure"
+          ],
+          "title": "MemoryKind",
+          "type": "string"
+        },
+        "Provenance": {
+          "description": "Herkunft eines Gedächtniseintrags. Ohne diese Felder ist ein\nLangzeitgedächtnis nicht auditierbar.",
+          "properties": {
+            "document_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Document Id"
+            },
+            "email_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Email Id"
+            },
+            "message_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Message Id"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Note"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "source_type": {
+              "$ref": "#/$defs/SourceType"
+            }
+          },
+          "required": [
+            "source_type"
+          ],
+          "title": "Provenance",
+          "type": "object"
+        },
+        "SourceType": {
+          "enum": [
+            "user_stated",
+            "inferred",
+            "imported",
+            "observed"
+          ],
+          "title": "SourceType",
+          "type": "string"
+        }
+      },
+      "description": "Extrahierter Kandidat vor der Übernahme ins Gedächtnis.",
+      "properties": {
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "conflicts_with": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Conflicts With",
+          "type": "array"
+        },
+        "content": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P2"
+        },
+        "kind": {
+          "$ref": "#/$defs/MemoryKind"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      },
+      "required": [
+        "content",
+        "kind",
+        "provenance",
+        "confidence"
+      ],
+      "title": "MemoryCandidate",
+      "type": "object"
+    },
+    "MemoryHit": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "MemoryKind": {
+          "enum": [
+            "semantic_fact",
+            "preference",
+            "episodic",
+            "entity",
+            "procedure"
+          ],
+          "title": "MemoryKind",
+          "type": "string"
+        },
+        "MemoryRecord": {
+          "description": "Ein Fakt. Bewusst ein Fakt pro Datensatz — das macht Korrektur und\nLöschung präzise.",
+          "properties": {
+            "access_count": {
+              "default": 0,
+              "title": "Access Count",
+              "type": "integer"
+            },
+            "confidence": {
+              "default": 1.0,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Confidence",
+              "type": "number"
+            },
+            "content": {
+              "maxLength": 4000,
+              "minLength": 1,
+              "title": "Content",
+              "type": "string"
+            },
+            "data_class": {
+              "$ref": "#/$defs/DataClass",
+              "default": "P2"
+            },
+            "id": {
+              "format": "uuid",
+              "title": "Id",
+              "type": "string"
+            },
+            "importance": {
+              "default": 0.5,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Importance",
+              "type": "number"
+            },
+            "kind": {
+              "$ref": "#/$defs/MemoryKind"
+            },
+            "last_accessed_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Last Accessed At"
+            },
+            "provenance": {
+              "$ref": "#/$defs/Provenance"
+            },
+            "retention_until": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Retention Until"
+            },
+            "status": {
+              "$ref": "#/$defs/MemoryStatus",
+              "default": "candidate"
+            },
+            "structured": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Structured"
+            },
+            "superseded_by": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Superseded By"
+            },
+            "user_id": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            },
+            "valid_from": {
+              "format": "date-time",
+              "title": "Valid From",
+              "type": "string"
+            },
+            "valid_until": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Valid Until"
+            }
+          },
+          "required": [
+            "id",
+            "user_id",
+            "kind",
+            "content",
+            "provenance",
+            "valid_from"
+          ],
+          "title": "MemoryRecord",
+          "type": "object"
+        },
+        "MemoryStatus": {
+          "enum": [
+            "candidate",
+            "active",
+            "superseded",
+            "rejected"
+          ],
+          "title": "MemoryStatus",
+          "type": "string"
+        },
+        "Provenance": {
+          "description": "Herkunft eines Gedächtniseintrags. Ohne diese Felder ist ein\nLangzeitgedächtnis nicht auditierbar.",
+          "properties": {
+            "document_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Document Id"
+            },
+            "email_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Email Id"
+            },
+            "message_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Message Id"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Note"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "source_type": {
+              "$ref": "#/$defs/SourceType"
+            }
+          },
+          "required": [
+            "source_type"
+          ],
+          "title": "Provenance",
+          "type": "object"
+        },
+        "SourceType": {
+          "enum": [
+            "user_stated",
+            "inferred",
+            "imported",
+            "observed"
+          ],
+          "title": "SourceType",
+          "type": "string"
+        }
+      },
+      "description": "Ein Treffer mit aufgeschlüsselter Bewertung — wichtig fürs Debugging\nschlechter Retrieval-Ergebnisse.",
+      "properties": {
+        "keyword_score": {
+          "default": 0.0,
+          "title": "Keyword Score",
+          "type": "number"
+        },
+        "matched_by": {
+          "default": "both",
+          "enum": [
+            "semantic",
+            "keyword",
+            "both"
+          ],
+          "title": "Matched By",
+          "type": "string"
+        },
+        "recency_score": {
+          "default": 0.0,
+          "title": "Recency Score",
+          "type": "number"
+        },
+        "record": {
+          "$ref": "#/$defs/MemoryRecord"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "semantic_score": {
+          "default": 0.0,
+          "title": "Semantic Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "record",
+        "score"
+      ],
+      "title": "MemoryHit",
+      "type": "object"
+    },
+    "MemoryQuery": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "MemoryKind": {
+          "enum": [
+            "semantic_fact",
+            "preference",
+            "episodic",
+            "entity",
+            "procedure"
+          ],
+          "title": "MemoryKind",
+          "type": "string"
+        },
+        "RetrievalWeights": {
+          "description": "Gewichtung des hybriden Retrievals.\n\nWird gegen die Eval-Suite kalibriert, nicht nach Gefühl gesetzt\n(docs/15-testing.md §4.2).",
+          "properties": {
+            "importance": {
+              "default": 0.1,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Importance",
+              "type": "number"
+            },
+            "keyword": {
+              "default": 0.25,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Keyword",
+              "type": "number"
+            },
+            "recency": {
+              "default": 0.1,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Recency",
+              "type": "number"
+            },
+            "recency_halflife_days": {
+              "default": 30.0,
+              "exclusiveMinimum": 0,
+              "title": "Recency Halflife Days",
+              "type": "number"
+            },
+            "semantic": {
+              "default": 0.55,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Semantic",
+              "type": "number"
+            }
+          },
+          "title": "RetrievalWeights",
+          "type": "object"
+        }
+      },
+      "description": "Abfrage gegen das Gedächtnis.",
+      "properties": {
+        "include_superseded": {
+          "default": false,
+          "title": "Include Superseded",
+          "type": "boolean"
+        },
+        "k": {
+          "default": 8,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "K",
+          "type": "integer"
+        },
+        "kinds": {
+          "items": {
+            "$ref": "#/$defs/MemoryKind"
+          },
+          "title": "Kinds",
+          "type": "array"
+        },
+        "max_data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P3"
+        },
+        "query": {
+          "minLength": 1,
+          "title": "Query",
+          "type": "string"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        },
+        "weights": {
+          "$ref": "#/$defs/RetrievalWeights",
+          "default": {
+            "importance": 0.1,
+            "keyword": 0.25,
+            "recency": 0.1,
+            "recency_halflife_days": 30.0,
+            "semantic": 0.55
+          }
+        }
+      },
+      "required": [
+        "user_id",
+        "query"
+      ],
+      "title": "MemoryQuery",
+      "type": "object"
+    },
+    "MemoryRecord": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "MemoryKind": {
+          "enum": [
+            "semantic_fact",
+            "preference",
+            "episodic",
+            "entity",
+            "procedure"
+          ],
+          "title": "MemoryKind",
+          "type": "string"
+        },
+        "MemoryStatus": {
+          "enum": [
+            "candidate",
+            "active",
+            "superseded",
+            "rejected"
+          ],
+          "title": "MemoryStatus",
+          "type": "string"
+        },
+        "Provenance": {
+          "description": "Herkunft eines Gedächtniseintrags. Ohne diese Felder ist ein\nLangzeitgedächtnis nicht auditierbar.",
+          "properties": {
+            "document_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Document Id"
+            },
+            "email_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Email Id"
+            },
+            "message_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Message Id"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Note"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "source_type": {
+              "$ref": "#/$defs/SourceType"
+            }
+          },
+          "required": [
+            "source_type"
+          ],
+          "title": "Provenance",
+          "type": "object"
+        },
+        "SourceType": {
+          "enum": [
+            "user_stated",
+            "inferred",
+            "imported",
+            "observed"
+          ],
+          "title": "SourceType",
+          "type": "string"
+        }
+      },
+      "description": "Ein Fakt. Bewusst ein Fakt pro Datensatz — das macht Korrektur und\nLöschung präzise.",
+      "properties": {
+        "access_count": {
+          "default": 0,
+          "title": "Access Count",
+          "type": "integer"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "content": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P2"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "importance": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Importance",
+          "type": "number"
+        },
+        "kind": {
+          "$ref": "#/$defs/MemoryKind"
+        },
+        "last_accessed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Accessed At"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        },
+        "retention_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retention Until"
+        },
+        "status": {
+          "$ref": "#/$defs/MemoryStatus",
+          "default": "candidate"
+        },
+        "structured": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Structured"
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Superseded By"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        },
+        "valid_from": {
+          "format": "date-time",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid Until"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "kind",
+        "content",
+        "provenance",
+        "valid_from"
+      ],
+      "title": "MemoryRecord",
+      "type": "object"
+    },
+    "ModelCapability": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        }
+      },
+      "description": "Was ein Modell kann — und für welche Datenklasse es zugelassen ist.",
+      "properties": {
+        "context_window": {
+          "exclusiveMinimum": 0,
+          "title": "Context Window",
+          "type": "integer"
+        },
+        "cost_per_1m_in": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "title": "Cost Per 1M In"
+        },
+        "cost_per_1m_out": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "title": "Cost Per 1M Out"
+        },
+        "is_local": {
+          "default": false,
+          "title": "Is Local",
+          "type": "boolean"
+        },
+        "max_data_class": {
+          "$ref": "#/$defs/DataClass"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "p50_latency_ms": {
+          "default": 800,
+          "title": "P50 Latency Ms",
+          "type": "integer"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "supports_tools": {
+          "default": true,
+          "title": "Supports Tools",
+          "type": "boolean"
+        },
+        "supports_vision": {
+          "default": false,
+          "title": "Supports Vision",
+          "type": "boolean"
+        },
+        "zero_retention": {
+          "default": false,
+          "title": "Zero Retention",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "provider",
+        "max_data_class",
+        "context_window"
+      ],
+      "title": "ModelCapability",
+      "type": "object"
+    },
+    "PendingAction": {
+      "$defs": {
+        "ActionPreview": {
+          "description": "Was tatsächlich passieren wird.\n\nWird aus dem *validierten Argument-Objekt* gebaut, nicht aus einer vom\nModell formulierten Beschreibung. Damit kann das Modell nichts anderes\nanzeigen, als es ausführt (docs/07-security-permissions.md §5).",
+          "properties": {
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/PreviewField"
+              },
+              "title": "Fields",
+              "type": "array"
+            },
+            "reversible": {
+              "default": false,
+              "title": "Reversible",
+              "type": "boolean"
+            },
+            "risk": {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Warnings",
+              "type": "array"
+            }
+          },
+          "required": [
+            "tool_name",
+            "title",
+            "risk"
+          ],
+          "title": "ActionPreview",
+          "type": "object"
+        },
+        "PreviewField": {
+          "description": "Ein angezeigtes Feld der Vorschau.",
+          "properties": {
+            "emphasis": {
+              "default": "normal",
+              "enum": [
+                "normal",
+                "warn"
+              ],
+              "title": "Emphasis",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "truncated": {
+              "default": false,
+              "title": "Truncated",
+              "type": "boolean"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "value"
+          ],
+          "title": "PreviewField",
+          "type": "object"
+        },
+        "RiskLevel": {
+          "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "RiskLevel",
+          "type": "string"
+        }
+      },
+      "description": "Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "invocation_id": {
+          "format": "uuid",
+          "title": "Invocation Id",
+          "type": "string"
+        },
+        "nonce": {
+          "minLength": 16,
+          "title": "Nonce",
+          "type": "string"
+        },
+        "preview": {
+          "$ref": "#/$defs/ActionPreview"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "invocation_id",
+        "user_id",
+        "tool_name",
+        "preview",
+        "risk",
+        "reason",
+        "nonce",
+        "expires_at",
+        "created_at"
+      ],
+      "title": "PendingAction",
+      "type": "object"
+    },
+    "PermissionGrant": {
+      "$defs": {
+        "PermissionMode": {
+          "description": "Wie eine Berechtigung erteilt ist.",
+          "enum": [
+            "deny",
+            "confirm",
+            "allow"
+          ],
+          "title": "PermissionMode",
+          "type": "string"
+        },
+        "ScopeConstraints": {
+          "additionalProperties": false,
+          "description": "Basisklasse für scope-spezifische Einschränkungen.\n\nIn der Datenbank als JSONB abgelegt (docs/03-datenmodell.md §2); die\nTypsicherheit sitzt hier an der Anwendungsgrenze, nicht im DDL.",
+          "properties": {
+            "time_window": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TimeWindow"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "title": "ScopeConstraints",
+          "type": "object"
+        },
+        "TimeWindow": {
+          "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+          "properties": {
+            "end": {
+              "format": "time",
+              "title": "End",
+              "type": "string"
+            },
+            "start": {
+              "format": "time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "TimeWindow",
+          "type": "object"
+        }
+      },
+      "description": "Eine für einen Nutzer erteilte Berechtigung.",
+      "properties": {
+        "constraints": {
+          "$ref": "#/$defs/ScopeConstraints"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "granted_at": {
+          "format": "date-time",
+          "title": "Granted At",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/PermissionMode"
+        },
+        "scope": {
+          "description": "Scope im Format <domäne>.<aktion>, z. B. 'mail.send'.",
+          "examples": [
+            "mail.read",
+            "mail.send",
+            "calendar.delete",
+            "files.write"
+          ],
+          "maxLength": 64,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "mode",
+        "granted_at"
+      ],
+      "title": "PermissionGrant",
+      "type": "object"
+    },
+    "Plan": {
+      "$defs": {
+        "PlanStep": {
+          "description": "Ein Schritt eines Ausführungsplans.",
+          "properties": {
+            "depends_on": {
+              "items": {
+                "type": "integer"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "minLength": 1,
+              "title": "Description",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "tool",
+                "agent",
+                "llm",
+                "confirm"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "optional": {
+              "default": false,
+              "title": "Optional",
+              "type": "boolean"
+            },
+            "seq": {
+              "minimum": 1,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "target": {
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "description",
+            "kind",
+            "target"
+          ],
+          "title": "PlanStep",
+          "type": "object"
+        }
+      },
+      "description": "Validierter Ausführungsplan — kein Freitext.",
+      "properties": {
+        "estimated_tokens": {
+          "default": 0,
+          "title": "Estimated Tokens",
+          "type": "integer"
+        },
+        "fallback": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fallback"
+        },
+        "goal": {
+          "minLength": 1,
+          "title": "Goal",
+          "type": "string"
+        },
+        "requires_confirmation": {
+          "default": false,
+          "title": "Requires Confirmation",
+          "type": "boolean"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/PlanStep"
+          },
+          "minItems": 1,
+          "title": "Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "goal",
+        "steps"
+      ],
+      "title": "Plan",
+      "type": "object"
+    },
+    "PlanStep": {
+      "description": "Ein Schritt eines Ausführungsplans.",
+      "properties": {
+        "depends_on": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Depends On",
+          "type": "array"
+        },
+        "description": {
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "tool",
+            "agent",
+            "llm",
+            "confirm"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "optional": {
+          "default": false,
+          "title": "Optional",
+          "type": "boolean"
+        },
+        "seq": {
+          "minimum": 1,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "description",
+        "kind",
+        "target"
+      ],
+      "title": "PlanStep",
+      "type": "object"
+    },
+    "PolicyDecision": {
+      "$defs": {
+        "ActionPreview": {
+          "description": "Was tatsächlich passieren wird.\n\nWird aus dem *validierten Argument-Objekt* gebaut, nicht aus einer vom\nModell formulierten Beschreibung. Damit kann das Modell nichts anderes\nanzeigen, als es ausführt (docs/07-security-permissions.md §5).",
+          "properties": {
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/PreviewField"
+              },
+              "title": "Fields",
+              "type": "array"
+            },
+            "reversible": {
+              "default": false,
+              "title": "Reversible",
+              "type": "boolean"
+            },
+            "risk": {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Warnings",
+              "type": "array"
+            }
+          },
+          "required": [
+            "tool_name",
+            "title",
+            "risk"
+          ],
+          "title": "ActionPreview",
+          "type": "object"
+        },
+        "ConstraintViolation": {
+          "description": "Warum ein Aufruf an einer Einschränkung scheitert.",
+          "properties": {
+            "field": {
+              "title": "Field",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "field",
+            "message"
+          ],
+          "title": "ConstraintViolation",
+          "type": "object"
+        },
+        "PolicyEffect": {
+          "description": "Ergebnis einer Policy-Prüfung.",
+          "enum": [
+            "allow",
+            "confirm",
+            "deny"
+          ],
+          "title": "PolicyEffect",
+          "type": "string"
+        },
+        "PreviewField": {
+          "description": "Ein angezeigtes Feld der Vorschau.",
+          "properties": {
+            "emphasis": {
+              "default": "normal",
+              "enum": [
+                "normal",
+                "warn"
+              ],
+              "title": "Emphasis",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "truncated": {
+              "default": false,
+              "title": "Truncated",
+              "type": "boolean"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "value"
+          ],
+          "title": "PreviewField",
+          "type": "object"
+        },
+        "RiskLevel": {
+          "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "RiskLevel",
+          "type": "string"
+        }
+      },
+      "description": "Ergebnis einer Policy-Prüfung — inklusive Begründung für die UI.",
+      "properties": {
+        "effect": {
+          "$ref": "#/$defs/PolicyEffect"
+        },
+        "escalate_to_user": {
+          "default": false,
+          "title": "Escalate To User",
+          "type": "boolean"
+        },
+        "offer_grant": {
+          "default": false,
+          "title": "Offer Grant",
+          "type": "boolean"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActionPreview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "description": "Scope im Format <domäne>.<aktion>, z. B. 'mail.send'.",
+              "examples": [
+                "mail.read",
+                "mail.send",
+                "calendar.delete",
+                "files.write"
+              ],
+              "maxLength": 64,
+              "minLength": 3,
+              "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "violation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConstraintViolation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "effect",
+        "reason"
+      ],
+      "title": "PolicyDecision",
+      "type": "object"
+    },
+    "PolicyRequest": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        }
+      },
+      "description": "Anfrage an die Policy Engine. Einziger Weg zur Werkzeugausführung.",
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Name"
+        },
+        "allowed_data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P3"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "trigger": {
+          "default": "user",
+          "enum": [
+            "user",
+            "schedule",
+            "event",
+            "webhook"
+          ],
+          "title": "Trigger",
+          "type": "string"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "user_id",
+        "run_id",
+        "tool_name"
+      ],
+      "title": "PolicyRequest",
+      "type": "object"
+    },
+    "PreviewField": {
+      "description": "Ein angezeigtes Feld der Vorschau.",
+      "properties": {
+        "emphasis": {
+          "default": "normal",
+          "enum": [
+            "normal",
+            "warn"
+          ],
+          "title": "Emphasis",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ],
+      "title": "PreviewField",
+      "type": "object"
+    },
+    "Problem": {
+      "$defs": {
+        "Remediation": {
+          "description": "Wie der Nutzer den Fehler beheben kann.",
+          "properties": {
+            "action": {
+              "title": "Action",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Url"
+            }
+          },
+          "required": [
+            "action",
+            "label"
+          ],
+          "title": "Remediation",
+          "type": "object"
+        }
+      },
+      "description": "Fehlerantwort des API.",
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "extra": {
+          "additionalProperties": true,
+          "title": "Extra",
+          "type": "object"
+        },
+        "instance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instance"
+        },
+        "remediation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Remediation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "status": {
+          "title": "Status",
+          "type": "integer"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Id"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "title",
+        "status",
+        "detail"
+      ],
+      "title": "Problem",
+      "type": "object"
+    },
+    "Provenance": {
+      "$defs": {
+        "SourceType": {
+          "enum": [
+            "user_stated",
+            "inferred",
+            "imported",
+            "observed"
+          ],
+          "title": "SourceType",
+          "type": "string"
+        }
+      },
+      "description": "Herkunft eines Gedächtniseintrags. Ohne diese Felder ist ein\nLangzeitgedächtnis nicht auditierbar.",
+      "properties": {
+        "document_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Id"
+        },
+        "email_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Email Id"
+        },
+        "message_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message Id"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run Id"
+        },
+        "source_type": {
+          "$ref": "#/$defs/SourceType"
+        }
+      },
+      "required": [
+        "source_type"
+      ],
+      "title": "Provenance",
+      "type": "object"
+    },
+    "ReferenceResolution": {
+      "$defs": {
+        "SalientEntity": {
+          "description": "Eine im Gespräch erwähnte Entität — Grundlage der Referenzauflösung.",
+          "properties": {
+            "gender": {
+              "default": "unknown",
+              "enum": [
+                "m",
+                "f",
+                "n",
+                "unknown"
+              ],
+              "title": "Gender",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "person",
+                "event",
+                "document",
+                "task",
+                "project",
+                "email"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "mention_count": {
+              "default": 1,
+              "title": "Mention Count",
+              "type": "integer"
+            },
+            "mentioned_at": {
+              "format": "date-time",
+              "title": "Mentioned At",
+              "type": "string"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "label",
+            "ref",
+            "mentioned_at"
+          ],
+          "title": "SalientEntity",
+          "type": "object"
+        }
+      },
+      "description": "Ergebnis der Auflösung eines Pronomens oder Verweises.",
+      "properties": {
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/SalientEntity"
+          },
+          "title": "Candidates",
+          "type": "array"
+        },
+        "confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "needs_clarification": {
+          "default": true,
+          "title": "Needs Clarification",
+          "type": "boolean"
+        },
+        "reference": {
+          "title": "Reference",
+          "type": "string"
+        },
+        "resolved": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SalientEntity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "reference"
+      ],
+      "title": "ReferenceResolution",
+      "type": "object"
+    },
+    "Remediation": {
+      "description": "Wie der Nutzer den Fehler beheben kann.",
+      "properties": {
+        "action": {
+          "title": "Action",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "required": [
+        "action",
+        "label"
+      ],
+      "title": "Remediation",
+      "type": "object"
+    },
+    "RetrievalWeights": {
+      "description": "Gewichtung des hybriden Retrievals.\n\nWird gegen die Eval-Suite kalibriert, nicht nach Gefühl gesetzt\n(docs/15-testing.md §4.2).",
+      "properties": {
+        "importance": {
+          "default": 0.1,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Importance",
+          "type": "number"
+        },
+        "keyword": {
+          "default": 0.25,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Keyword",
+          "type": "number"
+        },
+        "recency": {
+          "default": 0.1,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Recency",
+          "type": "number"
+        },
+        "recency_halflife_days": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "title": "Recency Halflife Days",
+          "type": "number"
+        },
+        "semantic": {
+          "default": 0.55,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Semantic",
+          "type": "number"
+        }
+      },
+      "title": "RetrievalWeights",
+      "type": "object"
+    },
+    "RoutingDecision": {
+      "description": "Modellwahl mit Begründung. Die Begründung erscheint in der UI.",
+      "properties": {
+        "is_fallback": {
+          "default": false,
+          "title": "Is Fallback",
+          "type": "boolean"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        },
+        "rejected": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Rejected",
+          "type": "object"
+        }
+      },
+      "required": [
+        "model",
+        "provider",
+        "reason"
+      ],
+      "title": "RoutingDecision",
+      "type": "object"
+    },
+    "Run": {
+      "$defs": {
+        "Capability": {
+          "description": "Fähigkeiten, die ein Modell für eine Aufgabe mitbringen muss.",
+          "enum": [
+            "tool_calling",
+            "vision",
+            "long_context",
+            "structured_output",
+            "reasoning"
+          ],
+          "title": "Capability",
+          "type": "string"
+        },
+        "Complexity": {
+          "enum": [
+            "trivial",
+            "simple",
+            "moderate",
+            "complex"
+          ],
+          "title": "Complexity",
+          "type": "string"
+        },
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "Intent": {
+          "enum": [
+            "chat",
+            "question",
+            "task",
+            "command",
+            "research",
+            "creative",
+            "code",
+            "clarification"
+          ],
+          "title": "Intent",
+          "type": "string"
+        },
+        "Plan": {
+          "description": "Validierter Ausführungsplan — kein Freitext.",
+          "properties": {
+            "estimated_tokens": {
+              "default": 0,
+              "title": "Estimated Tokens",
+              "type": "integer"
+            },
+            "fallback": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Fallback"
+            },
+            "goal": {
+              "minLength": 1,
+              "title": "Goal",
+              "type": "string"
+            },
+            "requires_confirmation": {
+              "default": false,
+              "title": "Requires Confirmation",
+              "type": "boolean"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/PlanStep"
+              },
+              "minItems": 1,
+              "title": "Steps",
+              "type": "array"
+            }
+          },
+          "required": [
+            "goal",
+            "steps"
+          ],
+          "title": "Plan",
+          "type": "object"
+        },
+        "PlanStep": {
+          "description": "Ein Schritt eines Ausführungsplans.",
+          "properties": {
+            "depends_on": {
+              "items": {
+                "type": "integer"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "minLength": 1,
+              "title": "Description",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "tool",
+                "agent",
+                "llm",
+                "confirm"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "optional": {
+              "default": false,
+              "title": "Optional",
+              "type": "boolean"
+            },
+            "seq": {
+              "minimum": 1,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "target": {
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "description",
+            "kind",
+            "target"
+          ],
+          "title": "PlanStep",
+          "type": "object"
+        },
+        "RoutingDecision": {
+          "description": "Modellwahl mit Begründung. Die Begründung erscheint in der UI.",
+          "properties": {
+            "is_fallback": {
+              "default": false,
+              "title": "Is Fallback",
+              "type": "boolean"
+            },
+            "model": {
+              "title": "Model",
+              "type": "string"
+            },
+            "provider": {
+              "title": "Provider",
+              "type": "string"
+            },
+            "reason": {
+              "minLength": 1,
+              "title": "Reason",
+              "type": "string"
+            },
+            "rejected": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "title": "Rejected",
+              "type": "object"
+            }
+          },
+          "required": [
+            "model",
+            "provider",
+            "reason"
+          ],
+          "title": "RoutingDecision",
+          "type": "object"
+        },
+        "RunBudget": {
+          "description": "Harte Grenzen eines Laufs. Überschreitung beendet sauber mit Teilergebnis.",
+          "properties": {
+            "max_agent_depth": {
+              "default": 2,
+              "maximum": 4,
+              "minimum": 0,
+              "title": "Max Agent Depth",
+              "type": "integer"
+            },
+            "max_cost_eur": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0.50",
+              "title": "Max Cost Eur"
+            },
+            "max_seconds": {
+              "default": 120.0,
+              "exclusiveMinimum": 0,
+              "title": "Max Seconds",
+              "type": "number"
+            },
+            "max_steps": {
+              "default": 20,
+              "exclusiveMinimum": 0,
+              "title": "Max Steps",
+              "type": "integer"
+            },
+            "max_tokens": {
+              "default": 120000,
+              "exclusiveMinimum": 0,
+              "title": "Max Tokens",
+              "type": "integer"
+            },
+            "max_tool_calls": {
+              "default": 15,
+              "exclusiveMinimum": 0,
+              "title": "Max Tool Calls",
+              "type": "integer"
+            }
+          },
+          "title": "RunBudget",
+          "type": "object"
+        },
+        "RunStatus": {
+          "enum": [
+            "queued",
+            "planning",
+            "executing",
+            "awaiting_confirmation",
+            "verifying",
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "budget_exceeded"
+          ],
+          "title": "RunStatus",
+          "type": "string"
+        },
+        "RunTrigger": {
+          "enum": [
+            "user",
+            "schedule",
+            "event",
+            "webhook"
+          ],
+          "title": "RunTrigger",
+          "type": "string"
+        },
+        "TaintLevel": {
+          "description": "Kontaminationszustand eines Laufs.\n\nSiehe docs/07-security-permissions.md §4. Der Zustand ist *monoton*:\neinmal ``TAINTED``, für den Lauf nicht mehr entfernbar.",
+          "enum": [
+            "clean",
+            "tainted"
+          ],
+          "title": "TaintLevel",
+          "type": "string"
+        },
+        "TurnClassification": {
+          "description": "Ergebnis der ersten Orchestrator-Stufe.\n\nEin günstiger Aufruf (lokales Modell), der jede weitere Entscheidung\nvorbereitet — und als Datensatz gegen eine Eval-Suite prüfbar ist.",
+          "properties": {
+            "ambiguous_references": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Ambiguous References",
+              "type": "array"
+            },
+            "complexity": {
+              "$ref": "#/$defs/Complexity"
+            },
+            "confidence": {
+              "default": 1.0,
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "title": "Confidence",
+              "type": "number"
+            },
+            "data_class": {
+              "$ref": "#/$defs/DataClass"
+            },
+            "explicit_model_request": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Explicit Model Request"
+            },
+            "intent": {
+              "$ref": "#/$defs/Intent"
+            },
+            "is_multi_step": {
+              "default": false,
+              "title": "Is Multi Step",
+              "type": "boolean"
+            },
+            "likely_tools": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Likely Tools",
+              "type": "array"
+            },
+            "needs_realtime_info": {
+              "default": false,
+              "title": "Needs Realtime Info",
+              "type": "boolean"
+            },
+            "required_capabilities": {
+              "items": {
+                "$ref": "#/$defs/Capability"
+              },
+              "title": "Required Capabilities",
+              "type": "array"
+            }
+          },
+          "required": [
+            "intent",
+            "complexity",
+            "data_class"
+          ],
+          "title": "TurnClassification",
+          "type": "object"
+        },
+        "Usage": {
+          "description": "Verbrauch eines Laufs. Wird fortlaufend gegen das Budget geprüft.",
+          "properties": {
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0",
+              "title": "Cost Eur"
+            },
+            "elapsed_s": {
+              "default": 0.0,
+              "title": "Elapsed S",
+              "type": "number"
+            },
+            "steps": {
+              "default": 0,
+              "title": "Steps",
+              "type": "integer"
+            },
+            "tokens_in": {
+              "default": 0,
+              "title": "Tokens In",
+              "type": "integer"
+            },
+            "tokens_out": {
+              "default": 0,
+              "title": "Tokens Out",
+              "type": "integer"
+            },
+            "tool_calls": {
+              "default": 0,
+              "title": "Tool Calls",
+              "type": "integer"
+            }
+          },
+          "title": "Usage",
+          "type": "object"
+        }
+      },
+      "description": "Der persistierte Zustand einer Orchestrator-Ausführung.",
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/RunBudget"
+        },
+        "classification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TurnClassification"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "conversation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P1"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Plan"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "routing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RoutingDecision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus",
+          "default": "queued"
+        },
+        "taint_level": {
+          "$ref": "#/$defs/TaintLevel",
+          "default": "clean"
+        },
+        "trace_id": {
+          "title": "Trace Id",
+          "type": "string"
+        },
+        "trigger": {
+          "$ref": "#/$defs/RunTrigger",
+          "default": "user"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "trace_id",
+        "started_at"
+      ],
+      "title": "Run",
+      "type": "object"
+    },
+    "RunBudget": {
+      "description": "Harte Grenzen eines Laufs. Überschreitung beendet sauber mit Teilergebnis.",
+      "properties": {
+        "max_agent_depth": {
+          "default": 2,
+          "maximum": 4,
+          "minimum": 0,
+          "title": "Max Agent Depth",
+          "type": "integer"
+        },
+        "max_cost_eur": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0.50",
+          "title": "Max Cost Eur"
+        },
+        "max_seconds": {
+          "default": 120.0,
+          "exclusiveMinimum": 0,
+          "title": "Max Seconds",
+          "type": "number"
+        },
+        "max_steps": {
+          "default": 20,
+          "exclusiveMinimum": 0,
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "max_tokens": {
+          "default": 120000,
+          "exclusiveMinimum": 0,
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "max_tool_calls": {
+          "default": 15,
+          "exclusiveMinimum": 0,
+          "title": "Max Tool Calls",
+          "type": "integer"
+        }
+      },
+      "title": "RunBudget",
+      "type": "object"
+    },
+    "RunStep": {
+      "$defs": {
+        "Usage": {
+          "description": "Verbrauch eines Laufs. Wird fortlaufend gegen das Budget geprüft.",
+          "properties": {
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0",
+              "title": "Cost Eur"
+            },
+            "elapsed_s": {
+              "default": 0.0,
+              "title": "Elapsed S",
+              "type": "number"
+            },
+            "steps": {
+              "default": 0,
+              "title": "Steps",
+              "type": "integer"
+            },
+            "tokens_in": {
+              "default": 0,
+              "title": "Tokens In",
+              "type": "integer"
+            },
+            "tokens_out": {
+              "default": 0,
+              "title": "Tokens Out",
+              "type": "integer"
+            },
+            "tool_calls": {
+              "default": 0,
+              "title": "Tool Calls",
+              "type": "integer"
+            }
+          },
+          "title": "Usage",
+          "type": "object"
+        }
+      },
+      "description": "Ein ausgeführter Schritt. Zugleich Datenquelle des Aktivitätsprotokolls.",
+      "properties": {
+        "agent_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Name"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "classify",
+            "route",
+            "plan",
+            "agent",
+            "tool",
+            "llm",
+            "verify"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "latency_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latency Ms"
+        },
+        "model_used": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Used"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "integer"
+        },
+        "started_at": {
+          "format": "date-time",
+          "title": "Started At",
+          "type": "string"
+        },
+        "status": {
+          "default": "running",
+          "enum": [
+            "running",
+            "ok",
+            "failed",
+            "skipped",
+            "blocked"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "id",
+        "run_id",
+        "seq",
+        "kind",
+        "started_at"
+      ],
+      "title": "RunStep",
+      "type": "object"
+    },
+    "SalientEntity": {
+      "description": "Eine im Gespräch erwähnte Entität — Grundlage der Referenzauflösung.",
+      "properties": {
+        "gender": {
+          "default": "unknown",
+          "enum": [
+            "m",
+            "f",
+            "n",
+            "unknown"
+          ],
+          "title": "Gender",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "person",
+            "event",
+            "document",
+            "task",
+            "project",
+            "email"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "mention_count": {
+          "default": 1,
+          "title": "Mention Count",
+          "type": "integer"
+        },
+        "mentioned_at": {
+          "format": "date-time",
+          "title": "Mentioned At",
+          "type": "string"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "ref",
+        "mentioned_at"
+      ],
+      "title": "SalientEntity",
+      "type": "object"
+    },
+    "ScopeConstraints": {
+      "$defs": {
+        "TimeWindow": {
+          "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+          "properties": {
+            "end": {
+              "format": "time",
+              "title": "End",
+              "type": "string"
+            },
+            "start": {
+              "format": "time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "TimeWindow",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Basisklasse für scope-spezifische Einschränkungen.\n\nIn der Datenbank als JSONB abgelegt (docs/03-datenmodell.md §2); die\nTypsicherheit sitzt hier an der Anwendungsgrenze, nicht im DDL.",
+      "properties": {
+        "time_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ScopeConstraints",
+      "type": "object"
+    },
+    "ScopeSpec": {
+      "$defs": {
+        "PermissionMode": {
+          "description": "Wie eine Berechtigung erteilt ist.",
+          "enum": [
+            "deny",
+            "confirm",
+            "allow"
+          ],
+          "title": "PermissionMode",
+          "type": "string"
+        },
+        "RiskLevel": {
+          "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "RiskLevel",
+          "type": "string"
+        }
+      },
+      "description": "Katalogeintrag eines Scopes. Scopes sind Daten, kein Enum im Code —\nneue Werkzeuge bringen neue Scopes mit.",
+      "properties": {
+        "default_mode": {
+          "$ref": "#/$defs/PermissionMode"
+        },
+        "description": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "name": {
+          "description": "Scope im Format <domäne>.<aktion>, z. B. 'mail.send'.",
+          "examples": [
+            "mail.read",
+            "mail.send",
+            "calendar.delete",
+            "files.write"
+          ],
+          "maxLength": 64,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+          "title": "Name",
+          "type": "string"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "default_mode",
+        "risk_level"
+      ],
+      "title": "ScopeSpec",
+      "type": "object"
+    },
+    "ServerMessage": {
+      "$defs": {
+        "ActionPending": {
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/PendingAction"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "action.pending",
+              "default": "action.pending",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "action"
+          ],
+          "title": "ActionPending",
+          "type": "object"
+        },
+        "ActionPreview": {
+          "description": "Was tatsächlich passieren wird.\n\nWird aus dem *validierten Argument-Objekt* gebaut, nicht aus einer vom\nModell formulierten Beschreibung. Damit kann das Modell nichts anderes\nanzeigen, als es ausführt (docs/07-security-permissions.md §5).",
+          "properties": {
+            "fields": {
+              "items": {
+                "$ref": "#/$defs/PreviewField"
+              },
+              "title": "Fields",
+              "type": "array"
+            },
+            "reversible": {
+              "default": false,
+              "title": "Reversible",
+              "type": "boolean"
+            },
+            "risk": {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "warnings": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Warnings",
+              "type": "array"
+            }
+          },
+          "required": [
+            "tool_name",
+            "title",
+            "risk"
+          ],
+          "title": "ActionPreview",
+          "type": "object"
+        },
+        "ActionResolved": {
+          "properties": {
+            "action_id": {
+              "format": "uuid",
+              "title": "Action Id",
+              "type": "string"
+            },
+            "result": {
+              "enum": [
+                "approved",
+                "rejected",
+                "expired"
+              ],
+              "title": "Result",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "action.resolved",
+              "default": "action.resolved",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "action_id",
+            "result"
+          ],
+          "title": "ActionResolved",
+          "type": "object"
+        },
+        "CoreState": {
+          "description": "Zustand der AI-Core-Darstellung (docs/10-ui.md §3).",
+          "enum": [
+            "idle",
+            "listening",
+            "thinking",
+            "executing",
+            "awaiting",
+            "speaking",
+            "error",
+            "muted"
+          ],
+          "title": "CoreState",
+          "type": "string"
+        },
+        "CoreStateChanged": {
+          "properties": {
+            "detail": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Detail"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "state": {
+              "$ref": "#/$defs/CoreState"
+            },
+            "t": {
+              "const": "core.state",
+              "default": "core.state",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "state"
+          ],
+          "title": "CoreStateChanged",
+          "type": "object"
+        },
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "HealthEntry": {
+          "properties": {
+            "checked_at": {
+              "format": "date-time",
+              "title": "Checked At",
+              "type": "string"
+            },
+            "component": {
+              "title": "Component",
+              "type": "string"
+            },
+            "detail": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Detail"
+            },
+            "latency_ms": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Latency Ms"
+            },
+            "status": {
+              "enum": [
+                "ok",
+                "degraded",
+                "down",
+                "unknown"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          "required": [
+            "component",
+            "status",
+            "checked_at"
+          ],
+          "title": "HealthEntry",
+          "type": "object"
+        },
+        "Intent": {
+          "enum": [
+            "chat",
+            "question",
+            "task",
+            "command",
+            "research",
+            "creative",
+            "code",
+            "clarification"
+          ],
+          "title": "Intent",
+          "type": "string"
+        },
+        "PendingAction": {
+          "description": "Ausstehende Bestätigung — ein persistiertes, ablaufendes Objekt.",
+          "properties": {
+            "created_at": {
+              "format": "date-time",
+              "title": "Created At",
+              "type": "string"
+            },
+            "expires_at": {
+              "format": "date-time",
+              "title": "Expires At",
+              "type": "string"
+            },
+            "id": {
+              "format": "uuid",
+              "title": "Id",
+              "type": "string"
+            },
+            "invocation_id": {
+              "format": "uuid",
+              "title": "Invocation Id",
+              "type": "string"
+            },
+            "nonce": {
+              "minLength": 16,
+              "title": "Nonce",
+              "type": "string"
+            },
+            "preview": {
+              "$ref": "#/$defs/ActionPreview"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            },
+            "risk": {
+              "$ref": "#/$defs/RiskLevel"
+            },
+            "tool_name": {
+              "title": "Tool Name",
+              "type": "string"
+            },
+            "user_id": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "invocation_id",
+            "user_id",
+            "tool_name",
+            "preview",
+            "risk",
+            "reason",
+            "nonce",
+            "expires_at",
+            "created_at"
+          ],
+          "title": "PendingAction",
+          "type": "object"
+        },
+        "PlanStep": {
+          "description": "Ein Schritt eines Ausführungsplans.",
+          "properties": {
+            "depends_on": {
+              "items": {
+                "type": "integer"
+              },
+              "title": "Depends On",
+              "type": "array"
+            },
+            "description": {
+              "minLength": 1,
+              "title": "Description",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "tool",
+                "agent",
+                "llm",
+                "confirm"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "optional": {
+              "default": false,
+              "title": "Optional",
+              "type": "boolean"
+            },
+            "seq": {
+              "minimum": 1,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "target": {
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "description",
+            "kind",
+            "target"
+          ],
+          "title": "PlanStep",
+          "type": "object"
+        },
+        "Pong": {
+          "properties": {
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "pong",
+              "default": "pong",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq"
+          ],
+          "title": "Pong",
+          "type": "object"
+        },
+        "PreviewField": {
+          "description": "Ein angezeigtes Feld der Vorschau.",
+          "properties": {
+            "emphasis": {
+              "default": "normal",
+              "enum": [
+                "normal",
+                "warn"
+              ],
+              "title": "Emphasis",
+              "type": "string"
+            },
+            "label": {
+              "title": "Label",
+              "type": "string"
+            },
+            "truncated": {
+              "default": false,
+              "title": "Truncated",
+              "type": "boolean"
+            },
+            "value": {
+              "title": "Value",
+              "type": "string"
+            }
+          },
+          "required": [
+            "label",
+            "value"
+          ],
+          "title": "PreviewField",
+          "type": "object"
+        },
+        "Proactive": {
+          "properties": {
+            "body": {
+              "title": "Body",
+              "type": "string"
+            },
+            "dismissible": {
+              "default": true,
+              "title": "Dismissible",
+              "type": "boolean"
+            },
+            "kind": {
+              "title": "Kind",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "proactive",
+              "default": "proactive",
+              "title": "T",
+              "type": "string"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "kind",
+            "title",
+            "body"
+          ],
+          "title": "Proactive",
+          "type": "object"
+        },
+        "RiskLevel": {
+          "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "RiskLevel",
+          "type": "string"
+        },
+        "RunClassified": {
+          "properties": {
+            "complexity": {
+              "title": "Complexity",
+              "type": "string"
+            },
+            "data_class": {
+              "$ref": "#/$defs/DataClass"
+            },
+            "intent": {
+              "$ref": "#/$defs/Intent"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "run.classified",
+              "default": "run.classified",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "intent",
+            "data_class",
+            "complexity"
+          ],
+          "title": "RunClassified",
+          "type": "object"
+        },
+        "RunError": {
+          "properties": {
+            "code": {
+              "title": "Code",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            },
+            "recoverable": {
+              "default": false,
+              "title": "Recoverable",
+              "type": "boolean"
+            },
+            "remediation_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Remediation Url"
+            },
+            "run_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Run Id"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "run.error",
+              "default": "run.error",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "code",
+            "message"
+          ],
+          "title": "RunError",
+          "type": "object"
+        },
+        "RunFinished": {
+          "properties": {
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "title": "Cost Eur"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "status": {
+              "$ref": "#/$defs/RunStatus"
+            },
+            "t": {
+              "const": "run.finished",
+              "default": "run.finished",
+              "title": "T",
+              "type": "string"
+            },
+            "usage": {
+              "$ref": "#/$defs/Usage"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "status",
+            "usage",
+            "cost_eur"
+          ],
+          "title": "RunFinished",
+          "type": "object"
+        },
+        "RunPlan": {
+          "properties": {
+            "goal": {
+              "title": "Goal",
+              "type": "string"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/PlanStep"
+              },
+              "title": "Steps",
+              "type": "array"
+            },
+            "t": {
+              "const": "run.plan",
+              "default": "run.plan",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "goal",
+            "steps"
+          ],
+          "title": "RunPlan",
+          "type": "object"
+        },
+        "RunRouted": {
+          "properties": {
+            "is_fallback": {
+              "default": false,
+              "title": "Is Fallback",
+              "type": "boolean"
+            },
+            "model": {
+              "title": "Model",
+              "type": "string"
+            },
+            "provider": {
+              "title": "Provider",
+              "type": "string"
+            },
+            "reason": {
+              "title": "Reason",
+              "type": "string"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "run.routed",
+              "default": "run.routed",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "model",
+            "provider",
+            "reason"
+          ],
+          "title": "RunRouted",
+          "type": "object"
+        },
+        "RunStarted": {
+          "properties": {
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "run.started",
+              "default": "run.started",
+              "title": "T",
+              "type": "string"
+            },
+            "trace_id": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "trace_id"
+          ],
+          "title": "RunStarted",
+          "type": "object"
+        },
+        "RunStatus": {
+          "enum": [
+            "queued",
+            "planning",
+            "executing",
+            "awaiting_confirmation",
+            "verifying",
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "budget_exceeded"
+          ],
+          "title": "RunStatus",
+          "type": "string"
+        },
+        "StepFinished": {
+          "properties": {
+            "latency_ms": {
+              "title": "Latency Ms",
+              "type": "integer"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "status": {
+              "title": "Status",
+              "type": "string"
+            },
+            "step_seq": {
+              "title": "Step Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "step.finished",
+              "default": "step.finished",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "step_seq",
+            "status",
+            "latency_ms"
+          ],
+          "title": "StepFinished",
+          "type": "object"
+        },
+        "StepStarted": {
+          "properties": {
+            "description": {
+              "title": "Description",
+              "type": "string"
+            },
+            "kind": {
+              "title": "Kind",
+              "type": "string"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "step_seq": {
+              "title": "Step Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "step.started",
+              "default": "step.started",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "step_seq",
+            "description",
+            "kind"
+          ],
+          "title": "StepStarted",
+          "type": "object"
+        },
+        "SystemHealth": {
+          "properties": {
+            "components": {
+              "items": {
+                "$ref": "#/$defs/HealthEntry"
+              },
+              "title": "Components",
+              "type": "array"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "system.health",
+              "default": "system.health",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "components"
+          ],
+          "title": "SystemHealth",
+          "type": "object"
+        },
+        "TokenDelta": {
+          "properties": {
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "token.delta",
+              "default": "token.delta",
+              "title": "T",
+              "type": "string"
+            },
+            "text": {
+              "title": "Text",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "text"
+          ],
+          "title": "TokenDelta",
+          "type": "object"
+        },
+        "Usage": {
+          "description": "Verbrauch eines Laufs. Wird fortlaufend gegen das Budget geprüft.",
+          "properties": {
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0",
+              "title": "Cost Eur"
+            },
+            "elapsed_s": {
+              "default": 0.0,
+              "title": "Elapsed S",
+              "type": "number"
+            },
+            "steps": {
+              "default": 0,
+              "title": "Steps",
+              "type": "integer"
+            },
+            "tokens_in": {
+              "default": 0,
+              "title": "Tokens In",
+              "type": "integer"
+            },
+            "tokens_out": {
+              "default": 0,
+              "title": "Tokens Out",
+              "type": "integer"
+            },
+            "tool_calls": {
+              "default": 0,
+              "title": "Tool Calls",
+              "type": "integer"
+            }
+          },
+          "title": "Usage",
+          "type": "object"
+        }
+      },
+      "discriminator": {
+        "mapping": {
+          "action.pending": "#/$defs/ActionPending",
+          "action.resolved": "#/$defs/ActionResolved",
+          "core.state": "#/$defs/CoreStateChanged",
+          "pong": "#/$defs/Pong",
+          "proactive": "#/$defs/Proactive",
+          "run.classified": "#/$defs/RunClassified",
+          "run.error": "#/$defs/RunError",
+          "run.finished": "#/$defs/RunFinished",
+          "run.plan": "#/$defs/RunPlan",
+          "run.routed": "#/$defs/RunRouted",
+          "run.started": "#/$defs/RunStarted",
+          "step.finished": "#/$defs/StepFinished",
+          "step.started": "#/$defs/StepStarted",
+          "system.health": "#/$defs/SystemHealth",
+          "token.delta": "#/$defs/TokenDelta"
+        },
+        "propertyName": "t"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/RunStarted"
+        },
+        {
+          "$ref": "#/$defs/RunClassified"
+        },
+        {
+          "$ref": "#/$defs/RunRouted"
+        },
+        {
+          "$ref": "#/$defs/RunPlan"
+        },
+        {
+          "$ref": "#/$defs/StepStarted"
+        },
+        {
+          "$ref": "#/$defs/StepFinished"
+        },
+        {
+          "$ref": "#/$defs/TokenDelta"
+        },
+        {
+          "$ref": "#/$defs/ActionPending"
+        },
+        {
+          "$ref": "#/$defs/ActionResolved"
+        },
+        {
+          "$ref": "#/$defs/RunFinished"
+        },
+        {
+          "$ref": "#/$defs/RunError"
+        },
+        {
+          "$ref": "#/$defs/CoreStateChanged"
+        },
+        {
+          "$ref": "#/$defs/SystemHealth"
+        },
+        {
+          "$ref": "#/$defs/Proactive"
+        },
+        {
+          "$ref": "#/$defs/Pong"
+        }
+      ]
+    },
+    "Source": {
+      "description": "Quellenbeleg. Pflicht bei Recherche- und Dokumentergebnissen.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "web",
+            "document",
+            "email",
+            "calendar",
+            "memory"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locator"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        },
+        "retrieved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retrieved At"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "ref"
+      ],
+      "title": "Source",
+      "type": "object"
+    },
+    "TimeWindow": {
+      "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+      "properties": {
+        "end": {
+          "format": "time",
+          "title": "End",
+          "type": "string"
+        },
+        "start": {
+          "format": "time",
+          "title": "Start",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "TimeWindow",
+      "type": "object"
+    },
+    "ToolInvocation": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "InvocationStatus": {
+          "description": "Lebenszyklus eines Werkzeugaufrufs.",
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "executed",
+            "failed",
+            "expired",
+            "blocked"
+          ],
+          "title": "InvocationStatus",
+          "type": "string"
+        },
+        "PolicyEffect": {
+          "description": "Ergebnis einer Policy-Prüfung.",
+          "enum": [
+            "allow",
+            "confirm",
+            "deny"
+          ],
+          "title": "PolicyEffect",
+          "type": "string"
+        },
+        "RiskLevel": {
+          "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "RiskLevel",
+          "type": "string"
+        },
+        "Source": {
+          "description": "Quellenbeleg. Pflicht bei Recherche- und Dokumentergebnissen.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "web",
+                "document",
+                "email",
+                "calendar",
+                "memory"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "locator": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Locator"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            },
+            "retrieved_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Retrieved At"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "ref"
+          ],
+          "title": "Source",
+          "type": "object"
+        },
+        "ToolResult": {
+          "description": "Ergebnis einer Werkzeugausführung.",
+          "properties": {
+            "data": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Data"
+            },
+            "display": {
+              "default": "",
+              "title": "Display",
+              "type": "string"
+            },
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Error"
+            },
+            "ok": {
+              "title": "Ok",
+              "type": "boolean"
+            },
+            "produced_data_class": {
+              "$ref": "#/$defs/DataClass",
+              "default": "P1"
+            },
+            "sources": {
+              "items": {
+                "$ref": "#/$defs/Source"
+              },
+              "title": "Sources",
+              "type": "array"
+            },
+            "taints_context": {
+              "default": false,
+              "title": "Taints Context",
+              "type": "boolean"
+            },
+            "undo_token": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Undo Token"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "title": "ToolResult",
+          "type": "object"
+        }
+      },
+      "description": "Ein konkreter Werkzeugaufruf innerhalb eines Laufs.",
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "decision_reason": {
+          "title": "Decision Reason",
+          "type": "string"
+        },
+        "executed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executed At"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "idempotency_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotency Key"
+        },
+        "policy_decision": {
+          "$ref": "#/$defs/PolicyEffect"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/InvocationStatus",
+          "default": "pending"
+        },
+        "step_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Step Id"
+        },
+        "tool_name": {
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "run_id",
+        "tool_name",
+        "arguments",
+        "risk_level",
+        "policy_decision",
+        "decision_reason",
+        "created_at"
+      ],
+      "title": "ToolInvocation",
+      "type": "object"
+    },
+    "ToolResult": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "Source": {
+          "description": "Quellenbeleg. Pflicht bei Recherche- und Dokumentergebnissen.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "web",
+                "document",
+                "email",
+                "calendar",
+                "memory"
+              ],
+              "title": "Kind",
+              "type": "string"
+            },
+            "locator": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Locator"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            },
+            "retrieved_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Retrieved At"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "title",
+            "ref"
+          ],
+          "title": "Source",
+          "type": "object"
+        }
+      },
+      "description": "Ergebnis einer Werkzeugausführung.",
+      "properties": {
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "display": {
+          "default": "",
+          "title": "Display",
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "ok": {
+          "title": "Ok",
+          "type": "boolean"
+        },
+        "produced_data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P1"
+        },
+        "sources": {
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "taints_context": {
+          "default": false,
+          "title": "Taints Context",
+          "type": "boolean"
+        },
+        "undo_token": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Undo Token"
+        }
+      },
+      "required": [
+        "ok"
+      ],
+      "title": "ToolResult",
+      "type": "object"
+    },
+    "ToolSpec": {
+      "$defs": {
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "RiskLevel": {
+          "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "RiskLevel",
+          "type": "string"
+        }
+      },
+      "description": "Vollständige Beschreibung eines Werkzeugs.\n\nAus dieser Spezifikation entstehen: das JSON-Schema für das Modell, die\nLaufzeitvalidierung und die generierte Werkzeugdokumentation.",
+      "properties": {
+        "data_class": {
+          "$ref": "#/$defs/DataClass",
+          "default": "P1"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 10,
+          "title": "Description",
+          "type": "string"
+        },
+        "forbidden_when_tainted": {
+          "default": true,
+          "title": "Forbidden When Tainted",
+          "type": "boolean"
+        },
+        "idempotent": {
+          "default": false,
+          "title": "Idempotent",
+          "type": "boolean"
+        },
+        "name": {
+          "maxLength": 80,
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "plugin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Plugin"
+        },
+        "rate_limit": {
+          "anyOf": [
+            {
+              "pattern": "^\\d+/(second|minute|hour|day)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rate Limit"
+        },
+        "reads_untrusted_content": {
+          "default": false,
+          "title": "Reads Untrusted Content",
+          "type": "boolean"
+        },
+        "requires_preview": {
+          "default": false,
+          "title": "Requires Preview",
+          "type": "boolean"
+        },
+        "returns": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Returns"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "scopes": {
+          "items": {
+            "description": "Scope im Format <domäne>.<aktion>, z. B. 'mail.send'.",
+            "examples": [
+              "mail.read",
+              "mail.send",
+              "calendar.delete",
+              "files.write"
+            ],
+            "maxLength": 64,
+            "minLength": 3,
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+            "type": "string"
+          },
+          "title": "Scopes",
+          "type": "array"
+        },
+        "supports_undo": {
+          "default": false,
+          "title": "Supports Undo",
+          "type": "boolean"
+        },
+        "timeout_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "maximum": 600,
+          "title": "Timeout S",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "parameters",
+        "risk"
+      ],
+      "title": "ToolSpec",
+      "type": "object"
+    },
+    "TurnClassification": {
+      "$defs": {
+        "Capability": {
+          "description": "Fähigkeiten, die ein Modell für eine Aufgabe mitbringen muss.",
+          "enum": [
+            "tool_calling",
+            "vision",
+            "long_context",
+            "structured_output",
+            "reasoning"
+          ],
+          "title": "Capability",
+          "type": "string"
+        },
+        "Complexity": {
+          "enum": [
+            "trivial",
+            "simple",
+            "moderate",
+            "complex"
+          ],
+          "title": "Complexity",
+          "type": "string"
+        },
+        "DataClass": {
+          "description": "Sensibilitätsstufe eines Datenobjekts.\n\nDie Ordnung ist bedeutungstragend: ``P0 < P1 < P2 < P3``. Vergleiche\nwerden explizit definiert und nicht von ``str`` geerbt, damit die\nSemantik auch bei künftigen Erweiterungen erhalten bleibt.",
+          "enum": [
+            "P0",
+            "P1",
+            "P2",
+            "P3"
+          ],
+          "title": "DataClass",
+          "type": "string"
+        },
+        "Intent": {
+          "enum": [
+            "chat",
+            "question",
+            "task",
+            "command",
+            "research",
+            "creative",
+            "code",
+            "clarification"
+          ],
+          "title": "Intent",
+          "type": "string"
+        }
+      },
+      "description": "Ergebnis der ersten Orchestrator-Stufe.\n\nEin günstiger Aufruf (lokales Modell), der jede weitere Entscheidung\nvorbereitet — und als Datensatz gegen eine Eval-Suite prüfbar ist.",
+      "properties": {
+        "ambiguous_references": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Ambiguous References",
+          "type": "array"
+        },
+        "complexity": {
+          "$ref": "#/$defs/Complexity"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "data_class": {
+          "$ref": "#/$defs/DataClass"
+        },
+        "explicit_model_request": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Explicit Model Request"
+        },
+        "intent": {
+          "$ref": "#/$defs/Intent"
+        },
+        "is_multi_step": {
+          "default": false,
+          "title": "Is Multi Step",
+          "type": "boolean"
+        },
+        "likely_tools": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Likely Tools",
+          "type": "array"
+        },
+        "needs_realtime_info": {
+          "default": false,
+          "title": "Needs Realtime Info",
+          "type": "boolean"
+        },
+        "required_capabilities": {
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "title": "Required Capabilities",
+          "type": "array"
+        }
+      },
+      "required": [
+        "intent",
+        "complexity",
+        "data_class"
+      ],
+      "title": "TurnClassification",
+      "type": "object"
+    },
+    "Usage": {
+      "description": "Verbrauch eines Laufs. Wird fortlaufend gegen das Budget geprüft.",
+      "properties": {
+        "cost_eur": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "title": "Cost Eur"
+        },
+        "elapsed_s": {
+          "default": 0.0,
+          "title": "Elapsed S",
+          "type": "number"
+        },
+        "steps": {
+          "default": 0,
+          "title": "Steps",
+          "type": "integer"
+        },
+        "tokens_in": {
+          "default": 0,
+          "title": "Tokens In",
+          "type": "integer"
+        },
+        "tokens_out": {
+          "default": 0,
+          "title": "Tokens Out",
+          "type": "integer"
+        },
+        "tool_calls": {
+          "default": 0,
+          "title": "Tool Calls",
+          "type": "integer"
+        }
+      },
+      "title": "Usage",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JARVIS Contracts",
+  "version": "0.1.0"
+}

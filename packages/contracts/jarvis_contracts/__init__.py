@@ -1,0 +1,170 @@
+"""jarvis_contracts — die einzige Quelle der Wahrheit für alle Typen.
+
+Dieses Paket importiert *nichts* aus dem übrigen Projekt. Aus ihm werden
+OpenAPI-Schema, TypeScript-Typen und Zod-Schemata generiert (siehe
+docs/02-repo-struktur.md §3).
+"""
+
+from __future__ import annotations
+
+from .agents import AgentRequest, AgentResult, AgentSpec, AgentStatus
+from .classification import DataClass, TaintLevel, escalate
+from .context import (
+    CONTEXT_BUDGETS,
+    ContextBundle,
+    ContextCost,
+    ContextFragment,
+    ContextPriority,
+    ContextRequest,
+    ReferenceResolution,
+    SalientEntity,
+)
+from .errors import ErrorCode, JarvisError, Problem, Remediation
+from .events import (
+    CameraState,
+    ClientMessage,
+    CoreState,
+    HealthEntry,
+    MicState,
+    ServerMessage,
+)
+from .memory import (
+    DEFAULT_RETRIEVAL_WEIGHTS,
+    MemoryCandidate,
+    MemoryHit,
+    MemoryKind,
+    MemoryQuery,
+    MemoryRecord,
+    MemoryStatus,
+    Provenance,
+    RetrievalWeights,
+    SourceType,
+)
+from .permissions import (
+    ActionPreview,
+    AmountConstraints,
+    ConstraintViolation,
+    FilesConstraints,
+    MailSendConstraints,
+    PendingAction,
+    PermissionGrant,
+    PermissionMode,
+    PolicyDecision,
+    PolicyEffect,
+    PolicyRequest,
+    PreviewField,
+    RiskLevel,
+    ScopeConstraints,
+    ScopeSpec,
+    TimeWindow,
+)
+from .runs import (
+    BUDGET_PRESETS,
+    Capability,
+    Complexity,
+    Intent,
+    ModelCapability,
+    Plan,
+    PlanStep,
+    RoutingDecision,
+    Run,
+    RunBudget,
+    RunStatus,
+    RunStep,
+    RunTrigger,
+    TurnClassification,
+    Usage,
+)
+from .tools import (
+    InvocationStatus,
+    Source,
+    ToolInvocation,
+    ToolResult,
+    ToolSpec,
+)
+
+__version__ = "0.1.0"
+
+__all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetisch
+    "__version__",
+    # classification
+    "DataClass",
+    "TaintLevel",
+    "escalate",
+    # permissions
+    "RiskLevel",
+    "PermissionMode",
+    "PolicyEffect",
+    "ScopeSpec",
+    "TimeWindow",
+    "ScopeConstraints",
+    "MailSendConstraints",
+    "FilesConstraints",
+    "AmountConstraints",
+    "ConstraintViolation",
+    "PermissionGrant",
+    "PolicyRequest",
+    "PolicyDecision",
+    "ActionPreview",
+    "PreviewField",
+    "PendingAction",
+    # tools
+    "ToolSpec",
+    "ToolResult",
+    "ToolInvocation",
+    "InvocationStatus",
+    "Source",
+    # runs
+    "RunStatus",
+    "RunTrigger",
+    "Intent",
+    "Complexity",
+    "Capability",
+    "TurnClassification",
+    "RunBudget",
+    "Usage",
+    "PlanStep",
+    "Plan",
+    "RoutingDecision",
+    "ModelCapability",
+    "RunStep",
+    "Run",
+    "BUDGET_PRESETS",
+    # memory
+    "MemoryKind",
+    "MemoryStatus",
+    "SourceType",
+    "Provenance",
+    "MemoryRecord",
+    "MemoryCandidate",
+    "MemoryQuery",
+    "MemoryHit",
+    "RetrievalWeights",
+    "DEFAULT_RETRIEVAL_WEIGHTS",
+    # context
+    "ContextCost",
+    "ContextPriority",
+    "ContextFragment",
+    "ContextRequest",
+    "ContextBundle",
+    "SalientEntity",
+    "ReferenceResolution",
+    "CONTEXT_BUDGETS",
+    # agents
+    "AgentSpec",
+    "AgentRequest",
+    "AgentResult",
+    "AgentStatus",
+    # events
+    "CoreState",
+    "MicState",
+    "CameraState",
+    "ClientMessage",
+    "ServerMessage",
+    "HealthEntry",
+    # errors
+    "ErrorCode",
+    "Remediation",
+    "Problem",
+    "JarvisError",
+]
