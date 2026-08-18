@@ -4,10 +4,14 @@ from .approval import ApprovalStore, BurnResult
 from .invocations import InvocationStore
 from .permissions import PermissionStore, RateLimiter, ToolLookup
 from .sessions import SessionStore
+from .webauthn import AttestationVerifier, ChallengeStore, CredentialStore
 
 __all__ = [
     "ApprovalStore",
+    "AttestationVerifier",
     "BurnResult",
+    "ChallengeStore",
+    "CredentialStore",
     "InvocationStore",
     "PermissionStore",
     "RateLimiter",

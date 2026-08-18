@@ -17,6 +17,7 @@ dependencies = [
     "argon2-cffi>=23.1",
     "cryptography>=44.0",
     "python-multipart>=0.0.20",
+    "webauthn>=2.5",
 ]
 
 [build-system]

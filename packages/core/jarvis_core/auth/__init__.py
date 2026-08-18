@@ -10,6 +10,22 @@ Die Bibliothek dafür ist ein Fremdsystem, und der Kern kennt keine
 Fremdsysteme (ADR-009).
 """
 
+from .passkeys import (
+    CHALLENGE_BYTES,
+    AuthenticationFailed,
+    CloneSuspicion,
+    PasskeyService,
+    sign_count_is_plausible,
+)
 from .sessions import SESSION_TOKEN_BYTES, SessionManager, token_fingerprint
 
-__all__ = ["SESSION_TOKEN_BYTES", "SessionManager", "token_fingerprint"]
+__all__ = [
+    "CHALLENGE_BYTES",
+    "SESSION_TOKEN_BYTES",
+    "AuthenticationFailed",
+    "CloneSuspicion",
+    "PasskeyService",
+    "SessionManager",
+    "sign_count_is_plausible",
+    "token_fingerprint",
+]

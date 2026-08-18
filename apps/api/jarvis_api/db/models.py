@@ -131,6 +131,41 @@ class Session(Base):
     )
 
 
+class WebAuthnChallenge(Base):
+    """Ausgestellte, genau einmal einlösbare Challenge.
+
+    Dieselbe Bauart wie die Bestätigungs-Nonce, aus demselben Grund: Der
+    Verbrauch ist ein bedingtes ``UPDATE``, dessen Trefferzahl die Antwort
+    liefert. Ein ``lesen → prüfen → markieren`` wäre bei zwei gleichzeitigen
+    Anfragen ein Doppelverbrauch.
+
+    ``user_id`` ist bei der Anmeldung leer: Dort steht der Nutzer erst nach der
+    Prüfung fest. Wer ihn vorher aus dem Request übernähme, ließe den Angreifer
+    benennen, in welches Konto er einbricht.
+    """
+
+    __tablename__ = "webauthn_challenges"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE")
+    )
+    purpose: Mapped[str] = mapped_column(String(16), nullable=False)
+    value: Mapped[bytes] = mapped_column(LargeBinary, unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "purpose IN ('registration','authentication')", name="challenge_purpose_valid"
+        ),
+        Index("ix_challenges_open", "expires_at", postgresql_where=text("used_at IS NULL")),
+    )
+
+
 class WebAuthnCredential(Base, TimestampMixin):
     __tablename__ = "webauthn_credentials"
 

@@ -9,10 +9,14 @@ from __future__ import annotations
 
 from .agents import AgentRequest, AgentResult, AgentSpec, AgentStatus
 from .auth import (
+    DEFAULT_CHALLENGE_TTL,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_SESSION_TTL,
+    ChallengePurpose,
     IssuedSession,
+    PasskeyCredential,
     Session,
+    WebAuthnChallenge,
 )
 from .classification import DataClass, TaintLevel, escalate
 from .context import (
@@ -126,8 +130,12 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     # auth
     "Session",
     "IssuedSession",
+    "WebAuthnChallenge",
+    "ChallengePurpose",
+    "PasskeyCredential",
     "DEFAULT_SESSION_TTL",
     "DEFAULT_IDLE_TIMEOUT",
+    "DEFAULT_CHALLENGE_TTL",
     # permissions
     "ApprovalChannel",
     "RiskLevel",

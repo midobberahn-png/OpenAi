@@ -217,6 +217,37 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.auth",
     ),
     Invariant(
+        id="passkey-challenge-single-use",
+        title="Eine Challenge gilt einmal und für einen Zweck",
+        statement=(
+            "Eine WebAuthn-Challenge wird genau einmal eingelöst, verfällt nach kurzer "
+            "Frist und schließt nur die Zeremonie ab, für die sie ausgestellt wurde."
+        ),
+        why=(
+            "Ohne Einmaligkeit ist eine mitgeschnittene Zeremonie beliebig wiederholbar. "
+            "Ohne Zweckbindung könnte ein Angreifer eine Registrierung anstoßen, um an "
+            "eine gültige Challenge für die Anmeldung zu kommen."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.auth",
+    ),
+    Invariant(
+        id="passkey-clone-detection",
+        title="Ein Signaturzähler, der nicht steigt, ist ein Klon",
+        statement=(
+            "Eine Anmeldung wird abgelehnt, wenn der vorgelegte Signaturzähler nicht über "
+            "dem gespeicherten liegt — außer beide sind null."
+        ),
+        why=(
+            "Ein gleichbleibender oder fallender Zähler bedeutet, dass derselbe Schlüssel "
+            "an zwei Orten existiert. Die Ausnahme für zwei Nullen ist nötig, weil "
+            "synchronisierte Passkeys gar keinen Zähler führen; ohne sie wäre die "
+            "verbreitetste Bauart ausgesperrt."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.auth",
+    ),
+    Invariant(
         id="approval-critical-ui-only",
         title="Irreversibles wird nur in der Oberfläche bestätigt",
         statement="CRITICAL-Aktionen akzeptieren keine Sprach- oder Gestenbestätigung.",

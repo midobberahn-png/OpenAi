@@ -22,12 +22,22 @@ gestohlene Sitzung unbegrenzt haltbar.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["DEFAULT_IDLE_TIMEOUT", "DEFAULT_SESSION_TTL", "IssuedSession", "Session"]
+__all__ = [
+    "DEFAULT_CHALLENGE_TTL",
+    "DEFAULT_IDLE_TIMEOUT",
+    "DEFAULT_SESSION_TTL",
+    "ChallengePurpose",
+    "IssuedSession",
+    "PasskeyCredential",
+    "Session",
+    "WebAuthnChallenge",
+]
 
 
 DEFAULT_SESSION_TTL = timedelta(days=14)
@@ -38,6 +48,10 @@ schwachen Ausweichwegen."""
 
 DEFAULT_IDLE_TIMEOUT = timedelta(hours=12)
 """Leerlauffrist. Ein Gerät, das einen halben Tag schweigt, meldet sich neu an."""
+
+DEFAULT_CHALLENGE_TTL = timedelta(minutes=5)
+"""Lebensdauer einer WebAuthn-Challenge. Kurz, weil die Zeremonie Sekunden
+dauert — alles darüber vergrößert nur das Fenster für einen Replay."""
 
 
 class Session(BaseModel):
@@ -106,3 +120,65 @@ class IssuedSession(BaseModel):
 
     def __str__(self) -> str:
         return f"IssuedSession(session={self.session.id}, token=…)"
+
+
+class ChallengePurpose(StrEnum):
+    """Wofür eine Challenge ausgestellt wurde.
+
+    Der Zweck ist Teil der Bindung, nicht Buchhaltung: Eine Challenge aus der
+    Registrierung darf keine Anmeldung abschließen. Ohne dieses Feld wäre
+    beides derselbe Zufallswert, und ein Angreifer könnte eine
+    Registrierungszeremonie starten, um an eine gültige Challenge für die
+    Anmeldung zu kommen.
+    """
+
+    REGISTRATION = "registration"
+    AUTHENTICATION = "authentication"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class WebAuthnChallenge(BaseModel):
+    """Eine ausgestellte, genau einmal einlösbare Challenge."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    user_id: UUID | None = None
+    """Bei der Registrierung gesetzt, bei der Anmeldung offen — dort ist der
+    Nutzer erst nach der Prüfung bekannt. Wer ihn vorher aus dem Request
+    übernähme, ließe sich den Namen des Kontos nennen, in das er einbricht."""
+
+    purpose: ChallengePurpose
+    value: bytes = Field(min_length=16)
+    """Zufallswert. Mindestens 16 Byte nach WebAuthn-Empfehlung; wir stellen
+    32 aus."""
+
+    expires_at: datetime
+    created_at: datetime
+    used_at: datetime | None = None
+
+    def is_valid_at(self, moment: datetime) -> bool:
+        return self.used_at is None and moment < self.expires_at
+
+
+class PasskeyCredential(BaseModel):
+    """Ein registrierter Passkey."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID
+    user_id: UUID
+    credential_id: bytes
+    """Vom Authenticator vergeben, systemweit eindeutig."""
+
+    public_key: bytes
+    sign_count: int = Field(ge=0)
+    """Zähler des Authenticators. Steigt er bei einer Anmeldung nicht, ist das
+    ein Hinweis auf einen geklonten Schlüssel — siehe
+    ``sign_count_is_plausible``."""
+
+    device_label: str | None = None
+    created_at: datetime
+    last_used_at: datetime | None = None

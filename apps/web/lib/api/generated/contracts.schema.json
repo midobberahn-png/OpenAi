@@ -3206,6 +3206,76 @@
       "title": "ModelCapability",
       "type": "object"
     },
+    "PasskeyCredential": {
+      "description": "Ein registrierter Passkey.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "credential_id": {
+          "format": "binary",
+          "title": "Credential Id",
+          "type": "string"
+        },
+        "device_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Label"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "last_used_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Used At"
+        },
+        "public_key": {
+          "format": "binary",
+          "title": "Public Key",
+          "type": "string"
+        },
+        "sign_count": {
+          "minimum": 0,
+          "title": "Sign Count",
+          "type": "integer"
+        },
+        "user_id": {
+          "format": "uuid",
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "user_id",
+        "credential_id",
+        "public_key",
+        "sign_count",
+        "created_at"
+      ],
+      "title": "PasskeyCredential",
+      "type": "object"
+    },
     "PendingAction": {
       "$defs": {
         "ActionPreview": {
@@ -7669,6 +7739,81 @@
         }
       },
       "title": "Usage",
+      "type": "object"
+    },
+    "WebAuthnChallenge": {
+      "$defs": {
+        "ChallengePurpose": {
+          "description": "Wofür eine Challenge ausgestellt wurde.\n\nDer Zweck ist Teil der Bindung, nicht Buchhaltung: Eine Challenge aus der\nRegistrierung darf keine Anmeldung abschließen. Ohne dieses Feld wäre\nbeides derselbe Zufallswert, und ein Angreifer könnte eine\nRegistrierungszeremonie starten, um an eine gültige Challenge für die\nAnmeldung zu kommen.",
+          "enum": [
+            "registration",
+            "authentication"
+          ],
+          "title": "ChallengePurpose",
+          "type": "string"
+        }
+      },
+      "description": "Eine ausgestellte, genau einmal einlösbare Challenge.",
+      "properties": {
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "expires_at": {
+          "format": "date-time",
+          "title": "Expires At",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "purpose": {
+          "$ref": "#/$defs/ChallengePurpose"
+        },
+        "used_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Used At"
+        },
+        "user_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "User Id"
+        },
+        "value": {
+          "format": "binary",
+          "minLength": 16,
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "purpose",
+        "value",
+        "expires_at",
+        "created_at"
+      ],
+      "title": "WebAuthnChallenge",
       "type": "object"
     }
   },

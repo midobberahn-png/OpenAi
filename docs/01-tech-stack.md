@@ -121,6 +121,18 @@ Hybrid-Retrieval (BM25 + Vektor) funktioniert in einer Query, weil beide Indizes
 
 **Skalierungspfad:** Das Auth-Modul spricht intern bereits in OIDC-Begriffen (`sub`, `scopes`, `session`), ein späterer Wechsel auf einen echten IdP ist ein Adaptertausch.
 
+### Nachtrag (Umsetzung): Sessions liegen in PostgreSQL, nicht in Redis
+
+Die ursprüngliche Fassung dieses ADR sah „serverseitige Sessions in Redis mit rotierenden Cookies" vor. Umgesetzt wurde eine Tabelle `sessions` in PostgreSQL. Drei Gründe, und der erste ist ein Produktmerkmal, kein technischer:
+
+1. **Die Sitzungsübersicht ist Teil des Permission Centers** (`10-ui.md`): „Welche Geräte sind angemeldet, seit wann, welches zuletzt gesehen." In Redis wäre das ein Scan über Schlüssel; in Postgres ist es eine Abfrage mit Index.
+2. **Der Widerruf beim Geräteverlust muss vollständig sein.** `UPDATE ... WHERE user_id` erfasst atomar alle Sitzungen eines Nutzers. Über verteilte Schlüssel ist dieselbe Zusicherung aufwendiger — und sie ist genau die, auf die es im Ernstfall ankommt.
+3. **Der Latenzvorteil trägt hier nicht.** Sessions sind langlebig (14 Tage), und die Prüfung fällt in denselben Anfragepfad, der ohnehin Berechtigungen aus Postgres liest. Ein zweiter Datenspeicher spart keine Abfrage, sondern fügt eine Ausfallquelle hinzu.
+
+Redis bleibt für das, wofür es gedacht war: flüchtige Zustände wie Rate-Limits und Streaming-Puffer.
+
+**Offen:** Token-Rotation bei jeder Nutzung („rotierende Cookies") ist **nicht** umgesetzt. Sie ist ein echter Schutz — ein gestohlener Token wird entwertet, sobald der rechtmäßige Nutzer sich meldet —, hat aber bei parallelen Anfragen ein Wettlaufproblem, das ohne Sorgfalt zu zufälligen Abmeldungen führt. Bis dahin tragen die Doppelfrist (absolut plus Leerlauf) und der sofort wirksame Widerruf.
+
 ---
 
 ## ADR-008 — Secrets: Envelope Encryption mit austauschbarem KEK-Provider
