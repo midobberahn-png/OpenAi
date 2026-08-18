@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 26/26**
+**Security Invariant Coverage: 26/29**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -42,3 +42,14 @@ nicht nachträglich passend machen.
 | `audit-survives-erasure` | Löschpflicht und Kette schließen sich nicht aus | Die Pseudonymisierung eines Nutzers lässt die Hash-Kette unversehrt, weil user_id nicht gehasht wird. | `core.audit.chain` |
 | `layering-contracts-independent` | Verträge hängen von nichts ab | packages/contracts importiert nichts aus dem Projekt. | `repo` |
 | `layering-no-provider-sdk-in-core` | Kein Provider-SDK im Kern | Weder core noch contracts importieren Anbieter-SDKs oder Agenten-Frameworks. | `repo` |
+
+## Noch offen
+
+Ausdrücklich ausgewiesen, damit nicht der Eindruck entsteht, etwas sei
+abgesichert, bevor der Kontrollpunkt existiert.
+
+| Kennung | Invariante | Wird gebraucht, weil | Komponente |
+|---|---|---|---|
+| `orchestrator-consumes-decisions` | Der Orchestrator entscheidet nichts über Sicherheit | Sobald der Orchestrator „das ist wahrscheinlich sicher“ oder „das wurde gerade bestätigt“ selbst beurteilt, gibt es zwei Wahrheiten über Berechtigungen — und die zweite prüft niemand. Er muss Konsument von Sicherheitsentscheidungen sein, nicht ihr Urheber. | `core.orchestrator` |
+| `agent-chain-preserves-capability-binding` | Delegationsketten erweitern keine Rechte | Die bisherige Prüfung deckt eine Stufe ab. Bei A → B → C darf C nicht die Fähigkeiten von B erben, nur weil B ihn aufgerufen hat — sonst ist die Kette der Umweg um jede Beschränkung. | `core.agents` |
+| `agent-chain-propagates-taint` | Kontamination wandert durch die ganze Kette | Andernfalls genügte eine Zwischenstufe als Waschmaschine: Agent B liest die Mail, meldet ein „sauberes“ Ergebnis nach oben, und A sendet. | `core.agents` |

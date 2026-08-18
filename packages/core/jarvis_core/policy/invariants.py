@@ -273,6 +273,52 @@ INVARIANTS: tuple[Invariant, ...] = (
         status=InvariantStatus.ENFORCED,
         component="core.policy.engine",
     ),
+    # -- Orchestrierung (noch offen, Punkt 9) ---------------------------
+    Invariant(
+        id="orchestrator-consumes-decisions",
+        title="Der Orchestrator entscheidet nichts über Sicherheit",
+        statement=(
+            "Der Orchestrator fragt die Policy Engine und das Ausführungs-Gate; er "
+            "bildet keine eigene Meinung darüber, ob etwas erlaubt ist."
+        ),
+        why=(
+            "Sobald der Orchestrator „das ist wahrscheinlich sicher“ oder „das wurde "
+            "gerade bestätigt“ selbst beurteilt, gibt es zwei Wahrheiten über "
+            "Berechtigungen — und die zweite prüft niemand. Er muss Konsument von "
+            "Sicherheitsentscheidungen sein, nicht ihr Urheber."
+        ),
+        status=InvariantStatus.PLANNED,
+        component="core.orchestrator",
+    ),
+    Invariant(
+        id="agent-chain-preserves-capability-binding",
+        title="Delegationsketten erweitern keine Rechte",
+        statement=(
+            "Über beliebig viele Agentenstufen hinweg bleibt die Rechtemenge die "
+            "Schnittmenge aller beteiligten Whitelists mit den Nutzerrechten."
+        ),
+        why=(
+            "Die bisherige Prüfung deckt eine Stufe ab. Bei A → B → C darf C nicht "
+            "die Fähigkeiten von B erben, nur weil B ihn aufgerufen hat — sonst ist "
+            "die Kette der Umweg um jede Beschränkung."
+        ),
+        status=InvariantStatus.PLANNED,
+        component="core.agents",
+    ),
+    Invariant(
+        id="agent-chain-propagates-taint",
+        title="Kontamination wandert durch die ganze Kette",
+        statement=(
+            "Liest ein Agent auf beliebiger Stufe Fremdinhalt, gilt der gesamte "
+            "übergeordnete Lauf als kontaminiert."
+        ),
+        why=(
+            "Andernfalls genügte eine Zwischenstufe als Waschmaschine: Agent B liest "
+            "die Mail, meldet ein „sauberes“ Ergebnis nach oben, und A sendet."
+        ),
+        status=InvariantStatus.PLANNED,
+        component="core.agents",
+    ),
     # -- Audit ----------------------------------------------------------
     Invariant(
         id="audit-append-only",
