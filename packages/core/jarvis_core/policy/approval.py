@@ -382,6 +382,69 @@ class ApprovalGateway:
             granted_at=now,
         )
 
+    # -- 3b. Ausführungs-Gate ohne Bestätigung ---------------------------
+    async def authorize_allowed(
+        self,
+        *,
+        request: PolicyRequest,
+        spec: ToolSpec,
+        taint: TaintLevel,
+        invocation_id: UUID,
+        now: datetime,
+    ) -> ExecutionGrant:
+        """Gate für Aufrufe, die *keine* Bestätigung brauchen.
+
+        Ohne diesen Weg gäbe es für ein unbedenkliches Werkzeug überhaupt keine
+        Ausführung: Die Registry verlangt einen Grant, und den erzeugte bisher
+        nur der Bestätigungspfad. Die Alternative wäre gewesen, den Orchestrator
+        an der Registry vorbei ausführen zu lassen — also genau der zweite Pfad,
+        den ``policy-single-entry-point`` ausschließt.
+
+        Entscheidend ist, **wer** hier entscheidet: Die Erlaubnis stammt aus
+        einem eigenen ``PolicyEngine.decide()`` in diesem Gate, nicht aus einer
+        vom Aufrufer mitgebrachten Entscheidung. Ein Orchestrator, der bereits
+        ``ALLOW`` erhalten hat, kann es nicht durchreichen — er kann nur erneut
+        fragen lassen. Damit bleibt die Policy Engine die einzige Quelle der
+        Erlaubnis, und eine zwischenzeitliche Änderung (entzogenes Recht, neu
+        hinzugekommene Kontamination) wirkt auch hier sofort.
+
+        Die verbleibende Angriffsfläche ist der ``PolicyRequest`` selbst: Wer
+        ihn baut, bestimmt ``trigger`` und ``allowed_data_class``. Deshalb
+        leitet der Executor beide ausschließlich aus dem persistierten ``Run``
+        ab und nie aus einer Modellausgabe — belegt in
+        ``tests/unit/test_executor.py``.
+        """
+        if spec.name != request.tool_name:
+            # Sonst prüfte die Engine ein Werkzeug und der Grant führte ein
+            # anderes aus: ``decide()`` schlägt über ``request.tool_name`` nach,
+            # ausgeführt würde ``spec.name``. Ein Aufrufer könnte damit die
+            # Erlaubnis für mail.read gegen einen Grant für mail.send tauschen.
+            raise ExecutionDenied(
+                "Geprüftes und auszuführendes Werkzeug stimmen nicht überein.",
+                code="tool-mismatch",
+            )
+
+        decision = await self._policy.decide(request, taint=taint, now=now)
+
+        if decision.effect is PolicyEffect.DENY:
+            raise ExecutionDenied(decision.reason, code="policy-denied")
+        if decision.effect is PolicyEffect.CONFIRM:
+            raise ExecutionDenied(
+                f"Dieser Vorgang verlangt eine Bestätigung: {decision.reason}",
+                code="approval-required",
+            )
+
+        return ExecutionGrant(
+            _GRANT_SENTINEL,
+            tool_name=spec.name,
+            arguments=request.arguments,
+            verified_hash=payload_hash(spec.name, request.arguments),
+            run_id=request.run_id,
+            user_id=request.user_id,
+            invocation_id=invocation_id,
+            granted_at=now,
+        )
+
     # -- Hilfsmittel -----------------------------------------------------
     @staticmethod
     def _channel_reason(action: PendingAction, channel: ApprovalChannel) -> str:

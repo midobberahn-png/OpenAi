@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 26/29**
+**Security Invariant Coverage: 27/29**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -37,6 +37,7 @@ nicht nachträglich passend machen.
 | `tool-no-silent-override` | Kein stiller Namenstausch | Ein bereits registriertes Werkzeug lässt sich nicht überschreiben. | `core.tools.registry` |
 | `data-class-hard-filter` | Datenklassifikation ist ein hartes Filter | Ein Kontext, der eine Klasse nicht zulässt, führt kein Werkzeug dieser Klasse aus. | `core.policy.engine` |
 | `unattended-runs-are-stricter` | Unbeaufsichtigte Läufe sind strenger | Automationen bestätigen schreibende Aktionen, auch wenn das Recht erteilt ist. | `core.policy.engine` |
+| `orchestrator-consumes-decisions` | Der Orchestrator entscheidet nichts über Sicherheit | Der Orchestrator fragt die Policy Engine und das Ausführungs-Gate; er bildet keine eigene Meinung darüber, ob etwas erlaubt ist. | `core.orchestrator` |
 | `audit-append-only` | Das Audit-Log ist unveränderlich | UPDATE und DELETE werden auf Datenbankebene abgelehnt. | `db.audit_log` |
 | `audit-tamper-evident` | Manipulation ist erkennbar | Änderung, Löschung oder Umsortierung von Einträgen bricht die Hash-Kette. | `core.audit.chain` |
 | `audit-survives-erasure` | Löschpflicht und Kette schließen sich nicht aus | Die Pseudonymisierung eines Nutzers lässt die Hash-Kette unversehrt, weil user_id nicht gehasht wird. | `core.audit.chain` |
@@ -50,6 +51,5 @@ abgesichert, bevor der Kontrollpunkt existiert.
 
 | Kennung | Invariante | Wird gebraucht, weil | Komponente |
 |---|---|---|---|
-| `orchestrator-consumes-decisions` | Der Orchestrator entscheidet nichts über Sicherheit | Sobald der Orchestrator „das ist wahrscheinlich sicher“ oder „das wurde gerade bestätigt“ selbst beurteilt, gibt es zwei Wahrheiten über Berechtigungen — und die zweite prüft niemand. Er muss Konsument von Sicherheitsentscheidungen sein, nicht ihr Urheber. | `core.orchestrator` |
 | `agent-chain-preserves-capability-binding` | Delegationsketten erweitern keine Rechte | Die bisherige Prüfung deckt eine Stufe ab. Bei A → B → C darf C nicht die Fähigkeiten von B erben, nur weil B ihn aufgerufen hat — sonst ist die Kette der Umweg um jede Beschränkung. | `core.agents` |
 | `agent-chain-propagates-taint` | Kontamination wandert durch die ganze Kette | Andernfalls genügte eine Zwischenstufe als Waschmaschine: Agent B liest die Mail, meldet ein „sauberes“ Ergebnis nach oben, und A sendet. | `core.agents` |

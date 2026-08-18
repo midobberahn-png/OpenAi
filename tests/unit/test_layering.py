@@ -67,6 +67,38 @@ def test_core_kennt_keine_konkreten_provider(path: Path) -> None:
     assert not violations, f"{path.name} importiert eine Implementierung: {sorted(violations)}"
 
 
+@pytest.mark.invariant("policy-single-entry-point")
+def test_execution_grant_wird_nur_im_gateway_erzeugt() -> None:
+    """Der Sentinel in ``ExecutionGrant`` macht Fremderzeugung unbequem —
+    verhindern kann Python sie nicht. Dieser Test ist die eigentliche
+    Absicherung: Er findet jede Konstruktion außerhalb von ``approval.py``,
+    auch eine, die den Sentinel importiert hat.
+
+    Der Docstring von ``ExecutionGrant`` verweist auf genau diese Prüfung.
+    """
+    gateway = CORE / "policy" / "approval.py"
+    offenders: list[str] = []
+
+    for path in [*_python_files(CORE), *_python_files(REPO / "apps")]:
+        if path == gateway:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "ExecutionGrant"
+            ):
+                offenders.append(f"{path.relative_to(REPO)}:{node.lineno}")
+            if isinstance(node, ast.Name) and node.id == "_GRANT_SENTINEL":
+                offenders.append(f"{path.relative_to(REPO)}:{node.lineno} (Sentinel)")
+
+    assert not offenders, (
+        "ExecutionGrant wird außerhalb des Approval Gateways erzeugt — das wäre "
+        "die Umgehung des Ausführungs-Gates:\n" + "\n".join(offenders)
+    )
+
+
 @pytest.mark.invariant("layering-no-provider-sdk-in-core")
 def test_kein_provider_sdk_im_kern() -> None:
     """Kein OpenAI-, Anthropic- oder Google-Typ existiert außerhalb der

@@ -287,7 +287,7 @@ INVARIANTS: tuple[Invariant, ...] = (
             "Berechtigungen — und die zweite prüft niemand. Er muss Konsument von "
             "Sicherheitsentscheidungen sein, nicht ihr Urheber."
         ),
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.orchestrator",
     ),
     Invariant(
