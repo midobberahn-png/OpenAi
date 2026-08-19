@@ -34,9 +34,29 @@ class GrantConsumer(Protocol):
     async def consume(self, invocation_id: UUID, *, now: datetime) -> bool:
         """``True``, wenn dieser Aufruf den Grant erwirkt hat.
 
-        Muss atomar sein: Zwei gleichzeitige Aufrufe mit derselben
-        ``invocation_id`` dürfen nicht beide ``True`` liefern. Ein
-        ``if verbraucht: ... markiere()`` erfüllt das nicht — die Zusage gehört
-        in die ``WHERE``-Klausel, nicht in eine Prüfung davor.
+        **Atomar.** Zwei gleichzeitige Aufrufe mit derselben ``invocation_id``
+        dürfen nicht beide ``True`` liefern. Ein ``if verbraucht: ...
+        markiere()`` erfüllt das nicht — die Zusage gehört in die
+        ``WHERE``-Klausel, nicht in eine Prüfung davor.
+
+        **Dauerhaft, bevor dieser Aufruf zurückkehrt.** Die zweite Zusage, und
+        sie hat gefehlt: Eine persistente Implementierung darf den Verbrauch
+        nicht in einer Transaktion hinterlassen, die der Aufrufer später noch
+        zurückrollen kann. Die Registry ruft unmittelbar nach ``True`` den
+        Handler auf; wirkt der nach außen und stirbt der Prozess vor dem
+        Commit, rollt der Verbrauch zurück, während der Seiteneffekt bleibt.
+        Der nächste Versuch löst denselben Grant erneut ein — der vierte
+        gemeldete Replay-Pfad, belegt in
+        ``tests/integration/test_grant_consumption.py``.
+
+        Atomar und dauerhaft sind zwei Zusagen, und die erste impliziert die
+        zweite nicht: Ein bedingtes UPDATE ist unter Nebenläufigkeit korrekt und
+        trotzdem flüchtig, solange es uncommitted ist.
+
+        ``False`` heißt „kein einlösbarer Anspruch" und ist bewusst nicht nach
+        Ursachen getrennt: bereits verbraucht, nie protokolliert, für diese
+        Transaktion nicht sichtbar. Alle drei enden in derselben Abweisung,
+        weil alle drei dasselbe bedeuten — und weil ein Aufrufer aus der
+        Unterscheidung nichts machen könnte, das öffnen dürfte.
         """
         ...

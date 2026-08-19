@@ -73,12 +73,20 @@ async def _seed(conn: AsyncConnection) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]
     return uid, rid, iid
 
 
-def _registry(conn: AsyncConnection, spy: list[object]) -> ToolRegistry:
+def _registry(engine: AsyncEngine, spy: list[object]) -> ToolRegistry:
+    """Der Verbraucher bekommt die Engine, nicht die Verbindung des Aufrufers.
+
+    Das ist keine Bequemlichkeit, sondern die Zusicherung selbst: Der Anspruch
+    gehört in eine Transaktion, die unabhängig von der des Aufrufers committet.
+    Die Signatur von ``PostgresGrantConsumer`` lässt eine Verbindung deshalb
+    nicht mehr zu.
+    """
+
     async def handler(**kwargs: object) -> ToolResult:
         spy.append(kwargs)
         return ToolResult(ok=True, display="gelesen")
 
-    registry = ToolRegistry(grants=PostgresGrantConsumer(conn))
+    registry = ToolRegistry(grants=PostgresGrantConsumer(engine))
     registry.register(CALENDAR_READ, handler)
     return registry
 
@@ -115,15 +123,13 @@ class TestVerbrauchUeberVerbindungsgrenzen:
             uid, rid, iid = await _seed(setup)
 
         gesehen: list[object] = []
-        async with engine.begin() as erste:
-            registry = _registry(erste, gesehen)
-            grant = await _grant(registry, uid, rid, iid)
-            await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
+        registry = _registry(engine, gesehen)
+        grant = await _grant(registry, uid, rid, iid)
+        await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
 
-        async with engine.begin() as zweite:
-            frisch = _registry(zweite, gesehen)
-            with pytest.raises(GrantAlreadyUsed):
-                await frisch.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
+        frisch = _registry(engine, gesehen)
+        with pytest.raises(GrantAlreadyUsed):
+            await frisch.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
 
         assert len(gesehen) == 1, f"{len(gesehen)} Ausführungen über zwei Verbindungen."
 
@@ -141,24 +147,106 @@ class TestVerbrauchUeberVerbindungsgrenzen:
         async with engine.begin() as setup:
             uid, rid, iid = await _seed(setup)
             vorbereitung: list[object] = []
-            grant = await _grant(_registry(setup, vorbereitung), uid, rid, iid)
+            grant = await _grant(_registry(engine, vorbereitung), uid, rid, iid)
 
         gesehen: list[object] = []
 
         async def versuch() -> bool:
-            async with engine.begin() as conn:
-                try:
-                    await _registry(conn, gesehen).execute(  # type: ignore[arg-type]
-                        grant, run_id=rid, user_id=uid
-                    )
-                    return True
-                except GrantAlreadyUsed:
-                    return False
+            try:
+                await _registry(engine, gesehen).execute(  # type: ignore[arg-type]
+                    grant, run_id=rid, user_id=uid
+                )
+                return True
+            except GrantAlreadyUsed:
+                return False
 
         ergebnisse = await asyncio.gather(*(versuch() for _ in range(10)))
 
         assert sum(ergebnisse) == 1, "Genau eine Ausführung darf gewinnen"
         assert len(gesehen) == 1, f"Der Handler lief {len(gesehen)}-mal."
+
+        async with engine.begin() as cleanup:
+            await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})
+
+    @pytest.mark.invariant("grant-single-use")
+    async def test_absturz_nach_seiteneffekt_gibt_den_grant_nicht_frei(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Der Verbrauch überlebt einen Absturz vor dem Commit.
+
+        Der vierte gemeldete Replay-Pfad, und der einzige, den die beiden Tests
+        darüber nicht sehen: Sie verlassen ihren ``begin()``-Block regulär, also
+        committet die Transaktion, bevor die zweite Vorlage beginnt. Belegt ist
+        damit nur der geordnete Ablauf.
+
+        Der interessante Fall ist der ungeordnete. Der Handler wirkt nach
+        außen — eine Mail ist verschickt, ein Termin gelöscht —, und *danach*
+        stirbt der Prozess, ohne zu committen. Hier steht dafür ein
+        ausdrückliches ``rollback()``: dieselbe Wirkung auf die Datenbank wie
+        ein Verbindungsabbruch, nur reproduzierbar.
+
+        Die Prüfstelle ist ``consumed_at`` aus einer **neuen** Verbindung. Der
+        Seiteneffekt selbst liegt außerhalb der Datenbank — ``gesehen`` ist
+        deshalb eine Python-Liste und keine Tabelle: Was hinausging, holt kein
+        Rollback zurück. Wenn der Anspruch zurückrollt, der Seiteneffekt aber
+        bleibt, führt jeder Retry denselben Grant erneut aus.
+        """
+        async with engine.begin() as setup:
+            uid, rid, iid = await _seed(setup)
+            grant = await _grant(_registry(engine, []), uid, rid, iid)
+
+        gesehen: list[object] = []
+        async with engine.connect() as conn:
+            # Die Transaktion des Requests — dieselbe Rolle wie ``db_connection``
+            # in der API: Sie umschließt den ganzen Aufruf und committet erst am
+            # Ende.
+            transaktion = await conn.begin()
+            await _registry(engine, gesehen).execute(  # type: ignore[arg-type]
+                grant, run_id=rid, user_id=uid
+            )
+            # Arbeit des Requests, die der Absturz mitnimmt. Sie steht hier, um
+            # den Unterschied zu zeigen: Diese Zeile ist gleich weg, der
+            # Anspruch nicht.
+            await conn.execute(
+                text("UPDATE tool_invocations SET status = 'executed' WHERE id = :i"),
+                {"i": iid},
+            )
+            # Hier stirbt der Prozess: Der Seiteneffekt ist draußen, der
+            # Commit kommt nicht mehr.
+            await transaktion.rollback()
+
+        assert len(gesehen) == 1, "Vorbedingung: Der Seiteneffekt ist eingetreten."
+
+        async with engine.begin() as pruefung:
+            status = (
+                await pruefung.execute(
+                    text("SELECT status FROM tool_invocations WHERE id = :i"), {"i": iid}
+                )
+            ).scalar_one()
+        assert status != "executed", (
+            "Vorbedingung: Der Rollback muss die Arbeit des Requests verworfen haben, "
+            "sonst prüft der Test nichts."
+        )
+
+        async with engine.begin() as pruefung:
+            zeile = (
+                await pruefung.execute(
+                    text("SELECT consumed_at FROM tool_invocations WHERE id = :i"), {"i": iid}
+                )
+            ).first()
+        assert zeile is not None, "Die Invokationszeile war vorher committed."
+        assert zeile[0] is not None, (
+            "Der Verbrauch hat den Rollback nicht überlebt: consumed_at ist wieder NULL. "
+            "Der Seiteneffekt ist eingetreten, der Anspruch ist frei — der Grant ist "
+            "erneut einlösbar."
+        )
+
+        with pytest.raises(GrantAlreadyUsed):
+            await _registry(engine, gesehen).execute(  # type: ignore[arg-type]
+                grant, run_id=rid, user_id=uid
+            )
+
+        assert len(gesehen) == 1, f"Der Handler lief {len(gesehen)}-mal statt einmal."
 
         async with engine.begin() as cleanup:
             await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})
@@ -177,13 +265,56 @@ class TestVerbrauchUeberVerbindungsgrenzen:
             uid, rid, _ = await _seed(setup)
 
         gesehen: list[object] = []
-        async with engine.begin() as conn:
-            registry = _registry(conn, gesehen)
-            grant = await _grant(registry, uid, rid, uuid.uuid4())  # nie protokolliert
-            with pytest.raises(GrantAlreadyUsed):
-                await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
+        registry = _registry(engine, gesehen)
+        grant = await _grant(registry, uid, rid, uuid.uuid4())  # nie protokolliert
+        with pytest.raises(GrantAlreadyUsed):
+            await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
 
         assert not gesehen, "Ohne protokollierte Invokation darf nichts laufen"
+
+        async with engine.begin() as cleanup:
+            await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})
+
+    @pytest.mark.invariant("grant-single-use")
+    async def test_noch_nicht_committete_invokation_schliesst(self, engine: AsyncEngine) -> None:
+        """Die Kehrseite der eigenen Transaktion — und sie schließt.
+
+        Der Anspruch committet unabhängig vom Aufrufer. Der Preis dafür: Er
+        sieht nichts, was der Aufrufer noch nicht committed hat. Steht
+        ``InvocationStore.record()`` also in derselben offenen Transaktion, aus
+        der heraus ausgeführt wird, findet das bedingte UPDATE keine Zeile.
+
+        Dass dieser Fall abweist und nicht durchwinkt, ist die eigentliche
+        Aussage des Tests. Eine Reihenfolge, die niemand geprüft hat, darf die
+        Zusicherung nicht still aufheben — sie darf höchstens die Ausführung
+        kosten. Für den Aufrufer ist es dieselbe Meldung wie beim fehlenden
+        Protokoll, denn es ist derselbe Sachverhalt: Es gibt keinen sichtbaren
+        Anspruch, der eingelöst werden könnte.
+        """
+        async with engine.begin() as setup:
+            uid, rid, _ = await _seed(setup)
+
+        gesehen: list[object] = []
+        iid = uuid.uuid4()
+        async with engine.connect() as conn:
+            transaktion = await conn.begin()
+            await conn.execute(
+                text(
+                    "INSERT INTO tool_invocations (id, run_id, tool_name, arguments, "
+                    "risk_level, policy_decision, decision_reason) "
+                    "VALUES (:iid, :rid, 'calendar.read', '{}'::jsonb, 'low', 'allow', 'test')"
+                ),
+                {"iid": iid, "rid": rid},
+            )
+            # Nicht committed — für jede andere Transaktion existiert die Zeile
+            # noch nicht.
+            registry = _registry(engine, gesehen)
+            grant = await _grant(registry, uid, rid, iid)
+            with pytest.raises(GrantAlreadyUsed):
+                await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
+            await transaktion.rollback()
+
+        assert not gesehen, "Ohne sichtbaren Anspruch darf der Handler nicht laufen"
 
         async with engine.begin() as cleanup:
             await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})
