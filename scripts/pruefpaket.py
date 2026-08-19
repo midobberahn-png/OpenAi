@@ -181,6 +181,10 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B7 | Die Selbstauskunft eines Sub-Agenten kann Kontamination nur erhöhen, nie aufheben. | `agents/runtime.py:delegate` | 02 |
 | B8 | Der Sitzungstoken existiert nur bei der Ausgabe; gespeichert wird ausschließlich sein Hash. | `auth/sessions.py`, `db/session_store.py` | 03, 05 |
 | B9 | Eine Bestätigung ist nur mit verifizierter, nicht abgelaufener Sitzung einlösbar. | `policy/approval.py:respond` | 01, 03 |
+| B16 | Eine Bestätigung erwirkt **genau einen** Ausführungsanspruch — auch unter Nebenläufigkeit. | `policy/approval.py:authorize_execution`, `db/approval_store.py:_CLAIM` | 01, 05 |
+| B17 | Der Anspruch wird zuletzt erhoben; eine abgelehnte Prüfung verbrennt die Bestätigung nicht. | `policy/approval.py:authorize_execution` | 01 |
+| B18 | `allowed_data_class` ist Pflicht; es gibt keinen Rückfall auf die Werkzeugklasse. | `policy/approval.py` | 01 |
+| B19 | Die Proxy-Kette wird von rechts ausgewertet. | `deps.py:client_identifier` | 04 |
 | B10 | Der Nutzer folgt aus dem Passkey; es gibt keinen Parameter, ihn zu benennen. | `auth/passkeys.py` | 03 |
 | B11 | Das Rate-Limit ist nicht durch wechselnde Kennungen umgehbar (globale Stufe). | `limits/guard.py`, `limits/policy.py` | 03 |
 | B12 | Kein Endpunkt übernimmt eine Identität aus Body, Query, Header oder Pfad. | `routes/auth.py`, `deps.py` | 04 |
@@ -225,21 +229,78 @@ durch. Der HTTP-Test erkannte Endpunkte am wörtlichen Namen `router`; mit
 während des gesamten Vorfalls bei 38/39. Der Metatest prüft, ob eine
 Invariante einen Test hat — nicht, ob der Test das Richtige prüft.
 
+### Und dann noch einmal, schwerer
+
+Die zweite Prüfrunde fand einen weiteren Bypass, und er wog mehr. Nachgestellt
+vor der Reparatur:
+
+    Autorisierung 1: Grant erhalten, ausgeführt
+    Autorisierung 2: Grant erhalten, ausgeführt
+    Autorisierung 3: Grant erhalten, ausgeführt
+
+    Eine Bestätigung -> 3 Mails versendet
+
+Die Nonce sichert den **Bestätigungsschritt**. Sie ist atomar, gegen
+Nebenläufigkeit geprüft und war nie das Problem. Was fehlte, war ein Anspruch
+auf die **Ausführung**: `authorize_execution()` prüfte nur, *dass* bestätigt
+wurde. `approval-nonce-single-use` stand auf ENFORCED — mit der Begründung,
+sonst ließe sich eine bestätigte Aktion beliebig oft ausführen.
+
+Ein zweiter Weg lief über den Orchestrator: `resume_after_approval()` prüft
+`state.awaiting_action_id` und löscht sie erst im *neuen* Run-Objekt; zwei
+parallele Aufrufe mit demselben Run bestehen beide die Vorprüfung.
+
+Behoben (Commit `fc5b94f`) durch `pending_actions.executed_at` und
+`claim_execution()` als bedingtes UPDATE — dieselbe Bauart wie der
+Nonce-Verbrauch. Der Anspruch wird als **letzter** Schritt erhoben, nach Hash
+und Policy-Recheck: Stünde er davor, könnte ein Angreifer fremde
+Bestätigungen entwerten, ohne sie einlösen zu können.
+
+Die Semantik ist ausdrücklich **höchstens einmal**. Stürzt der Prozess
+zwischen Anspruch und Werkzeugaufruf ab, gilt die Bestätigung als verbraucht.
+Für Aktionen mit Außenwirkung ist das die richtige Richtung — eine Mail, die
+vielleicht nicht hinausging, kann der Nutzer erneut senden; eine, die zweimal
+hinausging, holt niemand zurück. **Das ist eine Entscheidung, keine
+Selbstverständlichkeit, und sie gehört geprüft.**
+
+Drei weitere Befunde derselben Runde, alle behoben (`dfecbb9`):
+
+* `allowed_data_class` war optional und fiel auf `spec.data_class` zurück —
+  auf die Klasse des Werkzeugs, das geprüft werden soll. Jetzt Pflichtparameter.
+* `X-Forwarded-For` wurde von links gelesen. Jetzt von rechts, mit
+  Überspringen bekannter Proxies.
+* Der HTTP-Strukturtest scannte nur `routes/`; `/health` in `main.py` war von
+  keinem Test erfasst. Jetzt die ganze API-Schicht, plus Fehlschlag bei
+  `add_api_route()`.
+
+**Zweimal dasselbe Muster:** Invariante auf ENFORCED, Tests grün, falsche
+Frage geprüft. Beide Male gefunden von jemandem mit dem Quelltext in der Hand,
+der etwas ausprobiert hat.
+
 ### Wo ich die Prüfung am dringendsten für nötig halte
 
-1. **Die Reparatur des Bypasses gegenprüfen** (Portion 01 und 06). Die
+1. **Den Ausführungsanspruch gegenprüfen** (Portion 01 und 05). Der Anspruch
+   ist ein bedingtes UPDATE auf `pending_actions.executed_at`. Gibt es einen
+   Weg daran vorbei? Ein zweiter Pfad zu einem Grant, der `claim_execution()`
+   nicht durchläuft; ein Lauf, der die Bestätigung erneut anlegt statt sie
+   einzulösen; eine Wiederaufnahme nach Neustart, die den Anspruch nicht
+   sieht. Und die offene Entwurfsfrage: Ist **höchstens einmal** hier richtig,
+   oder braucht es einen Weg, einen Anspruch nach einem Absturz vor dem
+   Werkzeugaufruf freizugeben?
+
+2. **Die Reparatur des ersten Bypasses gegenprüfen** (Portion 01 und 06). Die
    nominale Prüfung schließt den bekannten Weg. Gibt es einen anderen? Ein
-   Grant, der über `copy`/`pickle`/`__reduce__` entsteht; ein Aufruf von
-   `execute()` mit einem echten, aber für einen anderen Zweck erzeugten Grant;
-   ein Weg, `ExecutionGrant` neu zu binden, bevor die Registry ihn lokal
-   importiert.
+   Grant über `copy`/`pickle`/`__reduce__`; ein echter, für einen anderen
+   Zweck erzeugter Grant; ein Weg, `ExecutionGrant` neu zu binden, bevor die
+   Registry ihn lokal importiert.
 
-2. **Die gehärteten Strukturtests erneut angreifen** (Portion 06). Sie waren
-   schon einmal umgehbar, und die Härtung folgt wieder Mustern —
-   `add_api_route()`, ein Dekorator aus einer Hilfsfunktion, eine Route in
-   einer Datei außerhalb von `routes/`.
+3. **Die gehärteten Strukturtests erneut angreifen** (Portion 06). Sie waren
+   schon zweimal umgehbar, und die Härtung folgt wieder Mustern. `add_api_route`
+   und Routen außerhalb von `routes/` sind inzwischen abgedeckt — was bleibt?
+   Ein Dekorator aus einer Hilfsfunktion, eine per `exec` erzeugte Route, ein
+   Router aus einem Paket außerhalb von `jarvis_api`.
 
-3. **`client_identifier()` hinter einem Reverse Proxy.** Ohne gesetztes
+4. **`client_identifier()` hinter einem Reverse Proxy.** Ohne gesetztes
    `TRUSTED_PROXIES` ist `request.client.host` die Adresse des Proxys — für
    *alle* Nutzer dieselbe. Die Installation teilt sich dann einen Zähler und
    sperrt sich nach zehn Anmeldeversuchen pro Minute selbst aus. Die sichere
@@ -253,7 +314,7 @@ Invariante einen Test hat — nicht, ob der Test das Richtige prüft.
    (422/400) und inhaltlichen Fehlschlägen (einheitlich 401). Das ist kein
    Orakel über Kontoexistenz — nachgemessen, nicht angenommen.)*
 
-4. **Die Ausnahmeliste `OEFFENTLICH`** in `test_http_boundary.py`. Sie ist die
+5. **Die Ausnahmeliste `OEFFENTLICH`** in `test_http_boundary.py`. Sie ist die
    Stelle, an der sich eine fehlende Sitzungsprüfung legalisieren lässt, indem
    man einen Namen einträgt. Der Test zwingt zur sichtbaren Änderung, aber
    nicht zur Begründung.
@@ -356,9 +417,9 @@ def schreibe_anleitung(commit: str, uebersicht: list[tuple[str, str, int]]) -> P
         "",
         "```bash",
         "cd ~/jarvis",
-        "uv run pytest -q                                    # 601 Tests",
-        "uv run pytest -m security -q                        # 305 blockierende",
-        "uv run pytest tests/unit/test_invariant_coverage.py -q -s   # 38/39",
+        "uv run pytest -q                                    # 702 Tests",
+        "uv run pytest -m security -q                        # 405 blockierende",
+        "uv run pytest tests/unit/test_invariant_coverage.py -q -s   # 39/40",
         "uv run mypy packages apps/api                       # strict, 73 Dateien",
         "uv run ruff check . && uv run ruff format --check .",
         "```",
