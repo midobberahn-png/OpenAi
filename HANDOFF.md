@@ -311,6 +311,7 @@ kritisch bewerten — mehrere Vorschläge wurden begründet abgelehnt (siehe
 | `docs/15-testing.md` | Test- und Evalstrategie |
 | `docs/16-v1.1-review.md` | Bewertung externer Reviews, **auch die Ablehnungen** |
 | `docs/17-identity-goals.md` | Identity, Ziele, Entitäten |
+| `docs/18-angriffskette.md` | **Was wo erzwungen wird — und welcher Übergang noch nicht über HTTP geprüft ist** |
 | `docs/generated/` | Scope-Katalog und Invariantentabelle — **generiert, nicht bearbeiten** |
 
 Artifact mit der Architekturübersicht:

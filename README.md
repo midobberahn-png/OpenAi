@@ -31,6 +31,7 @@ Einstieg: **[docs/00-uebersicht.md](docs/00-uebersicht.md)** — Zielbild, Risik
 | [13 Deployment](docs/13-deployment.md) | Topologie, Observability, Backup, Kosten |
 | [14 Roadmap](docs/14-roadmap.md) | Phasen 1–8 mit Abnahmekriterien und Aufwand |
 | [15 Testing](docs/15-testing.md) | Tests, Contract-Tests, Evals, CI |
+| [18 Angriffskette](docs/18-angriffskette.md) | Jeder Übergang von HTTP bis zur Ausführung: wodurch gesichert, wo noch ungeprüft |
 
 ---
 
