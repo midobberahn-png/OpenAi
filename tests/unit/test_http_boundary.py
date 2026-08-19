@@ -21,8 +21,9 @@ import pytest
 pytestmark = pytest.mark.security
 
 REPO = Path(__file__).resolve().parents[2]
-ROUTES = REPO / "apps" / "api" / "jarvis_api" / "routes"
-DEPS = REPO / "apps" / "api" / "jarvis_api" / "deps.py"
+API = REPO / "apps" / "api" / "jarvis_api"
+ROUTES = API / "routes"
+DEPS = API / "deps.py"
 
 IDENTITAETSFELDER = {"user_id", "session_id", "owner_id", "actor_id", "invocation_id"}
 """Namen, die eine Identität behaupten. Ein Request darf sie nicht mitbringen."""
@@ -51,7 +52,20 @@ Testdatei, kein Weglassen eines Parameters.
 
 
 def _route_files() -> list[Path]:
-    return sorted(p for p in ROUTES.rglob("*.py") if "__pycache__" not in p.parts)
+    """Alle Dateien, die Endpunkte tragen könnten — nicht nur ``routes/``.
+
+    Der Scan lag lange allein auf dem Verzeichnis. Ein externes Review hat
+    darauf hingewiesen, dass eine Route auch anderswo entstehen kann; und
+    tatsächlich lebt ``/health`` in ``main.py`` und wurde von keinem
+    Strukturtest gesehen — es stand in der Ausnahmeliste, ohne je geprüft
+    worden zu sein.
+
+    Jetzt zählt die gesamte API-Schicht. Ein Endpunkt außerhalb von
+    ``routes/`` ist dadurch nicht verboten, aber er ist sichtbar.
+    """
+    return sorted(
+        p for p in API.rglob("*.py") if "__pycache__" not in p.parts and "migrations" not in p.parts
+    )
 
 
 HTTP_METHODEN = {"get", "post", "put", "patch", "delete", "head", "options", "api_route"}
@@ -191,6 +205,11 @@ def test_die_sitzung_wird_an_genau_einer_stelle_gelesen() -> None:
     """
     treffer: list[str] = []
     for path in _route_files():
+        # ``deps.py`` ist die eine erlaubte Stelle — dort liegen
+        # ``session_token_from`` und ``client_identifier``, und beide müssen
+        # den Request lesen. Genau deshalb sind sie dort und nirgends sonst.
+        if path == DEPS:
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Attribute):
@@ -289,4 +308,34 @@ def test_kein_zweitname_fuer_den_router(path: Path) -> None:
     assert not aliase, (
         f"{path.name}: Zweitname(n) für den Router: {aliase}. "
         "Ein zweiter Name für denselben Eingang ist ein zweiter Eingang."
+    )
+
+
+@pytest.mark.invariant("identity-derives-from-session")
+@pytest.mark.parametrize("path", _route_files(), ids=lambda p: p.name)
+def test_keine_route_am_dekorator_vorbei(path: Path) -> None:
+    """``add_api_route()`` registriert eine Route ohne Dekorator.
+
+    Der Aufruf ist legitim — FastAPI bietet ihn für dynamische Fälle an —,
+    aber er ist für den Strukturtest unsichtbar: Es gibt keine Funktion mit
+    Dekorator, an der sich eine Sitzungsprüfung ablesen ließe. Wer ihn
+    braucht, muss die Prüfung an anderer Stelle nachweisen, und das soll eine
+    bewusste Entscheidung sein statt einer stillen.
+
+    Dieselbe Überlegung wie beim Router-Alias: Nicht der Aufruf ist das
+    Problem, sondern dass er die Prüfung umgeht, ohne dass es jemandem
+    auffällt.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    treffer = [
+        f"{path.name}:{node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"add_api_route", "add_websocket_route", "add_route"}
+    ]
+
+    assert not treffer, (
+        f"Route ohne Dekorator registriert: {treffer}. Für den Strukturtest ist sie "
+        "unsichtbar — die Sitzungsprüfung muss dann anderswo nachgewiesen werden."
     )

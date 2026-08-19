@@ -179,18 +179,36 @@ def client_identifier(request: Request, settings: Settings) -> str:
     Header ein Feld, das der Anfragende selbst füllt — ihn zu verwenden hieße,
     den Angreifer nach seiner Kennung zu fragen.
 
+    Und selbst dann zählt nur, was hinter der bekannten Proxy-Kette steht: Ein
+    Client kann einen eigenen ``X-Forwarded-For`` mitschicken, den der Proxy
+    ergänzt statt ersetzt.
+
     Die Peer-Adresse ist ihrerseits kein knappes Gut: Ein IPv6-Präfix umfasst
     mehr Adressen, als ein Zähler je sehen wird. Deshalb ist diese Kennung nur
     die *feinere* der beiden Stufen; die grobe zählt global und ist von der
     Adresse unabhängig.
     """
     peer = request.client.host if request.client else "unbekannt"
-    if peer in settings.trusted_proxies:
-        weitergereicht = request.headers.get("x-forwarded-for", "")
-        erste = weitergereicht.split(",")[0].strip()
-        if erste:
-            return erste
-    return peer
+    if peer not in settings.trusted_proxies:
+        return peer
+
+    # Die Kette wird von **rechts** ausgewertet, nicht von links.
+    #
+    # Ein Proxy hängt seine Sicht an: „client, proxy1, proxy2". Wer den ersten
+    # Eintrag nimmt, nimmt den, den der Client selbst geschickt hat — und der
+    # ist frei erfunden, sobald der Proxy den Header ergänzt statt ihn zu
+    # überschreiben. Viele tun das, und ob der eigene dazugehört, weiß man
+    # erfahrungsgemäß erst, wenn es darauf ankommt.
+    #
+    # Von rechts sind die Einträge dagegen genau so weit vertrauenswürdig, wie
+    # die Kette aus bekannten Proxies reicht. Der erste unbekannte Eintrag von
+    # rechts ist die letzte Adresse, die ein vertrauenswürdiger Proxy gesehen
+    # hat — mehr lässt sich ehrlich nicht sagen.
+    kette = [teil.strip() for teil in request.headers.get("x-forwarded-for", "").split(",")]
+    kette = [teil for teil in kette if teil]
+    while kette and kette[-1] in settings.trusted_proxies:
+        kette.pop()
+    return kette[-1] if kette else peer
 
 
 def rate_limited(policy: RateLimitPolicy) -> Callable[..., Awaitable[None]]:

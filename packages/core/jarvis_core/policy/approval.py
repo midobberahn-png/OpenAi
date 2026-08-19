@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict
 from jarvis_contracts import (
     ActionPreview,
     ApprovalChannel,
+    DataClass,
     PendingAction,
     PolicyEffect,
     PolicyRequest,
@@ -369,11 +370,17 @@ class ApprovalGateway:
         spec: ToolSpec,
         taint: TaintLevel,
         run_id: UUID,
+        allowed_data_class: DataClass,
         sanitized_from_run_id: UUID | None = None,
-        allowed_data_class: Any = None,
         now: datetime,
     ) -> ExecutionGrant:
         """Letzte Prüfung unmittelbar vor dem Werkzeugaufruf.
+
+        ``allowed_data_class`` ist Pflicht und hat bewusst keinen Vorgabewert.
+        Eine frühere Fassung fiel bei ``None`` auf ``spec.data_class`` zurück —
+        also auf die Klasse des Werkzeugs, das gerade geprüft werden soll. Damit
+        passte jedes Werkzeug durch genau die Schranke, die es aufhalten sollte.
+        Ein fehlender Sicherheitskontext muss schließen, nicht öffnen.
 
         ``run_id`` ist der Lauf, in dem tatsächlich ausgeführt wird — nicht
         zwingend der, in dem bestätigt wurde. Beide auseinanderzuhalten ist
@@ -442,7 +449,7 @@ class ApprovalGateway:
                 run_id=action.run_id,
                 tool_name=spec.name,
                 arguments=arguments,
-                allowed_data_class=allowed_data_class or spec.data_class,
+                allowed_data_class=allowed_data_class,
             ),
             taint=taint,
             now=now,

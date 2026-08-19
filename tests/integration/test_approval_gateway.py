@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_contracts import (
+    DataClass,
     PayloadInspectability,
     PermissionGrant,
     PermissionMode,
@@ -173,6 +174,7 @@ class TestNormalfall:
             taint=TaintLevel.TAINTED,
             run_id=rid,
             now=NOW + timedelta(seconds=5),
+            allowed_data_class=DataClass.P2,
         )
         assert grant.verified_hash == action.payload_hash
 
@@ -203,6 +205,7 @@ class TestNormalfall:
                 taint=TaintLevel.CLEAN,
                 now=NOW,
                 run_id=rid,
+                allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "approval-not-granted"
 
@@ -241,6 +244,7 @@ class TestAngriffBPayloadMutation:
                 taint=TaintLevel.CLEAN,
                 now=NOW,
                 run_id=rid,
+                allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "payload-mismatch"
         assert "weicht von dem ab" in exc.value.reason
@@ -272,6 +276,7 @@ class TestAngriffBPayloadMutation:
                 taint=TaintLevel.CLEAN,
                 now=NOW,
                 run_id=rid,
+                allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "payload-mismatch"
 
@@ -316,6 +321,7 @@ class TestAngriffBPayloadMutation:
                 taint=TaintLevel.CLEAN,
                 now=NOW,
                 run_id=rid,
+                allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "payload-mismatch"
 
@@ -353,6 +359,7 @@ class TestAngriffCToctou:
                 taint=TaintLevel.CLEAN,
                 now=NOW + timedelta(seconds=1),
                 run_id=rid,
+                allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "policy-changed"
 
@@ -384,6 +391,7 @@ class TestAngriffCToctou:
                 taint=TaintLevel.CLEAN,
                 now=NOW + timedelta(minutes=11),
                 run_id=rid,
+                allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "approval-expired"
 
@@ -417,6 +425,7 @@ class TestAngriffCToctou:
                 taint=TaintLevel.TAINTED,
                 now=NOW + timedelta(seconds=1),
                 run_id=rid,
+                allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "policy-changed"
 
@@ -865,6 +874,7 @@ class TestLaufbindungDerBestaetigung:
                 taint=TaintLevel.CLEAN,
                 run_id=uuid.uuid4(),  # irgendein anderer Lauf
                 now=NOW + timedelta(seconds=5),
+                allowed_data_class=DataClass.P2,
             )
         assert denied.value.code == "run-mismatch"
 
@@ -900,6 +910,7 @@ class TestLaufbindungDerBestaetigung:
             run_id=sanierter_lauf,
             sanitized_from_run_id=rid,
             now=NOW + timedelta(seconds=5),
+            allowed_data_class=DataClass.P2,
         )
         assert grant.run_id == sanierter_lauf, "Der Grant gilt dort, wo ausgeführt wird"
 
@@ -945,6 +956,7 @@ class TestAusfuehrungsanspruch:
             taint=TaintLevel.CLEAN,
             run_id=rid,
             now=NOW,
+            allowed_data_class=DataClass.P2,
         )
         assert erste.verified_hash == action.payload_hash
 
@@ -956,6 +968,7 @@ class TestAusfuehrungsanspruch:
                 taint=TaintLevel.CLEAN,
                 run_id=rid,
                 now=NOW,
+                allowed_data_class=DataClass.P2,
             )
         assert zweite.value.code == "already-executed"
 
@@ -993,6 +1006,7 @@ class TestAusfuehrungsanspruch:
                         taint=TaintLevel.CLEAN,
                         run_id=rid,
                         now=NOW,
+                        allowed_data_class=DataClass.P2,
                     )
                     return True
                 except ExecutionDenied:
@@ -1040,6 +1054,7 @@ class TestAusfuehrungsanspruch:
                 taint=TaintLevel.CLEAN,
                 run_id=rid,
                 now=NOW,
+                allowed_data_class=DataClass.P2,
             )
         assert verfaelscht.value.code == "payload-mismatch"
 
@@ -1051,5 +1066,6 @@ class TestAusfuehrungsanspruch:
             taint=TaintLevel.CLEAN,
             run_id=rid,
             now=NOW,
+            allowed_data_class=DataClass.P2,
         )
         assert grant.tool_name == "calendar.create"

@@ -244,8 +244,8 @@ class ToolExecutor:
                 spec=spec,
                 taint=run.taint_level,
                 run_id=run.id,
-                sanitized_from_run_id=run.sanitized_from_run_id,
                 allowed_data_class=_ceiling(run),
+                sanitized_from_run_id=run.sanitized_from_run_id,
                 now=now,
             )
         except ExecutionDenied as denied:

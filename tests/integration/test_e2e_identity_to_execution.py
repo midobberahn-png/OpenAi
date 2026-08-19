@@ -369,6 +369,7 @@ class TestIdentitaetBisAusfuehrung:
                 spec=CALENDAR_CREATE,
                 taint=TaintLevel.CLEAN,
                 run_id=run_id,
+                allowed_data_class=DataClass.P2,
                 now=datetime.now(tz=UTC),
             )
 

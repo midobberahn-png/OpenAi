@@ -625,3 +625,49 @@ class TestSynchronisierterPasskey:
             },
         )
         assert antwort.status_code == 200, "Synchronisierte Passkeys müssen sich anmelden können"
+
+
+class TestProxyKette:
+    """``X-Forwarded-For`` bei einem vertrauenswürdigen Proxy.
+
+    Der Fall aus dem Review: Hängt der Proxy seine Sicht an, statt den Header
+    zu ersetzen, steht vorn die Adresse, die der Client selbst geschickt hat.
+    Wer von links liest, liest den Angreifer.
+    """
+
+    def _client_kennung(self, *, peer: str, xff: str, vertrauenswuerdig: list[str]) -> str:
+        from types import SimpleNamespace
+
+        from jarvis_api.deps import client_identifier
+        from jarvis_api.settings import Settings
+
+        anfrage = SimpleNamespace(
+            client=SimpleNamespace(host=peer), headers={"x-forwarded-for": xff}
+        )
+        einstellungen = Settings(TRUSTED_PROXIES=",".join(vertrauenswuerdig))
+        return client_identifier(anfrage, einstellungen)  # type: ignore[arg-type]
+
+    async def test_ohne_konfigurierten_proxy_zaehlt_nur_die_gegenstelle(self) -> None:
+        kennung = self._client_kennung(peer="10.0.0.5", xff="1.2.3.4", vertrauenswuerdig=[])
+        assert kennung == "10.0.0.5"
+
+    async def test_hinter_dem_proxy_zaehlt_die_letzte_echte_adresse(self) -> None:
+        """Der Proxy hängt an: „vom Client behauptet, echte Client-IP“."""
+        kennung = self._client_kennung(
+            peer="172.18.0.1",
+            xff="1.2.3.4, 203.0.113.9",
+            vertrauenswuerdig=["172.18.0.1"],
+        )
+        assert kennung == "203.0.113.9", "Die vom Client behauptete Adresse darf nicht gewinnen"
+
+    async def test_mehrere_vertrauenswuerdige_proxies_werden_uebersprungen(self) -> None:
+        kennung = self._client_kennung(
+            peer="172.18.0.1",
+            xff="203.0.113.9, 172.18.0.2, 172.18.0.1",
+            vertrauenswuerdig=["172.18.0.1", "172.18.0.2"],
+        )
+        assert kennung == "203.0.113.9"
+
+    async def test_leere_kette_faellt_auf_die_gegenstelle_zurueck(self) -> None:
+        kennung = self._client_kennung(peer="172.18.0.1", xff="", vertrauenswuerdig=["172.18.0.1"])
+        assert kennung == "172.18.0.1"
