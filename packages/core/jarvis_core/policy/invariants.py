@@ -195,8 +195,8 @@ INVARIANTS: tuple[Invariant, ...] = (
         title="Ein ausgestellter Grant führt höchstens einmal aus",
         statement=(
             "Ein ExecutionGrant erlaubt genau einen Werkzeugaufruf; jede weitere Vorlage "
-            "desselben Grants — auch als Kopie, aus einem anderen Prozess oder "
-            "nebenläufig — erreicht den Handler nicht."
+            "desselben Grants — auch als Kopie, aus einem anderen Prozess, nebenläufig "
+            "oder nach einem Absturz vor dem Commit — erreicht den Handler nicht."
         ),
         why=(
             "Der Titel der Vorgänger-Invariante versprach mehr, als der Mechanismus hielt. "
@@ -207,7 +207,13 @@ INVARIANTS: tuple[Invariant, ...] = (
             "Handler-Aufrufe; zehn nebenläufig vorgelegte ergaben zehn. Damit ist dies "
             "der dritte Replay-Pfad desselben Musters — die Einmaligkeit hing wieder "
             "einen Schritt zu früh. Geschlossen durch einen Verbrauch an der "
-            "invocation_id, als letzter Schritt vor dem Handler."
+            "invocation_id, als letzter Schritt vor dem Handler. "
+            "Die vierte Prüfrunde hat denselben Satz noch einmal enger gefasst: Der "
+            "persistente Verbrauch lag in der offenen Request-Transaktion, in der danach "
+            "der Handler nach außen wirkte. Atomar war er, dauerhaft nicht — ein "
+            "Rollback nach dem Seiteneffekt gab consumed_at wieder frei und damit den "
+            "Grant. Gegen echtes PostgreSQL reproduziert und geschlossen, indem der "
+            "Anspruch in einer eigenen Transaktion committet, bevor der Handler beginnt."
         ),
         status=InvariantStatus.ENFORCED,
         component="core.tools.registry",

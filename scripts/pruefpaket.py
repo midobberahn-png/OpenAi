@@ -238,6 +238,9 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B26 | Die Schleife bestätigt nicht selbst: Verlangt die Policy eine Bestätigung, endet die Runde mit `NEEDS_CONFIRMATION`. Und sie ist endlich (`max_iterations` plus Laufbudget). | `agents/model_loop.py:act` | 08 |
 | B27 | Ein ausgestellter Grant erreicht den Handler höchstens einmal — auch als Kopie, aus einem anderen Prozess und nebenläufig. Der Verbrauch hängt an der `invocation_id`, nicht am Objekt, und steht als letzter Schritt vor dem Handler. | `tools/registry.py:execute`, `db/grant_store.py` | 01, 05 |
 | B28 | Eine Registry ohne eingerichteten Grant-Verbrauch führt gar nichts aus. Es gibt keinen Vorgabewert, der ungesichert durchliefe. | `tools/registry.py:execute` | 01 |
+| B29 | Der persistente Verbrauch ist **committed, bevor der Handler beginnt** — er liegt in einer eigenen Transaktion und nicht in der des Aufrufers. Ein Absturz nach dem Seiteneffekt und vor dem Commit des Requests gibt den Grant nicht frei. | `db/grant_store.py:consume` | 05 |
+| B30 | Die Signatur erzwingt das: `PostgresGrantConsumer` nimmt eine `AsyncEngine`. Eine Request-`AsyncConnection` lässt sich nicht mehr übergeben — der Weg, der in den vierten Replay-Pfad führte, ist keine Frage der Sorgfalt mehr. | `db/grant_store.py:__init__` | 05 |
+| B31 | Sieht der Verbrauch die Invokationszeile nicht — weil sie noch in einer offenen fremden Transaktion steht —, wird abgewiesen und nicht durchgewunken. | `db/grant_store.py`, `tests/integration/test_grant_consumption.py` | 05 |
 
 ### Was seit dem letzten Paket geschah
 
@@ -354,6 +357,45 @@ dazu drei Integrationstests über getrennte Datenbankverbindungen.
 Der dringendste Prüfauftrag dieser Runde ist damit: **Ist es diesmal der
 richtige Schritt?** Die Frage, die dreimal falsch beantwortet wurde, lautet
 nicht „wird geprüft?", sondern „wo entsteht die Wirkung?".
+
+### Und die vierte Runde hat genau dort noch etwas gefunden
+
+Die Antwort auf den Prüfauftrag oben lautet: der Schritt stimmte, der
+Zeitpunkt nicht. `PostgresGrantConsumer` schrieb `consumed_at` auf der
+Verbindung des Aufrufers — also in dieselbe offene Transaktion, in der danach
+der Handler nach außen wirkte:
+
+    consume()  → UPDATE consumed_at     (nicht committed)
+    Handler    → Mail ist verschickt    (nicht zurückholbar)
+    Absturz vor dem Commit
+    PostgreSQL rollt zurück             → consumed_at wieder NULL
+    Retry legt denselben Grant vor      → die Mail geht ein zweites Mal hinaus
+
+Der Prüfer konnte das nicht ausführen — in seiner Umgebung lief keine
+Datenbank, alle Integrationstests wurden übersprungen. Er hat es deshalb als
+begründete Hypothese gemeldet und ausdrücklich nicht als Befund. Mit
+laufendem PostgreSQL war es in einem Testlauf reproduziert: `consumed_at` nach
+dem Rollback wieder `NULL`, der Seiteneffekt eingetreten.
+
+**Warum die drei Integrationstests das nicht sahen:** Jeder verließ seinen
+`begin()`-Block regulär und committete damit. Sie belegten den geordneten
+Ausgang — Nebenläufigkeit, Verbindungsgrenzen — und keiner den ungeordneten.
+
+Behoben, indem der Anspruch in einer eigenen Transaktion committet, bevor der
+Handler beginnt. Der Verbraucher nimmt dafür eine `AsyncEngine` statt einer
+Verbindung; der unsichere Weg ist damit nicht mehr wählbar.
+
+**Die Lehre, und sie ist neu:** Atomar und dauerhaft sind zwei Zusagen. Die
+erste trägt das bedingte UPDATE. Die zweite hängt daran, wem die Transaktion
+gehört — und das prüft kein Nebenläufigkeitstest. Zur Frage „wo entsteht die
+Wirkung?" gehört deshalb: **„und wem gehört die Transaktion, in der der
+Anspruch steht?"**
+
+Der Prüfauftrag dieser Runde: Die Behebung öffnet eine Kehrseite. Ein
+Anspruch in eigener Transaktion sieht nichts, was der Aufrufer noch nicht
+committed hat. Belegt ist, dass dieser Fall **schließt** (B31) — zu prüfen
+ist, ob es Pfade gibt, auf denen er statt der Ausführung die Zusicherung
+kostet.
 
 ### Neu seit der zweiten Runde: der Sprachmodell-Block (Portion 08)
 

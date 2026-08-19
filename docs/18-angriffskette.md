@@ -44,7 +44,7 @@ untrusted HTTP → Auth → Session → Identity → Run → Policy → Approval
 | ④ | Identity → Run | `Run.user_id` stammt aus der Sitzung | `test_e2e_identity_to_execution.py` | **nein** |
 | ⑤ | Run → Policy | `PolicyRequest` entsteht an genau einer Stelle; `trigger` und `allowed_data_class` aus dem persistierten Run | `test_executor.py` (AST + Verhalten) | **nein** |
 | ⑥ | Policy → Approval | Payload-Hash eingefroren; Nonce einmalig; Sitzungs-, Nutzer- und Kanalbindung; Sitzung wird verifiziert | `test_approval_gateway.py`, `test_sessions.py` | **nein** |
-| ⑦ | Approval → Execution | **Herkunft nominal geprüft** (`type(auth) is ExecutionGrant`); an Lauf und Nutzer gebunden; Hash dreifach geprüft; erneute Policy-Prüfung im Gate | `test_tool_registry.py` (Herkunft), `test_layering.py` (AST), `test_e2e_identity_to_execution.py` | **nein** |
+| ⑦ | Approval → Execution | **Herkunft nominal geprüft** (`type(auth) is ExecutionGrant`); an Lauf und Nutzer gebunden; Hash dreifach geprüft; erneute Policy-Prüfung im Gate; **Verbrauch als letzter Schritt vor dem Handler, in eigener Transaktion committed** | `test_tool_registry.py` (Herkunft), `test_grant_replay.py` (Verbrauch, Kopien, Nebenläufigkeit), `test_grant_consumption.py` (Verbindungsgrenzen, Absturz vor dem Commit), `test_layering.py` (AST), `test_e2e_identity_to_execution.py` | **nein** |
 
 ---
 
@@ -116,5 +116,18 @@ weil Tests nur Fragen beantworten, die jemand vorher gestellt hat.
 
 Daraus folgt für dieses Dokument: Es ordnet, was geprüft wird. Es ersetzt
 keinen Prüfer, der etwas versucht, woran niemand gedacht hat.
+
+**Und die Spalte „über HTTP geprüft" ist nicht die einzige, die zu wenig
+fragt.** Glied ⑦ stand nach der Behebung erneut als gesichert da, diesmal mit
+Tests, die den Verbrauch über getrennte Datenbankverbindungen und unter
+zehnfacher Nebenläufigkeit belegten. Sie waren richtig und trafen den
+Angriff — nur committete jeder von ihnen am Blockende. Belegt war damit der
+geordnete Ausgang.
+
+Der ungeordnete fehlte: Handler wirkt nach außen, Prozess stirbt vor dem
+Commit, PostgreSQL nimmt den Verbrauch zurück, der Seiteneffekt bleibt. Eine
+Zeile in einer Tabelle kann „geprüft" sagen und dabei einen Ausgang meinen.
+Zur Frage „liegt die Prüfung auf dem Weg des Angreifers?" gehört deshalb die
+zweite: **„und gilt sie auch, wenn der Weg mittendrin abbricht?"**
 
 ---

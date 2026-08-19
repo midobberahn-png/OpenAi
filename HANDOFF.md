@@ -158,7 +158,7 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Tool Registry | `core/tools/registry.py` | prüft die **Herkunft** des Grants nominal |
 | Policy Engine | `core/policy/engine.py` | 7 Prüfstufen, Taint zuerst |
 | Approval Gateway | `core/policy/approval.py` | request → respond → **claim** → authorize |
-| Grant-Verbrauch | `core/tools/grants.py`, `api/db/grant_store.py` | an der `invocation_id`, zuletzt vor dem Handler |
+| Grant-Verbrauch | `core/tools/grants.py`, `api/db/grant_store.py` | an der `invocation_id`, zuletzt vor dem Handler, in **eigener** Transaktion committed |
 | Invarianten-Register | `core/policy/invariants.py` | 43 Invarianten |
 
 ### Orchestrator und Agenten
@@ -212,6 +212,9 @@ Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
 - **Replay des Grants**: derselbe echte Grant zweimal, zehnmal nebenläufig,
   als vier Kopien (`model_copy`/`copy`/`deepcopy`) und über getrennte
   Datenbankverbindungen → der Handler läuft genau einmal
+- **Replay nach Absturz**: Handler wirkt nach außen, dann Rollback der
+  Request-Transaktion vor dem Commit → `consumed_at` bleibt gesetzt, die
+  zweite Vorlage nach dem „Neustart" wird abgewiesen
 
 ## 6. Was **nicht** existiert
 
@@ -278,7 +281,33 @@ Nachmessung ergab, dass es auch den bestätigten Pfad trifft — der Befund war
 **schwerer als sein Nachweis**. Behoben durch einen Verbrauch an der
 `invocation_id`, als letzter Schritt vor dem Handler.
 
-**Was alle drei gemeinsam haben:** Es wurde nicht zu wenig geprüft, sondern die
+**Bypass 4 — der Anspruch war nicht dauerhaft.** Der Verbrauch aus Bypass 3
+stand an der richtigen Stelle, nur galt er noch nicht. `PostgresGrantConsumer`
+schrieb `consumed_at` auf der Verbindung des Requests, also in dieselbe offene
+Transaktion, in der danach der Handler nach außen wirkte. Unter Nebenläufigkeit
+war das korrekt — zwei Anfragen konnten den Anspruch nicht teilen —, aber ein
+Absturz vor dem Commit gab ihn zurück:
+
+```
+consume()  → UPDATE consumed_at     (nicht committed)
+Handler    → Mail ist verschickt    (nicht zurückholbar)
+Absturz vor dem Commit
+PostgreSQL rollt zurück             → consumed_at wieder NULL
+Retry legt denselben Grant vor      → die Mail geht ein zweites Mal hinaus
+```
+
+Der Prüfer hat das als Hypothese gemeldet, weil in seiner Umgebung keine
+Datenbank lief. Mit laufendem PostgreSQL ließ es sich reproduzieren:
+`consumed_at` war nach dem Rollback wieder `NULL`, während der Seiteneffekt
+eingetreten war. Behoben, indem der Anspruch in einer **eigenen** Transaktion
+committet, bevor der Handler beginnt — der Verbraucher nimmt deshalb eine
+`AsyncEngine` und keine Verbindung mehr entgegen.
+
+> **Atomar und dauerhaft sind zwei Zusagen.** Ein bedingtes UPDATE trägt die
+> erste. Die zweite hängt daran, wem die Transaktion gehört — und die Frage,
+> wem sie gehört, stellt kein Nebenläufigkeitstest.
+
+**Was alle vier gemeinsam haben:** Es wurde nicht zu wenig geprüft, sondern die
 falsche Frage gestellt. Drei grüne Tests deckten Bypass 1 ab; sie prüften, ob
 ein Grant mit falschem Hash abgewiesen wird — nur nicht, ob überhaupt einer
 vorliegt.
@@ -289,6 +318,12 @@ statt am Aufruf, an der Ausstellung statt an der Verwendung. Die brauchbare
 Frage bei jeder Einmaligkeitszusage lautet deshalb nicht „wird geprüft?",
 sondern **„wo entsteht die Wirkung, und wie weit ist der Anspruch davon
 entfernt?"**
+
+Bypass 4 hat die Frage um eine zweite Achse ergänzt. Der Anspruch stand dort,
+wo er hingehört, und war trotzdem einlösbar — weil „gilt" und „ist
+festgeschrieben" nicht dasselbe sind. Zur Frage nach dem *Wo* gehört deshalb
+die nach dem *Ab wann*: **In wessen Transaktion steht der Anspruch, und kann
+der sie noch zurückrollen, nachdem die Wirkung eingetreten ist?**
 
 **Für die neue Sitzung heißt das:** Eine grüne Suite und eine hohe Kennzahl
 sind kein Beweis. Vor jeder Zusicherung lohnt die Frage, ob der Test die
@@ -322,8 +357,35 @@ schreibt man ihn passend zum Code.
 `GrantConsumer`, sonst führt sie nichts aus (`UnguardedExecution`). Beim
 Verdrahten der Endpunkte gehört dort `PostgresGrantConsumer` hin — nicht
 `InProcessGrants`, das ist der Testdoppelgänger und hält nur innerhalb eines
-Prozesses. Der Executor muss die Invokation vorher protokollieren, sonst
-findet der Verbrauch keine Zeile und lehnt ab.
+Prozesses.
+
+**Und hier liegt die eine offene Aufgabe aus Bypass 4.** Der Verbraucher nimmt
+seit der Behebung eine `AsyncEngine` entgegen und committet den Anspruch in
+einer eigenen Transaktion. Das macht ihn absturzfest — und blind für alles,
+was der Request noch nicht committed hat. Der Executor protokolliert die
+Invokation aber über `PostgresInvocationStore` auf der **Request-Verbindung**
+(`deps.db_connection` hält `engine.begin()` über den ganzen Request). Wird
+naiv verdrahtet, gilt:
+
+```
+_record()  → INSERT tool_invocations   (Request-Transaktion, nicht committed)
+consume()  → UPDATE … WHERE id = …     (eigene Transaktion, sieht die Zeile nicht)
+           → 0 Zeilen → GrantAlreadyUsed → nichts läuft
+```
+
+Das schließt, statt zu öffnen — die Richtung stimmt, und der Fall ist als
+`test_noch_nicht_committete_invokation_schliesst` festgehalten. Brauchbar ist
+er trotzdem nicht: Es liefe gar nichts mehr. Beim Verdrahten muss die
+Invokationszeile deshalb **committed** sein, bevor ausgeführt wird — entweder
+protokolliert der Executor sie über eine eigene kurze Transaktion, oder der
+Endpunkt committet vor dem Ausführungsschritt. Das ist ohnehin die Zusage, die
+`invocation_store.py` selbst führt („auch wenn der Lauf abgestürzt ist") und
+die die Request-Transaktion heute nicht hält.
+
+Zweite Bedingung aus derselben Bauart: Die Request-Transaktion darf dieselbe
+Zeile vor dem Verbrauch nicht sperren, sonst wartet der Anspruch auf einen
+Commit, der erst nach seiner Rückkehr kommt. Im Executor liegt `mark()` nach
+der Ausführung — diese Reihenfolge ist Voraussetzung, keine Nebensächlichkeit.
 
 ### 2. Web-UI, Grundfassung
 
@@ -386,6 +448,8 @@ klären, indem der Fall ausgeführt wurde.
 | **Rate-Limit sperrt die eigene Testsuite** | Alle HTTP-Tests kommen aus derselben Gegenstelle. Ohne die Fixture `frische_grenzen` scheitert die Suite ab dem elften Aufruf. |
 | **`gen-check` schlägt bei uncommitteten Artefakten fehl** | Das ist korrekt: Es prüft gegen den Commit-Stand. `make gen` und mitcommitten. |
 | **Naive Ersetzungsskripte auf Testdateien** | Ein Regex über verschachtelte Klammern hat eine 900-Zeilen-Datei zerlegt. Zeilenweise arbeiten oder `git checkout` und neu ansetzen. |
+| **Ein Store, der die Verbindung des Aufrufers nimmt** | Das ist der Normalfall und für Lesen und Protokollieren richtig — für einen Einmaligkeitsanspruch nicht: Er erbt damit die Rücknehmbarkeit einer fremden Transaktion. Wo ein Anspruch *vor* einer Wirkung nach außen gelten muss, gehört ihm eine eigene Transaktion. Die Signatur soll das erzwingen (`AsyncEngine` statt `AsyncConnection`), sonst wird der unsichere Weg beim nächsten Verdrahten wieder gewählt. |
+| **Nebenläufigkeitstests belegen keine Dauerhaftigkeit** | Zehn parallele Verbindungen, eine gewinnt — und trotzdem war der Verbrauch flüchtig. Jeder dieser Tests verließ seinen `begin()`-Block regulär und committete damit. Wer Crash-Semantik zusagt, muss den ungeordneten Ausgang prüfen: `rollback()` nach dem Seiteneffekt, dann aus einer neuen Verbindung nachsehen. |
 
 ---
 
