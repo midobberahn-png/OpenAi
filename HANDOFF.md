@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> Stand: 18.08.2026, Commit `e2451d2`. Dieses Dokument ist der Einstieg für
+> Stand: 19.08.2026, Commit `007a2fd`. Dieses Dokument ist der Einstieg für
 > eine frische Claude-Code-Sitzung. Es ersetzt kein Architekturdokument,
 > sondern sagt, wo das Projekt steht und was als Nächstes zu tun ist.
 
@@ -17,37 +17,46 @@ jeder Modellanbindung gebaut.
 Kommunikationssprache mit dem Nutzer: **Deutsch**. Auch Code-Kommentare,
 Docstrings, Commit-Nachrichten und Testnamen sind deutsch.
 
+Das Repository liegt auf GitHub: `git@github.com:midobberahn-png/OpenAi.git`
+(Branch `main`). Der Name des Repositories passt nicht zum Projekt — eine
+Umbenennung steht aus.
+
 ---
 
 ## 2. Aktueller Stand
 
 | | |
 |---|---|
-| Commits | 11 (`9875468` … `e2451d2`), lokaler Branch `master`, kein Remote |
-| Tests | **459** gesamt — 181 mit `-m security`, 47 mit `-m integration` |
-| **Security Invariant Coverage** | **31/31** |
-| mypy | `strict`, sauber über 50 Dateien |
+| Commits | 31 (`9875468` … `007a2fd`), Branch `main`, Remote auf GitHub |
+| Tests | **749** gesamt — 445 mit `-m security`, 114 mit `-m integration` |
+| **Security Invariant Coverage** | **41/42** |
+| mypy | `strict`, sauber über 81 Dateien |
 | Ruff | sauber (check + format) |
-| Datenbank | 30 Tabellen, 4 Migrationen, bi-direktional geprüft |
-| Verträge | 95 exportierte Typen in `jarvis_contracts` |
+| Datenbank | 32 Tabellen, 7 Migrationen, bi-direktional geprüft |
+| CI | GitHub Actions mit Postgres und Redis als Dienste |
 
-### Commit-Historie
+### Was seit dem letzten Dossier geschah
 
+Punkt 9 (Orchestrator) war der letzte dokumentierte Stand. Seitdem:
+Authentifizierung mit Passkeys und Sitzungen, die HTTP-Schicht, zweistufige
+Zugriffsgrenzen, der LLM-Provider-Block mit Ollama-Adapter und Modellschleife —
+und **zwei gefundene Sicherheitslücken**, die den Umgang mit dem Projekt
+prägen sollten (Abschnitt 7).
+
+### Der Prüfprozess, der sich bewährt hat
+
+Externe Berater bewerteten anfangs nur Statusberichte. Das fand nichts. Seit
+`scripts/pruefpaket.py` bekommen sie den sicherheitskritischen Quelltext in
+sieben Portionen samt Prüfaufträgen und einer Liste falsifizierbarer
+Behauptungen:
+
+```bash
+uv run python scripts/pruefpaket.py     # -> pruefpaket/ (nicht versioniert)
+git bundle create /tmp/jarvis.bundle --all
 ```
-e2451d2  feat(core): Agentenketten und der Durchstich von der Eingabe bis zum Audit
-8e23c1e  fix(core): Grant an den Lauf binden, Obergrenze aus dem Routing
-5440d37  feat(core): Planer, Executor und das Gate für unbestätigte Aufrufe
-b3a7981  feat(core): Klassifikation und deterministisches Routing
-7920dc0  chore(core): Orchestrator-Invarianten als PLANNED aufgenommen
-e0c5c05  feat(core): Approval Gateway, Ausführungs-Gate, Angriffe B/C/G geschlossen
-8baa5c0  feat(core): Security Invariant Coverage als Leitkennzahl
-831b50a  feat(core): Policy Engine, Tool Registry, Taint-Gate scharfgestellt
-b466450  feat(core): typisierter Run-State/FSM und hash-verkettetes Audit-Log
-c7971b4  feat: Architektur V1.1 — Taint-Gate, Identity, Ziele, Entitäten
-9875468  feat: Fundament — Verträge, Datenmodell, Migrationen, CI
-```
 
----
+**Beide gefundenen Bypässe stammen aus dieser Prüfung.** Keiner davon wäre
+durch mehr Tests derselben Art gefunden worden.
 
 ## 3. Umgebung aufsetzen
 
@@ -74,11 +83,23 @@ uv run python scripts/seed.py     # 34 Scopes
 ### Vollständiges Gate
 
 ```bash
+make gate      # Lint, Typen, Vertragsdrift, alle Tests, Kennzahl
+make proof     # nur die Integrationstests — Überspringen ist dabei ein Fehler
+```
+
+**`JARVIS_REQUIRE_SERVICES=1` ist der wichtigste Schalter dieser Suite.** Ohne
+Postgres und Redis überspringt `pytest` die Integrationstests und meldet ein
+sattes Grün — inklusive der Tests, die Nebenläufigkeit belegen sollen. Ein
+externer Prüfer hat genau das erlebt: 702 Tests, 0 Fehler, 110 übersprungen.
+Mit dem Schalter schlagen sie stattdessen fehl. In CI ist er gesetzt.
+
+Einzeln, wenn nötig:
+
+```bash
 uv run ruff check . && uv run ruff format --check .
 uv run mypy packages apps/api
 uv run python scripts/gen_contracts.py     # muss idempotent sein
 uv run pytest -q
-uv run pytest -m security -q               # blockierend
 uv run pytest tests/unit/test_invariant_coverage.py -q -s   # zeigt die Kennzahl
 ```
 
@@ -127,40 +148,66 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 
 ## 5. Was funktioniert
 
+### Sicherheitssockel
+
 | Komponente | Datei | Zustand |
 |---|---|---|
-| Verträge | `packages/contracts/jarvis_contracts/` | 12 Module, 95 Typen |
-| Zustandsautomat | `packages/core/jarvis_core/runs/fsm.py` | Übergangstabelle, 10 Zustände |
-| Audit-Kette | `packages/core/jarvis_core/audit/chain.py` | Kanonisierung, Hash, Verifikation |
-| Tool Registry | `packages/core/jarvis_core/tools/registry.py` | **gibt keinen Handler heraus** |
-| Policy Engine | `packages/core/jarvis_core/policy/engine.py` | 7 Prüfstufen, Taint zuerst |
-| Approval Gateway | `packages/core/jarvis_core/policy/approval.py` | request → respond → authorize |
-| Invarianten-Register | `packages/core/jarvis_core/policy/invariants.py` | 29 Invarianten |
-| Postgres-Store | `apps/api/jarvis_api/db/approval_store.py` | atomares Compare-and-Set |
-| Invokations-Store | `apps/api/jarvis_api/db/invocation_store.py` | Aufruf + Entscheidung vor der Wirkung |
-| Klassifikation | `packages/core/jarvis_core/orchestrator/classifier.py` | regelbasiert, stuft nur hoch |
-| Router | `packages/core/jarvis_core/orchestrator/router.py` | deterministisch, P3 strukturell lokal |
-| Planer | `packages/core/jarvis_core/orchestrator/planner.py` | drei Modi, lesend vor schreibend |
-| Executor | `packages/core/jarvis_core/orchestrator/executor.py` | FSM, Policy → Gate → Registry |
-| Agentenkette | `packages/core/jarvis_core/agents/` | Schnittmenge über alle Stufen |
-| Datenmodell | `apps/api/jarvis_api/db/models.py` | 30 Tabellen |
+| Verträge | `packages/contracts/jarvis_contracts/` | 14 Module |
+| Zustandsautomat | `core/runs/fsm.py` | Übergangstabelle, 10 Zustände |
+| Audit-Kette | `core/audit/chain.py` | Kanonisierung, Hash, Verifikation |
+| Tool Registry | `core/tools/registry.py` | prüft die **Herkunft** des Grants nominal |
+| Policy Engine | `core/policy/engine.py` | 7 Prüfstufen, Taint zuerst |
+| Approval Gateway | `core/policy/approval.py` | request → respond → **claim** → authorize |
+| Invarianten-Register | `core/policy/invariants.py` | 42 Invarianten |
+
+### Orchestrator und Agenten
+
+| Komponente | Datei | Zustand |
+|---|---|---|
+| Klassifikation | `core/orchestrator/classifier.py` | regelbasiert, stuft nur hoch |
+| Router | `core/orchestrator/router.py` | deterministisch, P3 strukturell lokal |
+| Planer | `core/orchestrator/planner.py` | drei Modi, lesend vor schreibend |
+| Executor | `core/orchestrator/executor.py` | FSM, Policy → Gate → Registry |
+| Agentenkette | `core/agents/chain.py` | Schnittmenge über alle Stufen |
+| Agent Runtime | `core/agents/runtime.py` | Werkzeugmenge wird **bei jedem Zugriff** neu berechnet |
+| Modellschleife | `core/agents/model_loop.py` | führt nichts aus, schlägt nur weiter |
+
+### Anmeldung und HTTP
+
+| Komponente | Datei | Zustand |
+|---|---|---|
+| Sitzungen | `core/auth/sessions.py` | Doppelfrist, Widerruf, nur Hash gespeichert |
+| Passkeys | `core/auth/passkeys.py` | Ablauf im Kern, Krypto im Adapter |
+| Zugriffsgrenzen | `core/limits/` | zweistufig: je Client **und** global |
+| WebAuthn-Adapter | `apps/api/jarvis_api/auth/` | `py_webauthn`, Origin- und RP-ID-Bindung |
+| HTTP-Grenze | `apps/api/jarvis_api/deps.py` | einzige Quelle für Identität |
+| Auth-Routen | `apps/api/jarvis_api/routes/auth.py` | Bootstrap, Registrierung, Anmeldung, Sitzungen |
+
+### Sprachmodelle
+
+| Komponente | Datei | Zustand |
+|---|---|---|
+| Model Gateway | `core/providers/gateway.py` | Zulassung vor jedem Aufruf, fail closed |
+| Ollama-Adapter | `packages/providers/jarvis_providers/ollama.py` | HTTP-API, Contract-Tests |
 
 ### Bewiesene Sicherheitseigenschaften
 
-- **Payload-Mutation** nach Bestätigung → `payload-mismatch` (auch bei einer
-  einzelnen geänderten Ziffer in der Uhrzeit)
-- **TOCTOU**: zwischenzeitlich entzogenes Recht → `policy-changed`
-- **Replay**: 10 parallele Einlösungen in getrennten DB-Verbindungen → genau
-  eine gewinnt, neun `ALREADY_USED`
-- **Kanalbindung**: Geste kann UI-Dialog nicht bestätigen; fremde Sitzung ebenso
-  wenig. Ausnahme mit Begründung: UI-Vorschau darf per Sprache bestätigt werden
-  (der Nutzer sieht sie dabei), umgekehrt nicht.
-- **Audit-Log** append-only per Trigger; Pseudonymisierung (`user_id → NULL`)
-  bricht die Hash-Kette nicht, weil `user_id` nicht gehasht wird
-- **Gedächtnis-Quarantäne**: `Provenance.from_tainted_run` verhindert
-  automatische Übernahme, unabhängig von der Konfidenz
+Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
 
----
+- **Payload-Mutation** nach Bestätigung → `payload-mismatch`
+- **TOCTOU**: entzogenes Recht zwischen Prüfung und Ausführung → `policy-changed`
+- **Replay der Nonce**: 10 parallele Einlösungen → genau eine gewinnt
+- **Replay der Ausführung**: 10 parallele Autorisierungen in getrennten
+  Verbindungen → genau eine gewinnt
+- **Grant Confusion**: Grant aus Lauf A in Lauf B → abgewiesen
+- **Gefälschter Grant**: `SimpleNamespace` mit korrektem Hash → abgewiesen
+- **Kettenrechte**: A → B → C erweitert nichts, Kontamination steigt auf
+- **WebAuthn**: falscher Origin, falsche RP-ID, gefälschte Signatur, Replay,
+  Zählerregression — gegen die **echte** Bibliothek, mit einem
+  Software-Authenticator (`tests/authenticator.py`)
+- **Rate-Limit**: 100 gleichzeitige Redis-Treffer ergeben die Stände 1–100
+- **Exfiltration über ein Modell**: Das Modell liest die präparierte Mail,
+  schlägt `mail.send` an die fremde Adresse vor — und bekommt es nicht
 
 ## 6. Was **nicht** existiert
 
@@ -168,98 +215,104 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 
 | Fehlt | Auswirkung |
 |---|---|
-| **Authentifizierung** | Es gibt keinen Login. `session_id` wird durchgereicht, aber von niemandem verifiziert. Die Sitzungsbindung ist erst dann eine Sicherheitsmaßnahme, wenn Sessions echt sind. |
-| **FastAPI-App** | `apps/api/jarvis_api/main.py` existiert nicht. `gen_contracts.py` überspringt die OpenAPI-Erzeugung. Keine HTTP- oder WebSocket-Endpunkte. |
-| **LLM-Provider** | Kein `LLMProvider`-Adapter. Nichts ruft ein Modell auf. |
-| **Audit-Sink** | Das `AuditSink`-Protokoll ist definiert, die Postgres-Implementierung fehlt. Der beschriebene `pg_advisory_xact_lock` ist **noch nirgends implementiert** — ohne ihn kann die Kette bei nebenläufigen Schreibern gabeln. |
-| **Rate Limiter** | Port definiert, keine Implementierung. |
-| **Agenten-Denkschleife** | `AgentBehaviour` ist ein Protokoll; die Modellschleife dahinter fehlt. Rechte und Taint-Propagation sind vollständig, das Denken nicht. |
-| **Memory Service** | Nur Verträge und Schema, kein Retrieval-Code. |
-| **Alles ab Phase 2** | Voice, Vision, UI, Integrationen. |
+| **HTTP-Endpunkte für Läufe** | Es gibt `/auth/*` und `/health`, sonst nichts. Die Kette Identity → Run → Policy → Approval → Execution ist nur im Kern geprüft, nicht über HTTP (`docs/18-angriffskette.md`). |
+| **Bestätigungs-Endpunkt** | `POST /actions/{id}/respond` fehlt. Der Mensch hat derzeit keinen Weg, auf „Ja" zu klicken. |
+| **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
+| **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
+| **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
+| **Memory Service** | Nur Verträge und Schema, kein Retrieval. |
+| **Context Engine** | Verträge da, Provider fehlen. |
+| **Alles ab Phase 2** | Voice, Vision, Integrationen. |
 
 ### Bekannte kleinere Mängel
 
-- `PostgresApprovalStore.open_for_user()` hat ein N+1 (ruft `get()` je Zeile).
-  Unkritisch bei erwarteten Mengen, aber vor der UI zu beheben.
-- `ExecutionGrant` ist gegen Fremderzeugung nur per Sentinel gesichert. Python
-  kann das nicht vollständig verhindern; die eigentliche Absicherung ist der
-  AST-Test. Das steht so im Docstring — **nicht** als „unumgehbar" darstellen.
-- Der Testhelfer `_seed()` in `tests/integration/test_approval_gateway.py`
-  setzt `invocation_id = run_id`. Nur eine Testabkürzung — sie hatte allerdings
-  verdeckt, dass der Executor `tool_invocations` gar nicht schrieb. Gefunden
-  hat das erst der Durchstichtest.
-- `tests/unit/test_invariant_coverage.py` sammelt Marker per AST-Scan über
-  `tests/`. Wer Tests in ein anderes Verzeichnis legt, muss den Pfad anpassen.
+- `PostgresApprovalStore.open_for_user()` hat ein N+1. Vor der UI zu beheben.
+- Der Ollama-Adapter ist **nie gegen ein laufendes Ollama** geprüft worden —
+  nur gegen aufgezeichnete Antworten. Der erste echte Lauf wird vermutlich
+  Kleinigkeiten zutage fördern.
+- `test_invariant_coverage.py` sammelt Marker per AST-Scan über `tests/`.
 
----
+## 7. Security Invariant Coverage — und ihre Grenze
 
-## 7. Security Invariant Coverage — die Leitkennzahl
+**Testabdeckung ist für diesen Kern die falsche Kennzahl.** Stattdessen: 42
+benannte Invarianten in `core/policy/invariants.py`. Tests binden sich per
+`@pytest.mark.invariant("<id>")`; ein Meta-Test schlägt fehl, wenn eine
+`ENFORCED`-Invariante ohne Test dasteht oder ein Test sich auf eine unbekannte
+Kennung beruft.
 
-**Testabdeckung ist für diesen Kern die falsche Kennzahl.** 96 % sagen nichts
-darüber, ob `kontaminiert → Bestätigung → veränderter Payload → Ausführung`
-abgewehrt wird.
+**Stand 41/42.** Offen: `session-token-rotation` (bewusst, siehe Abschnitt 8).
 
-Stattdessen: 29 benannte Invarianten in
-`packages/core/jarvis_core/policy/invariants.py`. Tests binden sich per
-`@pytest.mark.invariant("<id>")`. Ein Meta-Test schlägt fehl, wenn
+### Die wichtigste Lektion dieses Projekts
 
-- eine als `ENFORCED` geführte Invariante keinen Test hat, **oder**
-- ein Test sich auf eine unbekannte Kennung beruft.
+**Zweimal stand eine Invariante auf ENFORCED, die Tests waren grün — und die
+Eigenschaft galt nicht.** Beide Male fand es ein externer Prüfer mit dem
+Quelltext in der Hand, der etwas ausprobierte.
 
-Generierte Tabelle: `docs/generated/security-invariants.md`.
+**Bypass 1 — Herkunft statt Aussehen** (`04d983a`). `ExecutionAuthorization`
+war ein `Protocol`. Die Registry prüfte Hash, Lauf und Nutzer — aber nicht,
+woher das Objekt stammt. Ein `SimpleNamespace` mit passenden Attributen führte
+`mail.send` aus, ohne Policy, ohne Approval, ohne Grant.
 
-**Stand 31/31.** Der Nenner ist mit Punkt 9 von 29 auf 31 gestiegen: Zwei
-Invarianten kamen aus dem Review dazu (`grant-bound-to-run`,
-`data-class-monotonic-within-run`). Die Kennzahl soll den Stand zeigen, nicht
-ihn schmeicheln — eine Lücke zu schließen, ohne sie zu benennen, hätte die
-Zahl gehoben und das Wissen daran verloren.
+> Ein Protocol beantwortet „sieht es so aus?". Wo es um Erlaubnis geht, lautet
+> die Frage „kommt es von dort?".
 
-**Eine Fußnote gehört dazu, und sie ist wichtiger als die Zahl:**
-`approval-channel-bound` bindet Bestätigungen an Nutzer, Sitzung und Kanal.
-Die Tests dazu sind grün — aber `session_id` wird bislang durchgereicht, ohne
-dass irgendjemand sie verifiziert. Die Sitzungsbindung prüft heute, dass zwei
-UUIDs übereinstimmen; eine Sicherheitsmaßnahme wird sie erst mit echter
-Authentifizierung. Deshalb steht Auth als nächster Punkt und nicht der
-LLM-Provider.
+**Bypass 2 — die Einmaligkeit hing am falschen Schritt** (`fc5b94f`). Die
+Nonce sicherte die *Bestätigung*, nicht die *Ausführung*. Drei Aufrufe von
+`authorize_execution()` ergaben drei Grants und drei versendete Mails — bei
+erteilter Zustimmung für genau eine.
 
----
+**Was beide gemeinsam haben:** Es wurde nicht zu wenig geprüft, sondern die
+falsche Frage gestellt. Drei grüne Tests deckten Bypass 1 ab; sie prüften, ob
+ein Grant mit falschem Hash abgewiesen wird — nur nicht, ob überhaupt einer
+vorliegt.
 
-## 8. Nächster Schritt: Authentifizierung
+**Für die neue Sitzung heißt das:** Eine grüne Suite und eine hohe Kennzahl
+sind kein Beweis. Vor jeder Zusicherung lohnt die Frage, ob der Test die
+Eigenschaft prüft oder nur ihre Umgebung. Und: **Der Metatest prüft, ob eine
+Invariante einen Test hat — nicht, ob der Test das Richtige prüft.**
 
-### Warum Auth und nicht der LLM-Provider
+Zwei weitere Fehler fielen beim Weiterbauen auf, beide in eigenem Code
+(`007a2fd`): „jede Modellantwort ist Fremdinhalt" hätte nach dem ersten
+Modellaufruf jeden Lauf kontaminiert; und `AgentSession.tools` war ein
+eingefrorenes Set, wodurch die Zusicherung „das Angebot verengt sich mit der
+Kontamination" nicht hielt.
 
-Weil eine Invariante, die wir bereits als durchgesetzt führen, ohne sie
-unvollständig ist. `approval-channel-bound` bindet eine Bestätigung an Nutzer,
-Sitzung und Anzeigekanal — der Schutz gegen die Geste aus vier Metern
-Entfernung, die einen ungelesenen Dialog freigibt. Die Sitzungsbindung ist
-davon der Teil, der heute nichts trägt: `session_id` kommt vom Aufrufer und
-wird von niemandem geprüft.
+## 8. Nächster Schritt
 
-Ein Modell anzubinden, bevor das geschlossen ist, hieße, die erste echte
-Angriffsfläche auf ein Fundament zu setzen, dessen letzte Schicht fehlt.
+Die Reihenfolge ist begründet, nicht beliebig.
 
-### Umfang
+### 1. HTTP-Endpunkte für Läufe und Bestätigungen
 
-1. **`packages/core/jarvis_core/auth/`**
-   - Sitzungen: Erzeugung, Verifikation, Ablauf, Widerruf
-   - Token als Zufallswert; in der Datenbank liegt nur der Hash — wer die
-     Tabelle liest, bekommt keine gültigen Sitzungen
-2. **`packages/core/jarvis_core/ports/sessions.py`** — `SessionStore`
-3. **`apps/api/jarvis_api/db/session_store.py`** + Migration (`sessions`)
-4. **WebAuthn/Passkey** in `apps/api` — die Bibliothek gehört in die
-   Adapterschicht, nicht in den Kern (ADR-009)
-5. **Das Approval Gateway prüft die Sitzung**, statt sie entgegenzunehmen.
-   Neue Invariante: Eine Bestätigung ist nur mit einer verifizierten,
-   nicht abgelaufenen Sitzung einlösbar.
+`POST /runs`, `POST /actions/{id}/respond`, dazu die Sitzungs- und
+Laufübersicht. Zwei Gründe:
 
-### Danach
+* Es gibt **keinen Weg, eine Bestätigung zu erteilen**. Jede Aktion mit
+  Außenwirkung hängt daran.
+* `docs/18-angriffskette.md` führt die Glieder ④ bis ⑦ als „nur im Kern
+  geprüft". Erst diese Endpunkte schließen den Durchstich über HTTP.
 
-1. `LLMProvider` + Adapter (OpenAI, Anthropic, Ollama) unter dem
-   Datenklassenfilter — P3 erreicht ausschließlich lokale Modelle
-2. FastAPI-App + WebSocket
-3. Web-UI
+Beim Bauen gilt, was bei den Auth-Routen galt: **Strukturtest zuerst**, sonst
+schreibt man ihn passend zum Code.
 
----
+### 2. Web-UI, Grundfassung
+
+Chat, Statusleiste, Bestätigungsdialog, Permission Center. Ohne sie ist das
+System nicht bedienbar.
+
+### 3. Weitere Provider
+
+Anthropic und OpenAI, dieselbe Form wie Ollama. Dabei mitzunehmen, was aus dem
+Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch
+verhindert einen zweiten Versuch — er kann nicht verhindern, dass ein
+Provider-Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen.
+
+### Bewusst aufgeschoben: Token-Rotation
+
+`session-token-rotation` bleibt `PLANNED`. Ein gestohlener Token ist bis zum
+Ablauf gültig, auch wenn der rechtmäßige Nutzer weiterarbeitet — das ist eine
+reale Lücke. Sie wird trotzdem nicht schnell implementiert: Zwei gleichzeitige
+Anfragen mit demselben Token dürfen nicht dazu führen, dass eine davon
+abgemeldet wird. **Erst die Race-Semantik spezifizieren (ADR), dann bauen.**
 
 ## 9. Arbeitsweise
 
@@ -277,6 +330,13 @@ Der Nutzer lässt den Stand von zwei externen Beratern prüfen. Deren Anmerkunge
 kritisch bewerten — mehrere Vorschläge wurden begründet abgelehnt (siehe
 `docs/16-v1.1-review.md`). Nicht alles übernehmen, was gut klingt.
 
+**Aber:** Die beiden schwersten Fehler des Projekts kamen aus genau diesen
+Reviews, und zwar erst, nachdem die Berater den Quelltext bekamen statt
+Statusberichte. Vermutungen der Prüfer sind **nachzumessen, nicht zu
+bewerten** — mehrere haben sich als unbegründet erwiesen (etwa „500 statt 401
+bei kaputten Signaturbytes"), zwei als gravierend. Beides ließ sich in Minuten
+klären, indem der Fall ausgeführt wurde.
+
 ---
 
 ## 10. Fallstricke, die schon Zeit gekostet haben
@@ -291,6 +351,10 @@ kritisch bewerten — mehrere Vorschläge wurden begründet abgelehnt (siehe
 | **Audit-Trigger blockierte DSGVO-Löschung** | Der Trigger verhinderte auch das `ON DELETE SET NULL`. Genau eine Ausnahme ist zugelassen: `user_id → NULL` bei sonst identischer Zeile. |
 | **`pending_actions.tool_name` fehlte** | Der Vertrag führte das Feld, die Tabelle nicht — nur der Integrationstest gegen die echte Datenbank fand es. |
 | **Alembic + pgvector** | Autogenerate rendert `pgvector.sqlalchemy.VECTOR` ohne Import. `_render_item` in `migrations/env.py` behebt das. |
+| **Modulzustand am Event-Loop** | Datenbank-Engine und Redis-Client sind Modulvariablen und hängen am Loop, der sie erzeugt hat. Ohne `dispose()` bzw. `dispose_redis()` in der Test-Fixture erbt der nächste Test Verbindungen aus einem geschlossenen Loop. |
+| **Rate-Limit sperrt die eigene Testsuite** | Alle HTTP-Tests kommen aus derselben Gegenstelle. Ohne die Fixture `frische_grenzen` scheitert die Suite ab dem elften Aufruf. |
+| **`gen-check` schlägt bei uncommitteten Artefakten fehl** | Das ist korrekt: Es prüft gegen den Commit-Stand. `make gen` und mitcommitten. |
+| **Naive Ersetzungsskripte auf Testdateien** | Ein Regex über verschachtelte Klammern hat eine 900-Zeilen-Datei zerlegt. Zeilenweise arbeiten oder `git checkout` und neu ansetzen. |
 
 ---
 
@@ -302,7 +366,7 @@ kritisch bewerten — mehrere Vorschläge wurden begründet abgelehnt (siehe
 | `docs/01-tech-stack.md` | 13 ADRs mit Alternativen |
 | `docs/02-repo-struktur.md` | Paketgrenzen, Codegenerierung |
 | `docs/03-datenmodell.md` | Schema, pgvector, Aufbewahrung |
-| `docs/04-orchestrator.md` | **Für Punkt 9 die wichtigste Vorlage** |
+| `docs/04-orchestrator.md` | Klassifikation, Routing, Planung, Ausführung, Budgets |
 | `docs/05-memory-context.md` | Gedächtnisebenen, Retrieval, Referenzauflösung |
 | `docs/06-agenten-tools.md` | Supervisor-Muster, Tool-Vertrag |
 | `docs/07-security-permissions.md` | Policy, **§4a Taint-Gate**, Secrets, Audit |
@@ -311,7 +375,7 @@ kritisch bewerten — mehrere Vorschläge wurden begründet abgelehnt (siehe
 | `docs/15-testing.md` | Test- und Evalstrategie |
 | `docs/16-v1.1-review.md` | Bewertung externer Reviews, **auch die Ablehnungen** |
 | `docs/17-identity-goals.md` | Identity, Ziele, Entitäten |
-| `docs/18-angriffskette.md` | **Was wo erzwungen wird — und welcher Übergang noch nicht über HTTP geprüft ist** |
+| `docs/18-angriffskette.md` | **Jeder Übergang von HTTP bis zur Ausführung — und welcher noch nicht über HTTP geprüft ist** |
 | `docs/generated/` | Scope-Katalog und Invariantentabelle — **generiert, nicht bearbeiten** |
 
 Artifact mit der Architekturübersicht:
