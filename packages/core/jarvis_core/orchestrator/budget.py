@@ -16,16 +16,13 @@ Neustart verbrauchte Zeit kennen.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 
 from jarvis_contracts import RunBudget, Usage
+from jarvis_core.clock import utc_now
 
 __all__ = ["BudgetTracker", "utc_now"]
-
-
-def utc_now() -> datetime:
-    return datetime.now(tz=UTC)
 
 
 class BudgetTracker:

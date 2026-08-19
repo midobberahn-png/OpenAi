@@ -16,6 +16,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "freezegun>=1.5",
+    "httpx>=0.28",
 ]
 
 [tool.uv]

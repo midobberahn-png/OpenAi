@@ -30,6 +30,7 @@ from jarvis_contracts import (
     IssuedSession,
     Session,
 )
+from jarvis_core.clock import utc_now
 from jarvis_core.ports.sessions import SessionStore
 
 __all__ = [
@@ -65,7 +66,7 @@ class SessionManager:
         *,
         ttl: timedelta = DEFAULT_SESSION_TTL,
         idle_timeout: timedelta = DEFAULT_IDLE_TIMEOUT,
-        clock: Callable[[], datetime] | None = None,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._store = store
         self._ttl = ttl
@@ -73,11 +74,12 @@ class SessionManager:
         self._clock = clock
 
     def _now(self, now: datetime | None = None) -> datetime:
-        if now is not None:
-            return now
-        if self._clock is not None:
-            return self._clock()
-        raise ValueError("Ohne Uhr muss 'now' übergeben werden.")
+        """Übergebene Zeit gewinnt; sonst die Uhr.
+
+        Die Tests geben ``now`` durchgehend vor — anders ließe sich der Ablauf
+        einer Vierzehn-Tage-Frist nicht prüfen.
+        """
+        return now if now is not None else self._clock()
 
     async def issue(
         self,

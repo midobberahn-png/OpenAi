@@ -37,6 +37,7 @@ from jarvis_contracts import (
     WebAuthnChallenge,
 )
 from jarvis_core.auth.sessions import SessionManager
+from jarvis_core.clock import utc_now
 from jarvis_core.ports.webauthn import AttestationVerifier, ChallengeStore, CredentialStore
 
 __all__ = [
@@ -107,7 +108,7 @@ class PasskeyService:
         credentials: CredentialStore,
         verifier: AttestationVerifier,
         sessions: SessionManager,
-        clock: Callable[[], datetime] | None = None,
+        clock: Callable[[], datetime] = utc_now,
         challenge_ttl: timedelta = DEFAULT_CHALLENGE_TTL,
     ) -> None:
         self._challenges = challenges
@@ -118,11 +119,7 @@ class PasskeyService:
         self._ttl = challenge_ttl
 
     def _now(self, now: datetime | None) -> datetime:
-        if now is not None:
-            return now
-        if self._clock is not None:
-            return self._clock()
-        raise ValueError("Ohne Uhr muss 'now' übergeben werden.")
+        return now if now is not None else self._clock()
 
     # -- Registrierung ----------------------------------------------------
     async def begin_registration(

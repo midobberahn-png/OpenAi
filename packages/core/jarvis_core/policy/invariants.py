@@ -200,6 +200,58 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.policy.approval",
     ),
     Invariant(
+        id="identity-derives-from-session",
+        title="Identität entsteht an genau einer Stelle",
+        statement=(
+            "Kein HTTP-Endpunkt übernimmt user_id, session_id oder eine andere "
+            "Identitätsangabe aus Body, Query, Header oder Pfad; sie stammt ausschließlich "
+            "aus der verifizierten Sitzung."
+        ),
+        why=(
+            "Ein Feld „user_id“ in einem Request-Body ist der kürzeste Angriffsweg des "
+            "Systems: Es sieht harmlos aus, ist bequem — und führt über Policy und "
+            "Approval geradewegs zu einem ExecutionGrant für ein fremdes Konto. Alles "
+            "darunter ist gegen falsche Identitäten wirkungslos, weil es die falsche "
+            "Identität nie erfährt."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.http",
+    ),
+    Invariant(
+        id="bootstrap-only-once",
+        title="Die Erstinbetriebnahme gelingt genau einmal",
+        statement=(
+            "Der Bootstrap-Endpunkt legt einen Nutzer nur an, solange die Nutzertabelle "
+            "leer ist; die Bedingung liegt im INSERT, nicht in einer Prüfung davor."
+        ),
+        why=(
+            "Ein offener Registrierungsweg wäre bei einem Ein-Personen-System die Tür "
+            "neben der Tür. Ein vorgelagertes SELECT wäre bei zwei gleichzeitigen "
+            "Anfragen wertlos — und das Zeitfenster dieser Prüfung ist genau der Moment, "
+            "in dem das System noch niemandem gehört."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.http",
+    ),
+    Invariant(
+        id="session-token-rotation",
+        title="Ein benutzter Sitzungstoken wird ersetzt",
+        statement=(
+            "Nach einer Nutzung wird der Sitzungstoken durch einen neuen ersetzt; der "
+            "alte bleibt nur für ein kurzes Überlappungsfenster gültig."
+        ),
+        why=(
+            "Ohne Rotation bleibt ein entwendeter Token bis zum Ablauf gültig, auch wenn "
+            "der rechtmäßige Nutzer weiterarbeitet — das Zeitfenster für einen Replay ist "
+            "die volle Sitzungsdauer. Der Grund für den Aufschub ist ein Wettlauf: Zwei "
+            "gleichzeitige Anfragen mit demselben Token dürfen nicht dazu führen, dass "
+            "eine davon abgemeldet wird. Die Semantik des Überlappungsfensters ist zu "
+            "spezifizieren, bevor sie implementiert wird (ADR-007, Nachtrag)."
+        ),
+        status=InvariantStatus.PLANNED,
+        component="core.auth",
+    ),
+    Invariant(
         id="session-verified-before-approval",
         title="Eine Bestätigung verlangt eine echte Sitzung",
         statement=(
