@@ -44,7 +44,7 @@ untrusted HTTP → Auth → Session → Identity → Run → Policy → Approval
 | ④ | Identity → Run | `Run.user_id` stammt aus der Sitzung | `test_e2e_identity_to_execution.py` | **nein** |
 | ⑤ | Run → Policy | `PolicyRequest` entsteht an genau einer Stelle; `trigger` und `allowed_data_class` aus dem persistierten Run | `test_executor.py` (AST + Verhalten) | **nein** |
 | ⑥ | Policy → Approval | Payload-Hash eingefroren; Nonce einmalig; Sitzungs-, Nutzer- und Kanalbindung; Sitzung wird verifiziert | `test_approval_gateway.py`, `test_sessions.py` | **nein** |
-| ⑦ | Approval → Execution | Grant nur aus dem Gateway; an Lauf und Nutzer gebunden; Hash dreifach geprüft; erneute Policy-Prüfung im Gate | `test_layering.py` (AST), `test_tool_registry.py`, `test_e2e_identity_to_execution.py` | **nein** |
+| ⑦ | Approval → Execution | **Herkunft nominal geprüft** (`type(auth) is ExecutionGrant`); an Lauf und Nutzer gebunden; Hash dreifach geprüft; erneute Policy-Prüfung im Gate | `test_tool_registry.py` (Herkunft), `test_layering.py` (AST), `test_e2e_identity_to_execution.py` | **nein** |
 
 ---
 
@@ -89,6 +89,19 @@ Test noch aus.
 
 ---
 
+## 4. Was dieses Dokument nicht behauptet
+
+Es behauptet nicht, dass das System sicher ist. Es behauptet, dass für die
+Übergänge ① bis ③ ein Angriff von außen belegbar scheitert, und benennt für
+④ bis ⑦, dass die Absicherung geprüft ist, ihr Aufruf durch die HTTP-Schicht
+aber nicht.
+
+Der Unterschied ist der Punkt. Eine Kennzahl von 38/39 sagt, wie viele
+Eigenschaften erzwungen werden — nicht, ob sie auf dem Weg liegen, den ein
+Angreifer nimmt.
+
+---
+
 ## 5. Was ein solches Dokument nicht leisten kann
 
 Der Bypass in Glied ⑦ stand in der Tabelle als gesichert, mit Verweis auf drei
@@ -105,14 +118,3 @@ Daraus folgt für dieses Dokument: Es ordnet, was geprüft wird. Es ersetzt
 keinen Prüfer, der etwas versucht, woran niemand gedacht hat.
 
 ---
-
-## 4. Was dieses Dokument nicht behauptet
-
-Es behauptet nicht, dass das System sicher ist. Es behauptet, dass für die
-Übergänge ① bis ③ ein Angriff von außen belegbar scheitert, und benennt für
-④ bis ⑦, dass die Absicherung geprüft ist, ihr Aufruf durch die HTTP-Schicht
-aber nicht.
-
-Der Unterschied ist der Punkt. Eine Kennzahl von 38/39 sagt, wie viele
-Eigenschaften erzwungen werden — nicht, ob sie auf dem Weg liegen, den ein
-Angreifer nimmt.
