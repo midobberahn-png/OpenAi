@@ -96,6 +96,7 @@ class InMemoryApprovalStore:
     def __init__(self) -> None:
         self._actions: dict[UUID, PendingAction] = {}
         self._arguments: dict[UUID, dict[str, Any]] = {}
+        self._ausgefuehrt: set[UUID] = set()
 
     async def create(self, action: PendingAction, arguments: dict[str, Any]) -> None:
         self._actions[action.id] = action
@@ -133,6 +134,17 @@ class InMemoryApprovalStore:
             update={"response": response, "responded_at": now, "responded_via": channel}
         )
         return BurnResult.BURNED
+
+    async def claim_execution(self, action_id: UUID, now: datetime) -> bool:
+        """Bildet den atomaren Anspruch nach — der Beleg dafür liegt in der
+        Integrationssuite gegen Postgres."""
+        action = self._actions.get(action_id)
+        if action is None or action.response != "approved":
+            return False
+        if action_id in self._ausgefuehrt:
+            return False
+        self._ausgefuehrt.add(action_id)
+        return True
 
     async def expire(self, action_id: UUID, now: datetime) -> None:
         action = self._actions.get(action_id)

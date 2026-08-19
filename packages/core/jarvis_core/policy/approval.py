@@ -383,7 +383,7 @@ class ApprovalGateway:
         beliebigen Lauf einlösbar, und die Laufbindung des Grants hinge an
         einer Angabe, die niemand kontrolliert.
 
-        Drei Prüfungen, die alle nötig sind:
+        Vier Schritte, die alle nötig sind:
 
         1. **Hash-Vergleich.** Der Hash der tatsächlich auszuführenden
            Argumente muss dem entsprechen, der bei der Anfrage festgehalten
@@ -451,6 +451,26 @@ class ApprovalGateway:
             raise ExecutionDenied(
                 f"Die Berechtigungslage hat sich geändert: {recheck.reason}",
                 code="policy-changed",
+            )
+
+        # (4) Der Ausführungsanspruch — als **letzter** Schritt.
+        #
+        # Die Reihenfolge ist bedeutungstragend: Stünde der Anspruch vor den
+        # Prüfungen, würde eine abgelehnte Ausführung die Bestätigung
+        # verbrennen. Ein Angreifer könnte damit fremde Bestätigungen
+        # entwerten, ohne sie einlösen zu können — dieselbe Überlegung wie
+        # beim Nonce-Verbrauch in ``respond()``.
+        #
+        # Die Semantik ist ausdrücklich **höchstens einmal**, nicht mindestens
+        # einmal: Stürzt der Prozess zwischen Anspruch und Werkzeugaufruf ab,
+        # gilt die Bestätigung als verbraucht, obwohl nichts geschehen ist. Das
+        # ist die richtige Richtung für Aktionen mit Außenwirkung — eine Mail,
+        # die vielleicht nicht hinausging, kann der Nutzer erneut senden; eine,
+        # die zweimal hinausging, holt niemand zurück.
+        if not await self._store.claim_execution(action_id, now):
+            raise ExecutionDenied(
+                "Diese Bestätigung wurde bereits ausgeführt.",
+                code="already-executed",
             )
 
         return ExecutionGrant(

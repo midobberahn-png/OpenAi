@@ -20,6 +20,26 @@ from jarvis_core.ports.approval import BurnResult
 __all__ = ["PostgresApprovalStore"]
 
 
+_CLAIM = text(
+    """
+    UPDATE pending_actions
+       SET executed_at = :now
+     WHERE id = :id
+       AND response = 'approved'
+       AND executed_at IS NULL
+    RETURNING id
+    """
+)
+"""Der Ausführungsanspruch — bedingtes UPDATE, dessen Trefferzahl die Antwort
+ist.
+
+Beide Bedingungen sind nötig: ``response = 'approved'`` schließt aus, dass
+eine abgelehnte oder offene Bestätigung ausführt; ``executed_at IS NULL``
+macht den Anspruch einmalig. Ein vorgelagertes ``SELECT`` wäre bei zwei
+gleichzeitigen Aufrufen wertlos — und genau diese Gleichzeitigkeit ist der
+Fall, für den es den Anspruch gibt."""
+
+
 _INSERT = text(
     """
     INSERT INTO pending_actions (
@@ -184,6 +204,10 @@ class PostgresApprovalStore:
         if current is not None and not current.is_open:
             return BurnResult.ALREADY_USED
         return BurnResult.EXPIRED
+
+    async def claim_execution(self, action_id: UUID, now: datetime) -> bool:
+        row = (await self._conn.execute(_CLAIM, {"id": action_id, "now": now})).first()
+        return row is not None
 
     async def expire(self, action_id: UUID, now: datetime) -> None:
         await self._conn.execute(_EXPIRE, {"id": action_id, "now": now})

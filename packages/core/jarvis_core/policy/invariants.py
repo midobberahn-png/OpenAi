@@ -172,6 +172,25 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.policy.approval",
     ),
     Invariant(
+        id="execution-claim-single-use",
+        title="Eine Bestätigung führt höchstens einmal aus",
+        statement=(
+            "Eine bestätigte Aktion erwirkt genau einen Ausführungsanspruch; jede weitere "
+            "Autorisierung derselben Bestätigung wird abgewiesen, auch unter "
+            "Nebenläufigkeit."
+        ),
+        why=(
+            "Die Nonce sichert den Bestätigungsschritt, nicht die Ausführung. Ohne einen "
+            "eigenen Anspruch ließ sich dieselbe Bestätigung beliebig oft einlösen: Drei "
+            "Aufrufe von authorize_execution() ergaben drei Grants und drei versendete "
+            "Mails — bei erteilter Zustimmung für genau eine. Ein externes Review hat das "
+            "gefunden, während approval-nonce-single-use auf ENFORCED stand; die "
+            "Einmaligkeit hing am falschen Schritt."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.policy.approval",
+    ),
+    Invariant(
         id="approval-not-forgeable-by-model",
         title="Ein Modell kann keine Bestätigung erzeugen",
         statement=(

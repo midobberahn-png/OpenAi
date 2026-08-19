@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 38/39**
+**Security Invariant Coverage: 39/40**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -27,6 +27,7 @@ nicht nachträglich passend machen.
 | `approval-bound-to-payload-hash` | Bestätigung ist an den Payload gebunden | Eine Bestätigung gilt nur für den Payload, dessen Hash bei der Anfrage festgehalten wurde. | `core.policy.approval` |
 | `approval-toctou-protected` | Kein Zeitfenster zwischen Prüfung und Ausführung | Unmittelbar vor der Ausführung werden Payload-Hash und Policy erneut geprüft; zwischenzeitlich entzogene Rechte greifen sofort. | `core.policy.approval` |
 | `approval-nonce-single-use` | Bestätigungen sind einmalig | Eine Nonce lässt sich genau einmal einlösen, auch unter Nebenläufigkeit. | `core.policy.approval` |
+| `execution-claim-single-use` | Eine Bestätigung führt höchstens einmal aus | Eine bestätigte Aktion erwirkt genau einen Ausführungsanspruch; jede weitere Autorisierung derselben Bestätigung wird abgewiesen, auch unter Nebenläufigkeit. | `core.policy.approval` |
 | `approval-not-forgeable-by-model` | Ein Modell kann keine Bestätigung erzeugen | Bestätigungen entstehen ausschließlich aus einer Nutzerinteraktion; Modellausgaben und Werkzeugargumente haben keinen Einfluss darauf. | `core.policy.engine` |
 | `approval-channel-bound` | Bestätigt wird dort, wo angezeigt wurde | Eine Bestätigung ist an Nutzer, Sitzung und Anzeigekanal gebunden und lässt sich nicht über einen anderen Kanal oder eine andere Sitzung einlösen. | `core.policy.approval` |
 | `identity-derives-from-session` | Identität entsteht an genau einer Stelle | Kein HTTP-Endpunkt übernimmt user_id, session_id oder eine andere Identitätsangabe aus Body, Query, Header oder Pfad; sie stammt ausschließlich aus der verifizierten Sitzung. | `api.http` |

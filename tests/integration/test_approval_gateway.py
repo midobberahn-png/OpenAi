@@ -902,3 +902,154 @@ class TestLaufbindungDerBestaetigung:
             now=NOW + timedelta(seconds=5),
         )
         assert grant.run_id == sanierter_lauf, "Der Grant gilt dort, wo ausgeführt wird"
+
+
+class TestAusfuehrungsanspruch:
+    """Eine Bestätigung führt höchstens einmal aus.
+
+    Der Befund kam aus einem externen Review und war gravierend: Die Nonce
+    sicherte den Bestätigungsschritt, aber ``authorize_execution()`` prüfte
+    nur, *dass* bestätigt wurde — nicht, ob die Bestätigung schon eingelöst
+    ist. Drei Aufrufe ergaben drei Grants und drei versendete Mails.
+
+    Die Semantik ist ausdrücklich **höchstens einmal**: Stürzt der Prozess
+    zwischen Anspruch und Werkzeugaufruf ab, gilt die Bestätigung als
+    verbraucht. Für Aktionen mit Außenwirkung ist das die richtige Richtung —
+    eine Mail, die vielleicht nicht hinausging, kann der Nutzer erneut senden;
+    eine, die zweimal hinausging, holt niemand zurück.
+    """
+
+    @pytest.mark.invariant("execution-claim-single-use")
+    async def test_zweite_autorisierung_wird_abgewiesen(self, conn: AsyncConnection) -> None:
+        uid, rid = await _seed(conn)
+        sid = uuid.uuid4()
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+
+        action = await _request(gw, uid, rid, sid)
+        await gw.respond(
+            action_id=action.id,
+            nonce=action.nonce,
+            approve=True,
+            user_id=uid,
+            session_id=sid,
+            channel="ui",
+            now=NOW,
+        )
+
+        erste = await gw.authorize_execution(
+            action_id=action.id,
+            arguments=ARGS,
+            spec=CALENDAR_CREATE,
+            taint=TaintLevel.CLEAN,
+            run_id=rid,
+            now=NOW,
+        )
+        assert erste.verified_hash == action.payload_hash
+
+        with pytest.raises(ExecutionDenied) as zweite:
+            await gw.authorize_execution(
+                action_id=action.id,
+                arguments=ARGS,
+                spec=CALENDAR_CREATE,
+                taint=TaintLevel.CLEAN,
+                run_id=rid,
+                now=NOW,
+            )
+        assert zweite.value.code == "already-executed"
+
+    @pytest.mark.invariant("execution-claim-single-use")
+    async def test_zehn_gleichzeitige_autorisierungen_ergeben_eine(
+        self, engine: AsyncEngine
+    ) -> None:
+        """In getrennten Verbindungen — ein gemeinsamer Transaktionskontext
+        würde die Nebenläufigkeit wegdefinieren, um die es hier geht."""
+        async with engine.begin() as setup:
+            uid, rid = await _seed(setup)
+            sid = uuid.uuid4()
+            perms = MutablePermissions()
+            perms.allow("calendar.create")
+            action = await _request(_gateway(setup, perms), uid, rid, sid)
+            await _gateway(setup, perms).respond(
+                action_id=action.id,
+                nonce=action.nonce,
+                approve=True,
+                user_id=uid,
+                session_id=sid,
+                channel="ui",
+                now=NOW,
+            )
+
+        async def versuch() -> bool:
+            async with engine.begin() as conn:
+                perms = MutablePermissions()
+                perms.allow("calendar.create")
+                try:
+                    await _gateway(conn, perms).authorize_execution(
+                        action_id=action.id,
+                        arguments=ARGS,
+                        spec=CALENDAR_CREATE,
+                        taint=TaintLevel.CLEAN,
+                        run_id=rid,
+                        now=NOW,
+                    )
+                    return True
+                except ExecutionDenied:
+                    return False
+
+        ergebnisse = await asyncio.gather(*(versuch() for _ in range(10)))
+        assert sum(ergebnisse) == 1, "Genau eine Autorisierung darf gewinnen"
+
+        async with engine.begin() as cleanup:
+            await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})
+
+    @pytest.mark.invariant("execution-claim-single-use")
+    async def test_eine_abgelehnte_pruefung_verbrennt_die_bestaetigung_nicht(
+        self, conn: AsyncConnection
+    ) -> None:
+        """Der Anspruch wird als letzter Schritt erhoben.
+
+        Stünde er vor den Prüfungen, könnte ein Angreifer fremde
+        Bestätigungen entwerten, ohne sie einlösen zu können — dieselbe
+        Überlegung wie beim Nonce-Verbrauch.
+        """
+        uid, rid = await _seed(conn)
+        sid = uuid.uuid4()
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+
+        action = await _request(gw, uid, rid, sid)
+        await gw.respond(
+            action_id=action.id,
+            nonce=action.nonce,
+            approve=True,
+            user_id=uid,
+            session_id=sid,
+            channel="ui",
+            now=NOW,
+        )
+
+        # Ein veränderter Payload scheitert am Hash — ohne den Anspruch zu nehmen.
+        with pytest.raises(ExecutionDenied) as verfaelscht:
+            await gw.authorize_execution(
+                action_id=action.id,
+                arguments={**ARGS, "title": "etwas anderes"},
+                spec=CALENDAR_CREATE,
+                taint=TaintLevel.CLEAN,
+                run_id=rid,
+                now=NOW,
+            )
+        assert verfaelscht.value.code == "payload-mismatch"
+
+        # Der rechtmäßige Aufruf gelingt danach immer noch.
+        grant = await gw.authorize_execution(
+            action_id=action.id,
+            arguments=ARGS,
+            spec=CALENDAR_CREATE,
+            taint=TaintLevel.CLEAN,
+            run_id=rid,
+            now=NOW,
+        )
+        assert grant.tool_name == "calendar.create"

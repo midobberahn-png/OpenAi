@@ -737,3 +737,66 @@ def test_zeitzone_der_testuhr_ist_gesetzt() -> None:
     """Ein naiver Zeitstempel im Vergleich mit einem aware wäre ein
     TypeError zur Laufzeit — und zwar erst im Ablaufpfad."""
     assert NOW.tzinfo is UTC
+
+
+class TestDoppelteFortsetzung:
+    """Zwei parallele Fortsetzungen desselben Laufs.
+
+    Der Angriffspfad aus dem externen Review: ``resume_after_approval()``
+    prüft ``state.awaiting_action_id`` und löscht sie erst im *neuen*
+    Run-Objekt. Zwei gleichzeitige Aufrufe mit demselben alten ``Run``
+    bestehen deshalb beide die Vorprüfung.
+
+    Die Vorprüfung ist damit nicht die Absicherung — sie ist eine
+    Zuordnungsprüfung. Die Absicherung ist der Ausführungsanspruch im
+    Gateway, und dieser Test hält fest, dass er auch für diesen Weg trägt.
+    """
+
+    @pytest.mark.invariant("execution-claim-single-use")
+    async def test_zwei_parallele_fortsetzungen_fuehren_einmal_aus(self) -> None:
+        import asyncio
+
+        executor, spies, gateway = _setup(FakePermissions().confirm("calendar.create"))
+        run = build_run()
+        arguments = {"title": "Abstimmung", "start": "2026-08-19T14:00"}
+
+        wartend = await executor.execute_tool(
+            run,
+            _tracker(),
+            tool_name="calendar.create",
+            arguments=arguments,
+            seq=1,
+            session_id=SESSION,
+        )
+        assert wartend.pending is not None
+        await gateway.respond(
+            action_id=wartend.pending.id,
+            nonce=wartend.pending.nonce,
+            approve=True,
+            user_id=run.user_id,
+            session_id=SESSION,
+            channel="ui",
+            now=NOW,
+        )
+
+        # Beide starten mit *demselben* Run — die Vorprüfung sieht in beiden
+        # Fällen die passende awaiting_action_id.
+        ergebnisse = await asyncio.gather(
+            *(
+                executor.resume_after_approval(
+                    wartend.run,
+                    _tracker(),
+                    action_id=wartend.pending.id,
+                    arguments=arguments,
+                    tool_name="calendar.create",
+                    seq=1,
+                )
+                for _ in range(2)
+            )
+        )
+
+        ausgefuehrt = [e for e in ergebnisse if e.status == "executed"]
+        assert len(ausgefuehrt) == 1, "Genau eine Fortsetzung darf ausführen"
+        assert spies["calendar.create"].call_count == 1
+        blockiert = [e for e in ergebnisse if e.status == "blocked"]
+        assert blockiert[0].code == "already-executed"

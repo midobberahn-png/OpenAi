@@ -79,6 +79,26 @@ class ApprovalStore(Protocol):
         """Verbraucht die Nonce atomar. Beim zweiten Aufruf ``ALREADY_USED``."""
         ...
 
+    async def claim_execution(self, action_id: UUID, now: datetime) -> bool:
+        """Erwirkt den **einen** Ausführungsanspruch einer Bestätigung.
+
+        ``True`` heißt: Dieser Aufruf darf ausführen, und kein anderer wird es
+        dürfen. ``False`` heißt: Der Anspruch ist bereits vergeben.
+
+        Dieselbe Anforderung wie beim Nonce-Verbrauch, und sie war lange
+        übersehen: Die Nonce sichert den *Bestätigungsschritt*. Ohne einen
+        eigenen Anspruch auf die *Ausführung* konnte dieselbe Bestätigung
+        beliebig oft eingelöst werden — drei Aufrufe von
+        ``authorize_execution()`` ergaben drei Grants und drei versendete
+        Mails.
+
+        Implementierungen müssen ein bedingtes ``UPDATE`` verwenden, dessen
+        Trefferzahl die Antwort liefert. Ein ``if not executed: mark()`` ist
+        bei zwei gleichzeitigen Aufrufen genau das Loch, das hier geschlossen
+        wird.
+        """
+        ...
+
     async def expire(self, action_id: UUID, now: datetime) -> None:
         """Markiert eine abgelaufene Bestätigung, damit sie nicht offen bleibt."""
         ...

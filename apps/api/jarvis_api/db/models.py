@@ -549,6 +549,15 @@ class PendingAction(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     response: Mapped[str | None] = mapped_column(String(16))
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Der Ausführungsanspruch — gesetzt, sobald eine Bestätigung ihre eine
+    Ausführung erwirkt hat.
+
+    Getrennt von ``response``, weil es zwei verschiedene Ereignisse sind: Der
+    Nutzer hat zugestimmt (``response``), und die Zustimmung ist eingelöst
+    (``executed_at``). Ohne diese Trennung schützt die Nonce nur den
+    Bestätigungsschritt, während dieselbe Bestätigung beliebig oft ausgeführt
+    werden kann."""
     responded_via: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
