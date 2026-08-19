@@ -234,6 +234,42 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.http",
     ),
     Invariant(
+        id="auth-endpoints-rate-limited",
+        title="Der Anmeldeweg ist begrenzt — auch über viele Adressen",
+        statement=(
+            "Jeder ohne Anmeldung erreichbare Endpunkt zählt gegen zwei Grenzen: eine je "
+            "Client und eine globale je Route. Registrierung, Anmeldung und "
+            "Erstinbetriebnahme haben getrennte Zähler."
+        ),
+        why=(
+            "Eine Grenze allein je Adresse ist wirkungslos: Ohne konfigurierten Proxy ist "
+            "X-Forwarded-For ein frei erfundenes Feld, und ein IPv6-Präfix liefert mehr "
+            "Adressen als ein Zähler je sieht. Die globale Stufe hält deshalb die Wirkung "
+            "auf, unabhängig von der Zahl der Absender — sonst füllt ein Angreifer die "
+            "Challenge-Tabelle, ohne je ein Limit zu berühren. Getrennte Zähler "
+            "verhindern zugleich, dass er über den einen Weg den anderen sperrt."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.http",
+    ),
+    Invariant(
+        id="rate-limit-counting-is-atomic",
+        title="Zählen und Fristsetzen sind unteilbar",
+        statement=(
+            "Der Zähler wird erhöht und seine Frist gesetzt in einem einzigen, atomaren "
+            "Schritt; gleichzeitige Anfragen zählen vollständig."
+        ),
+        why=(
+            "Ein Ablauf aus Erhöhen und anschließendem Fristsetzen hat zwei Löcher: Bricht "
+            "der Prozess dazwischen ab, existiert ein Zähler ohne Ablauf und sperrt den "
+            "Schlüssel für immer — ein selbst gebauter Denial of Service. Und zwei "
+            "gleichzeitige Erstzugriffe verlängern das Fenster. Beides fällt erst unter "
+            "Last auf, also genau dann, wenn das Limit gebraucht wird."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.rate_limit",
+    ),
+    Invariant(
         id="session-token-rotation",
         title="Ein benutzter Sitzungstoken wird ersetzt",
         statement=(

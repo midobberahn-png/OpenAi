@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 36/37**
+**Security Invariant Coverage: 38/39**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -31,6 +31,8 @@ nicht nachträglich passend machen.
 | `approval-channel-bound` | Bestätigt wird dort, wo angezeigt wurde | Eine Bestätigung ist an Nutzer, Sitzung und Anzeigekanal gebunden und lässt sich nicht über einen anderen Kanal oder eine andere Sitzung einlösen. | `core.policy.approval` |
 | `identity-derives-from-session` | Identität entsteht an genau einer Stelle | Kein HTTP-Endpunkt übernimmt user_id, session_id oder eine andere Identitätsangabe aus Body, Query, Header oder Pfad; sie stammt ausschließlich aus der verifizierten Sitzung. | `api.http` |
 | `bootstrap-only-once` | Die Erstinbetriebnahme gelingt genau einmal | Der Bootstrap-Endpunkt legt einen Nutzer nur an, solange die Nutzertabelle leer ist; die Bedingung liegt im INSERT, nicht in einer Prüfung davor. | `api.http` |
+| `auth-endpoints-rate-limited` | Der Anmeldeweg ist begrenzt — auch über viele Adressen | Jeder ohne Anmeldung erreichbare Endpunkt zählt gegen zwei Grenzen: eine je Client und eine globale je Route. Registrierung, Anmeldung und Erstinbetriebnahme haben getrennte Zähler. | `api.http` |
+| `rate-limit-counting-is-atomic` | Zählen und Fristsetzen sind unteilbar | Der Zähler wird erhöht und seine Frist gesetzt in einem einzigen, atomaren Schritt; gleichzeitige Anfragen zählen vollständig. | `api.rate_limit` |
 | `session-verified-before-approval` | Eine Bestätigung verlangt eine echte Sitzung | Eine Bestätigung wird nur eingelöst, wenn der vorgelegte Sitzungstoken zu genau dieser Sitzung dieses Nutzers gehört und die Sitzung weder abgelaufen noch widerrufen ist. | `core.auth` |
 | `passkey-challenge-single-use` | Eine Challenge gilt einmal und für einen Zweck | Eine WebAuthn-Challenge wird genau einmal eingelöst, verfällt nach kurzer Frist und schließt nur die Zeremonie ab, für die sie ausgestellt wurde. | `core.auth` |
 | `passkey-clone-detection` | Ein Signaturzähler, der nicht steigt, ist ein Klon | Eine Anmeldung wird abgelehnt, wenn der vorgelegte Signaturzähler nicht über dem gespeicherten liegt — außer beide sind null. | `core.auth` |

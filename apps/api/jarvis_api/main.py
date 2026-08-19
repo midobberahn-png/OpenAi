@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from jarvis_api.db.session import dispose
+from jarvis_api.deps import dispose_redis
 from jarvis_api.routes import auth_router
 from jarvis_api.settings import get_settings
 
@@ -31,6 +32,7 @@ __all__ = ["app", "create_app"]
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     await dispose()
+    await dispose_redis()
 
 
 def create_app() -> FastAPI:

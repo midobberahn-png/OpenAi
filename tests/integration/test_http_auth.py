@@ -32,7 +32,7 @@ MAIL_PRAEFIX = "httptest-"
 
 
 @pytest_asyncio.fixture
-async def client(engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(engine: AsyncEngine, frische_grenzen: None) -> AsyncIterator[AsyncClient]:
     """Die App gegen die echte Datenbank.
 
     Kein Rollback wie bei den übrigen Integrationstests: Die App führt ihre
@@ -41,6 +41,7 @@ async def client(engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     Nutzertabelle, an der alles per ``ON DELETE CASCADE`` hängt.
     """
     from jarvis_api.db.session import dispose
+    from jarvis_api.deps import dispose_redis
 
     async with AsyncClient(
         transport=ASGITransport(app=create_app()), base_url="http://test"
@@ -51,6 +52,7 @@ async def client(engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     # Tests, der sie erzeugt hat. Ohne dieses Aufräumen erbt der nächste Test
     # Verbindungen aus einem geschlossenen Loop.
     await dispose()
+    await dispose_redis()
 
     async with engine.begin() as conn:
         await conn.execute(text("DELETE FROM users WHERE email LIKE :p"), {"p": f"{MAIL_PRAEFIX}%"})
@@ -343,3 +345,145 @@ class TestSystem:
         antwort = await client.get("/health")
         assert antwort.status_code == 200
         assert set(antwort.json()) == {"status", "env"}
+
+
+# ==========================================================================
+# Zugriffsgrenzen an der HTTP-Grenze
+# ==========================================================================
+
+
+class TestZugriffsgrenzen:
+    @pytest.mark.invariant("auth-endpoints-rate-limited")
+    async def test_challenge_flut_wird_gestoppt(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Punkt 4 des Auftrags: Ein Angreifer kann durch Challenge-Fluten
+        nicht unbegrenzt Datenbankzustand erzeugen.
+
+        Geprüft wird nicht nur der Statuscode, sondern die Tabelle: Nach dem
+        Limit entstehen keine weiteren Zeilen.
+        """
+        from jarvis_core.limits import AUTH_CHALLENGE
+
+        async def offene_challenges() -> int:
+            async with engine.begin() as conn:
+                return int(
+                    (
+                        await conn.execute(text("SELECT count(*) AS n FROM webauthn_challenges"))
+                    ).scalar_one()
+                )
+
+        vorher = await offene_challenges()
+        codes = [
+            (await client.post("/auth/login/start")).status_code
+            for _ in range(AUTH_CHALLENGE.per_client.limit + 5)
+        ]
+        nachher = await offene_challenges()
+
+        assert 429 in codes, "Die Grenze muss greifen"
+        angelegt = nachher - vorher
+        assert angelegt <= AUTH_CHALLENGE.per_client.limit, (
+            f"{angelegt} Challenges bei einer Grenze von {AUTH_CHALLENGE.per_client.limit}"
+        )
+
+    @pytest.mark.invariant("auth-endpoints-rate-limited")
+    async def test_die_antwort_traegt_eine_wartezeit(self, client: AsyncClient) -> None:
+        from jarvis_core.limits import AUTH_CHALLENGE
+
+        letzte = None
+        for _ in range(AUTH_CHALLENGE.per_client.limit + 2):
+            letzte = await client.post("/auth/login/start")
+
+        assert letzte is not None
+        assert letzte.status_code == 429
+        assert int(letzte.headers["retry-after"]) > 0
+
+    @pytest.mark.invariant("auth-endpoints-rate-limited")
+    async def test_getrennte_zaehler_je_zeremonie(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Punkt 2: Wer die Anmeldung flutet, sperrt damit nicht die
+        Erstinbetriebnahme — und umgekehrt."""
+        from jarvis_core.limits import AUTH_CHALLENGE
+
+        await _wipe_users(engine)
+        for _ in range(AUTH_CHALLENGE.per_client.limit + 2):
+            await client.post("/auth/login/start")
+
+        bootstrap = await client.post(
+            "/auth/bootstrap",
+            json={"email": f"{MAIL_PRAEFIX}getrennt@example.test", "display_name": "Getrennt"},
+        )
+        assert bootstrap.status_code == 201
+
+    @pytest.mark.invariant("auth-endpoints-rate-limited")
+    async def test_gefaelschte_weiterleitung_umgeht_nichts(self, client: AsyncClient) -> None:
+        """Punkt 3: ``X-Forwarded-For`` wird ohne konfigurierten Proxy nicht
+        geglaubt.
+
+        Der Angreifer schickt für jede Anfrage eine andere Adresse. Ohne die
+        Vertrauensprüfung hätte jede davon ihren eigenen Zähler — und das
+        Limit wäre eine Zeile Code wert.
+        """
+        from jarvis_core.limits import AUTH_CHALLENGE
+
+        codes = [
+            (
+                await client.post(
+                    "/auth/login/start", headers={"X-Forwarded-For": f"203.0.113.{i}"}
+                )
+            ).status_code
+            for i in range(AUTH_CHALLENGE.per_client.limit + 3)
+        ]
+        assert 429 in codes, "Ein gefälschter Header darf keinen neuen Zähler eröffnen"
+
+    @pytest.mark.invariant("auth-endpoints-rate-limited")
+    async def test_erfolg_setzt_den_zaehler_nicht_zurueck(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Punkt 7: Eine erfolgreiche Anmeldung leert keinen Bucket.
+
+        Der bequeme Entwurf wäre „bei Erfolg zurücksetzen". Er ist der Weg, auf
+        dem ein Angreifer mit einem einzigen gültigen Anlauf sein Kontingent
+        erneuert — beliebig oft, solange er zwischendurch echte Anmeldungen
+        einstreut.
+
+        Gezählt wird exakt: Die Anmeldung hat eine Challenge verbraucht. Ohne
+        Reset sind danach genau ``limit - 1`` weitere möglich, der nächste
+        Aufruf wird gesperrt. Mit Reset wären es ``limit``.
+        """
+        from jarvis_core.limits import AUTH_CHALLENGE
+
+        authenticator = await _bootstrap(client, engine)
+        assert (await _login(client, authenticator)).status_code == 200
+
+        verbraucht = 1
+        codes = [
+            (await client.post("/auth/login/start")).status_code
+            for _ in range(AUTH_CHALLENGE.per_client.limit - verbraucht)
+        ]
+        assert all(code == 200 for code in codes), "Das Kontingent gilt bis zur Grenze"
+
+        gesperrt = await client.post("/auth/login/start")
+        assert gesperrt.status_code == 429, "Der Erfolg hat den Zähler nicht geleert"
+
+    @pytest.mark.invariant("auth-endpoints-rate-limited")
+    async def test_die_sperre_verraet_keine_konto_existenz(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Punkt 6: Die Antwort ist dieselbe, egal ob dahinter etwas liegt.
+
+        Sie muss es sein: Die Endpunkte nehmen ohnehin keine Nutzerangabe
+        entgegen — es gibt nichts, wonach sich unterscheiden ließe. Der Test
+        hält fest, dass das so bleibt.
+        """
+        from jarvis_core.limits import AUTH_CHALLENGE
+
+        await _bootstrap(client, engine)
+        antworten = [
+            await client.post("/auth/login/start")
+            for _ in range(AUTH_CHALLENGE.per_client.limit + 3)
+        ]
+        gesperrt = [a for a in antworten if a.status_code == 429]
+        assert gesperrt
+        assert len({a.json()["detail"] for a in gesperrt}) == 1

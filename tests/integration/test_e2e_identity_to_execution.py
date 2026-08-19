@@ -75,14 +75,16 @@ class ConfirmPermissions:
 
 
 @pytest_asyncio.fixture
-async def client(engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
+async def client(engine: AsyncEngine, frische_grenzen: None) -> AsyncIterator[AsyncClient]:
     from jarvis_api.db.session import dispose
+    from jarvis_api.deps import dispose_redis
 
     async with AsyncClient(
         transport=ASGITransport(app=create_app()), base_url="http://test"
     ) as http:
         yield http
     await dispose()
+    await dispose_redis()
     async with engine.begin() as conn:
         await conn.execute(text("DELETE FROM users WHERE email LIKE :p"), {"p": f"{MAIL_PRAEFIX}%"})
 

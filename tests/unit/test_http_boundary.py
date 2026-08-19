@@ -207,3 +207,35 @@ def test_current_session_prueft_tatsaechlich() -> None:
     quelle = ast.dump(funktion)
     assert "verify" in quelle, "current_session verifiziert den Token nicht"
     assert "HTTPException" in quelle, "current_session lehnt eine ungültige Sitzung nicht ab"
+
+
+@pytest.mark.invariant("auth-endpoints-rate-limited")
+@pytest.mark.parametrize("path", _route_files(), ids=lambda p: p.name)
+def test_jeder_oeffentliche_endpunkt_ist_begrenzt(path: Path) -> None:
+    """Wieder die umgekehrte Beweislast — und diesmal trifft sie genau die
+    Endpunkte, die sie braucht.
+
+    Ein Endpunkt ohne Sitzungspflicht ist ein Endpunkt, den jeder aufrufen
+    kann. Zwei der vier erzeugen dabei Datenbankzustand (Challenges), einer
+    legt einen Nutzer an. Ohne Grenze ist das der bequemste Weg, die Tabelle
+    zu füllen, bis nichts mehr geht.
+
+    ``health`` ist ausgenommen: Er liest nichts und schreibt nichts. Eine
+    Grenze dort würde im Störungsfall die Überwachung aussperren — also genau
+    dann, wenn man sie braucht.
+    """
+    ohne_grenze_erlaubt = {"health"}
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    fehlend: list[str] = []
+
+    for func in _endpoints(tree):
+        if func.name not in OEFFENTLICH or func.name in ohne_grenze_erlaubt:
+            continue
+        dekoratoren = ast.dump(ast.Module(body=func.decorator_list, type_ignores=[]))
+        if "rate_limited" not in dekoratoren:
+            fehlend.append(func.name)
+
+    assert not fehlend, (
+        f"{path.name}: Öffentliche Endpunkte ohne Zugriffsgrenze: {fehlend}. "
+        "Wer ohne Anmeldung erreichbar ist, braucht eine."
+    )

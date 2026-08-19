@@ -20,9 +20,10 @@ from sqlalchemy import text
 from webauthn import generate_authentication_options, generate_registration_options, options_to_json
 
 from jarvis_api.db.webauthn_store import PostgresCredentialStore
-from jarvis_api.deps import CurrentSession, DbConnection, Passkeys, Sessions
+from jarvis_api.deps import CurrentSession, DbConnection, Passkeys, Sessions, rate_limited
 from jarvis_api.settings import Settings, get_settings
 from jarvis_core.auth import AuthenticationFailed, CloneSuspicion
+from jarvis_core.limits import AUTH_CHALLENGE, AUTH_FINISH, BOOTSTRAP
 
 __all__ = ["router"]
 
@@ -127,7 +128,12 @@ def _fail(error: AuthenticationFailed) -> HTTPException:
 # --------------------------------------------------------------------------
 
 
-@router.post("/bootstrap", response_model=CeremonyOptions, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/bootstrap",
+    response_model=CeremonyOptions,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limited(BOOTSTRAP))],
+)
 async def bootstrap(
     payload: BootstrapRequest,
     conn: DbConnection,
@@ -182,7 +188,11 @@ async def bootstrap(
 # --------------------------------------------------------------------------
 
 
-@router.post("/register/start", response_model=CeremonyOptions)
+@router.post(
+    "/register/start",
+    response_model=CeremonyOptions,
+    dependencies=[Depends(rate_limited(AUTH_CHALLENGE))],
+)
 async def register_start(
     session: CurrentSession,
     conn: DbConnection,
@@ -216,7 +226,11 @@ async def register_start(
     return CeremonyOptions(options=_options_dict(options), challenge=_b64(challenge.value))
 
 
-@router.post("/register/finish", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register/finish",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limited(AUTH_FINISH))],
+)
 async def register_finish(payload: RegistrationRequest, passkeys: Passkeys) -> dict[str, str]:
     """Schließt eine Registrierung ab.
 
@@ -241,7 +255,11 @@ async def register_finish(payload: RegistrationRequest, passkeys: Passkeys) -> d
 # --------------------------------------------------------------------------
 
 
-@router.post("/login/start", response_model=CeremonyOptions)
+@router.post(
+    "/login/start",
+    response_model=CeremonyOptions,
+    dependencies=[Depends(rate_limited(AUTH_CHALLENGE))],
+)
 async def login_start(passkeys: Passkeys, settings: SettingsDep) -> CeremonyOptions:
     """Challenge für die Anmeldung — ohne Nutzerangabe.
 
@@ -256,7 +274,7 @@ async def login_start(passkeys: Passkeys, settings: SettingsDep) -> CeremonyOpti
     return CeremonyOptions(options=_options_dict(options), challenge=_b64(challenge.value))
 
 
-@router.post("/login/finish")
+@router.post("/login/finish", dependencies=[Depends(rate_limited(AUTH_FINISH))])
 async def login_finish(
     payload: AuthenticationRequest,
     response: Response,

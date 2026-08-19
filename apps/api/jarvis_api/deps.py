@@ -13,28 +13,35 @@ zu einem ``ExecutionGrant``.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from jarvis_api.auth import WebAuthnVerifier
 from jarvis_api.db.session import engine_for
 from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_api.db.webauthn_store import PostgresChallengeStore, PostgresCredentialStore
+from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
 from jarvis_contracts import Session
 from jarvis_core.auth import PasskeyService, SessionManager
+from jarvis_core.limits import RateLimiter, RateLimitExceeded, RateLimitPolicy
 
 __all__ = [
     "CurrentSession",
     "DbConnection",
+    "Limiter",
     "Passkeys",
     "Sessions",
+    "client_identifier",
     "current_session",
     "db_connection",
+    "dispose_redis",
     "passkey_service",
+    "rate_limited",
     "session_manager",
 ]
 
@@ -122,3 +129,92 @@ async def current_session(
 
 
 CurrentSession = Annotated[Session, Depends(current_session)]
+
+
+# --------------------------------------------------------------------------
+# Zugriffsgrenzen
+# --------------------------------------------------------------------------
+
+
+_redis_client: Redis | None = None
+
+
+def _redis(url: str) -> Redis:
+    """Ein Verbindungspool für den Prozess.
+
+    Modulzustand wie bei der Datenbank-Engine, und mit demselben Vorbehalt: Er
+    hängt am Event-Loop, der ihn erzeugt hat. Deshalb gibt es ``dispose_redis``
+    — ohne das Gegenstück erbt ein zweiter Loop Verbindungen aus einem
+    geschlossenen.
+
+    Redis trägt hier nur flüchtigen Zustand (ADR-007, Nachtrag): Geht er
+    verloren, sind Zähler zurückgesetzt, aber nichts ist inkonsistent.
+    """
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = Redis.from_url(url, decode_responses=True)
+    return _redis_client
+
+
+async def dispose_redis() -> None:
+    """Für sauberes Herunterfahren und Tests."""
+    global _redis_client
+    if _redis_client is not None:
+        await _redis_client.aclose()
+    _redis_client = None
+
+
+def rate_limiter(settings: Annotated[Settings, Depends(get_settings)]) -> RateLimiter:
+    return RateLimiter(RedisRateLimitStore(_redis(settings.redis_url)))
+
+
+Limiter = Annotated[RateLimiter, Depends(rate_limiter)]
+
+
+def client_identifier(request: Request, settings: Settings) -> str:
+    """Wer fragt — soweit sich das überhaupt feststellen lässt.
+
+    ``X-Forwarded-For`` wird nur geglaubt, wenn die *tatsächliche* Gegenstelle
+    als vertrauenswürdiger Proxy konfiguriert ist. Ohne diese Bedingung ist der
+    Header ein Feld, das der Anfragende selbst füllt — ihn zu verwenden hieße,
+    den Angreifer nach seiner Kennung zu fragen.
+
+    Die Peer-Adresse ist ihrerseits kein knappes Gut: Ein IPv6-Präfix umfasst
+    mehr Adressen, als ein Zähler je sehen wird. Deshalb ist diese Kennung nur
+    die *feinere* der beiden Stufen; die grobe zählt global und ist von der
+    Adresse unabhängig.
+    """
+    peer = request.client.host if request.client else "unbekannt"
+    if peer in settings.trusted_proxies:
+        weitergereicht = request.headers.get("x-forwarded-for", "")
+        erste = weitergereicht.split(",")[0].strip()
+        if erste:
+            return erste
+    return peer
+
+
+def rate_limited(policy: RateLimitPolicy) -> Callable[..., Awaitable[None]]:
+    """Erzeugt die Dependency für eine Route.
+
+    Die Antwort bei Überschreitung ist für alle Fälle dieselbe: 429 mit
+    ``Retry-After`` und ohne Hinweis darauf, *welche* Stufe gegriffen hat.
+    Ein Angreifer soll nicht messen können, ob er allein am Limit ist oder ob
+    das System insgesamt unter Last steht — und ein Konto, das es nicht gibt,
+    darf sich nicht anders verhalten als eines, das es gibt.
+    """
+
+    async def dependency(
+        request: Request,
+        limiter: Limiter,
+        settings: Annotated[Settings, Depends(get_settings)],
+    ) -> None:
+        try:
+            await limiter.require(policy, client=client_identifier(request, settings))
+        except RateLimitExceeded as zu_viel:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Zu viele Anfragen.",
+                headers={"Retry-After": str(zu_viel.decision.retry_after_s)},
+            ) from zu_viel
+
+    return dependency

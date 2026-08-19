@@ -51,3 +51,33 @@ async def conn(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
             yield connection
         finally:
             await trans.rollback()
+
+
+@pytest_asyncio.fixture
+async def frische_grenzen() -> AsyncIterator[None]:
+    """Leert die Rate-Limit-Zähler vor jedem Test.
+
+    Nötig, weil alle Tests aus derselben Gegenstelle kommen und sich sonst
+    gegenseitig aussperren — die Zähler sind bewusst niedrig. Zugleich der
+    Beleg dafür, dass die Grenze tatsächlich greift: Ohne dieses Aufräumen
+    scheitert die Suite ab dem elften Aufruf.
+    """
+    import redis.asyncio as redis_lib
+
+    url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    client = redis_lib.Redis.from_url(url, decode_responses=True)
+    try:
+        await client.ping()
+    except Exception as exc:  # pragma: no cover - Umgebungsproblem
+        await client.aclose()
+        pytest.skip(f"Kein Redis erreichbar ({exc.__class__.__name__}). 'make up' ausführen.")
+
+    async def leeren() -> None:
+        schluessel = [k async for k in client.scan_iter("ratelimit:*")]
+        if schluessel:
+            await client.delete(*schluessel)
+
+    await leeren()
+    yield
+    await leeren()
+    await client.aclose()
