@@ -17,9 +17,11 @@ Text unterschieben kann.
 
 Zwei weitere Festlegungen:
 
-* **Antworten sind Fremdinhalt.** Ein Modell hat gelesen, was im Kontext
-  stand; sein Ausgabetext kann jede Anweisung aus einer Mail wiederholen.
-  ``CompletionResult.taints_context`` ist deshalb standardmäßig ``True``.
+* **Antworten erben den Taint ihres Kontexts.** Ein Modell gibt wieder, was es
+  gelesen hat: Stand Fremdinhalt im Kontext, kann die Antwort dessen
+  Anweisungen wiederholen. Stand keiner darin, kann sie es nicht. Entschieden
+  wird das im Model Gateway, das die Herkunftsmarkierungen sieht — nicht im
+  Adapter, der nur Text sieht.
 * **Prompts gehören nicht ins Protokoll.** Kein Feld dieses Moduls ist zum
   Loggen gedacht; ``ModelUsage`` trägt Zahlen, nicht Inhalte.
 """
@@ -211,12 +213,17 @@ class CompletionResult(BaseModel):
     usage: ModelUsage = Field(default_factory=ModelUsage)
 
     taints_context: bool = True
-    """Standardmäßig ``True``, und das ist die vorsichtige Richtung.
+    """Standardmäßig ``True`` — die vorsichtige Richtung für jeden, der dieses
+    Objekt selbst baut.
 
-    Ein Modell gibt wieder, was in seinem Kontext stand. Enthielt der
-    Fremdinhalt, kann die Antwort ihn wiederholen — auch die Anweisung darin.
-    Wer diesen Wert auf ``False`` setzt, behauptet, den gesamten Kontext des
-    Aufrufs zu kennen; das kann nur der Aufrufer wissen, nicht der Adapter.
+    Maßgeblich ist der Wert aber nicht: Das Model Gateway setzt ihn nach jedem
+    Aufruf neu, aus dem Taint-Zustand des Laufs und den Herkunftsmarkierungen
+    der Anfrage. Ein Adapter kann das nicht entscheiden — er sieht Text, nicht
+    Herkunft.
+
+    Die Regel dort lautet: Die Antwort erbt, was im Kontext stand. Nicht „jede
+    Modellantwort ist Fremdinhalt" — diese Fassung würde nach dem ersten
+    Modellaufruf jeden Lauf kontaminieren und den Normalfall blockieren.
     """
 
     @property

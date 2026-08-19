@@ -87,13 +87,30 @@ class ModelGateway:
             )
 
         ergebnis = await provider.complete(request)
+        return ergebnis.model_copy(update={"taints_context": self._kontaminiert(request, taint)})
 
-        # Kontamination des Laufs geht in die Antwort ein und kann durch sie
-        # nur zunehmen. Ein Adapter, der taints_context=False meldet, kann das
-        # nicht wissen — er kennt den Kontext des Aufrufs nicht.
-        if taint.is_tainted:
-            return ergebnis.model_copy(update={"taints_context": True})
-        return ergebnis
+    @staticmethod
+    def _kontaminiert(request: CompletionRequest, taint: TaintLevel) -> bool:
+        """Erbt die Antwort die Kontamination ihres Kontexts?
+
+        Die naheliegende Regel wäre „jede Modellantwort ist Fremdinhalt". Sie
+        ist falsch, und zwar auf eine Weise, die schon einmal teuer war: Nach
+        dem ersten Modellaufruf wäre dann *jeder* Lauf kontaminiert, und
+        ``mail.send`` nie wieder möglich. Ein Sicherheitsmechanismus, der den
+        Normalfall blockiert, wird abgeschaltet — genau der Widerspruch aus
+        V1.0, den das Sanitization-Gate aufgelöst hat.
+
+        Richtig ist: Die Antwort erbt, was im Kontext stand. Ein Modell gibt
+        wieder, was es gelesen hat; hat es nichts Fremdes gelesen, kann es
+        nichts Fremdes wiedergeben.
+
+        Entschieden wird das **hier** und nicht im Adapter. Das Gateway sieht
+        die Anfrage und damit die Herkunftsmarkierungen; der Adapter sieht nur
+        Text. Und es wird in beide Richtungen überschrieben: Ein Adapter, der
+        etwas anderes meldet, kann damit nichts kaputt machen — weder zu viel
+        noch zu wenig.
+        """
+        return taint.is_tainted or any(nachricht.is_untrusted for nachricht in request.messages)
 
     def _zugelassen(self, model_name: str, data_class: DataClass) -> ModelCapability:
         """Darf dieses Modell diese Daten sehen?

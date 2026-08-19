@@ -118,7 +118,7 @@ class ScriptedAgent:
         self.offered_tools: frozenset[str] = frozenset()
 
     async def act(self, session: AgentSession, request: AgentRequest) -> AgentResult:
-        self.offered_tools = session.tools
+        self.offered_tools = await session.current_tools()
         for seq, (name, args) in enumerate(self.attempts, start=1):
             outcome = await session.call_tool(name, args, seq=seq)
             self.outcomes.append(outcome.status)

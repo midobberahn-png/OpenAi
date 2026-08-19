@@ -9,6 +9,7 @@ Anweisung enthält, gibt es von dort keinen Pfad zu ``mail.send``.
 """
 
 from .chain import AgentChain
+from .model_loop import ModelLoop
 from .registry import AgentRegistry, DuplicateAgent, UnknownAgent
 from .runtime import (
     AgentBehaviour,
@@ -27,5 +28,6 @@ __all__ = [
     "DelegationDenied",
     "DelegationOutcome",
     "DuplicateAgent",
+    "ModelLoop",
     "UnknownAgent",
 ]

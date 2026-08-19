@@ -30,6 +30,7 @@ hier — und ist deshalb schon jetzt prüfbar.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -88,7 +89,7 @@ class AgentSession:
         run: Run,
         tracker: BudgetTracker,
         chain: AgentChain,
-        tools: frozenset[str],
+        tools: Callable[[Run], Awaitable[frozenset[str]]],
         session_id: UUID,
         channel: ApprovalChannel = "ui",
     ) -> None:
@@ -96,6 +97,11 @@ class AgentSession:
         self._run = run
         self._tracker = tracker
         self._chain = chain
+        # Eine **Funktion**, kein Set. Der Unterschied ist der ganze Punkt:
+        # Nach einem Werkzeug, das Fremdinhalt gelesen hat, ist der Lauf
+        # kontaminiert und die zulässige Menge kleiner. Ein einmal berechnetes
+        # Set würde in der nächsten Runde das Angebot von vorhin anbieten — und
+        # genau darauf zielt ein Angreifer, der eine Mail unterschiebt.
         self._tools = tools
         self._session_id = session_id
         self._channel = channel
@@ -104,10 +110,15 @@ class AgentSession:
     def run(self) -> Run:
         return self._run
 
-    @property
-    def tools(self) -> frozenset[str]:
-        """Was dieser Agent aufrufen darf. Was hier fehlt, sieht das Modell nicht."""
-        return self._tools
+    async def current_tools(self) -> frozenset[str]:
+        """Was dieser Agent **jetzt** aufrufen darf.
+
+        Bewusst eine Methode und keine Eigenschaft: Der Wert ändert sich im
+        Verlauf eines Laufs, und eine Eigenschaft lädt dazu ein, ihn einmal zu
+        lesen und weiterzuverwenden. Was hier fehlt, sieht das Modell nicht —
+        und was es nicht sieht, kann es nicht vorschlagen.
+        """
+        return await self._tools(self._run)
 
     @property
     def chain(self) -> AgentChain:
@@ -126,7 +137,7 @@ class AgentSession:
         bekäme ein Sub-Agent alles, was der Nutzer erteilt hat — und die
         Spezialisierung wäre keine Sicherheitsgrenze mehr, sondern Dekoration.
         """
-        if name not in self._tools:
+        if name not in await self.current_tools():
             return StepExecution(
                 status="blocked",
                 run=self._run,
@@ -264,7 +275,9 @@ class AgentRuntime:
             run=run,
             tracker=tracker,
             chain=extended,
-            tools=granted,
+            # Die Menge wird bei jedem Zugriff neu bestimmt — aus dem Lauf, wie
+            # er *jetzt* ist, nicht wie er beim Start war.
+            tools=lambda aktueller: self.effective_tools(extended, aktueller),
             session_id=session_id,
         )
         result = await behaviour.act(session, request)
