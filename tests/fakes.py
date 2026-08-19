@@ -34,7 +34,7 @@ from jarvis_contracts import (
     ToolSpec,
 )
 from jarvis_core.audit.chain import AuditEntry
-from jarvis_core.tools import ToolRegistry
+from jarvis_core.tools import InProcessGrants, ToolRegistry
 
 NOW = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
 USER = UUID("11111111-1111-1111-1111-111111111111")
@@ -310,7 +310,10 @@ def build_registry() -> tuple[ToolRegistry, dict[str, HandlerSpy]]:
         ),
     }
 
-    registry = ToolRegistry()
+    # Mit prozesslokalem Grant-Verbrauch: Die Attrappen-Registry soll sich
+    # verhalten wie die echte, und dazu gehört, dass eine Erlaubnis aufgebraucht
+    # ist, nachdem sie gewirkt hat.
+    registry = ToolRegistry(grants=InProcessGrants())
     for spec in (MAIL_READ, CALENDAR_READ, CALENDAR_CREATE, MAIL_SEND, SYSTEM_TIME):
         registry.register(spec, spies[spec.name])
     return registry, spies

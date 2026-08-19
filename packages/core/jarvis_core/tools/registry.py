@@ -11,11 +11,13 @@ Code auszuführen.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from secrets import compare_digest
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from jarvis_contracts import RiskLevel, ToolResult, ToolSpec
+from jarvis_core.ports.grants import GrantConsumer
 
 if TYPE_CHECKING:  # nur für die Typprüfung — zur Laufzeit ein lokaler Import
     from jarvis_core.policy.approval import ExecutionGrant
@@ -23,8 +25,10 @@ if TYPE_CHECKING:  # nur für die Typprüfung — zur Laufzeit ein lokaler Impor
 __all__ = [
     "DuplicateTool",
     "ForgedAuthorization",
+    "GrantAlreadyUsed",
     "ToolHandler",
     "ToolRegistry",
+    "UnguardedExecution",
     "UnknownTool",
 ]
 
@@ -58,12 +62,44 @@ class ForgedAuthorization(Exception):
     """
 
 
+class GrantAlreadyUsed(Exception):
+    """Ein Grant ließ sich nicht einlösen.
+
+    Eigene Klasse und nicht ``ForgedAuthorization``: Der Grant ist echt, die
+    Prüfungen gehen durch, und trotzdem darf er nicht wirken. Ein Retry auf
+    der falschen Ebene sieht genau so aus — und ist etwas anderes als der
+    Versuch, eine Erlaubnis zu fälschen. Im Audit-Log sollen sich die beiden
+    unterscheiden lassen.
+
+    Der Regelfall ist die zweite Vorlage. Bei der persistenten Implementierung
+    kommt ein zweiter Fall hinzu: eine Invokation, die nie protokolliert wurde.
+    Beide enden hier, weil beide dasselbe bedeuten — es gibt keinen Anspruch,
+    der eingelöst werden könnte. Die Meldung nennt deshalb beide Ursachen.
+    """
+
+
+class UnguardedExecution(Exception):
+    """Ausführung ohne eingerichteten Grant-Verbrauch.
+
+    Konfigurationsfehler, kein Angriff — aber einer, der die Zusicherung
+    ``grant-single-use`` still aufheben würde. Deshalb bricht die Ausführung
+    ab, statt ungesichert durchzulaufen.
+    """
+
+
 class ToolRegistry:
     """Katalog aller verfügbaren Werkzeuge."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, grants: GrantConsumer | None = None) -> None:
         self._specs: dict[str, ToolSpec] = {}
         self._handlers: dict[str, ToolHandler] = {}
+        self._grants = grants
+        """Der Grant-Verbrauch. ``None`` ist zulässig, solange nur der Katalog
+        gelesen wird — für ``execute()`` nicht. Die Registry wird an vielen
+        Stellen bloß zum Nachschlagen gebaut (Schema-Erzeugung, Policy-Prüfung
+        ohne Ausführung); ein Pflichtparameter zwänge dort eine Abhängigkeit
+        auf, die nichts absichert. Fehlt er beim Ausführen, wird abgewiesen —
+        ein fehlender Sicherheitskontext muss schließen, nicht öffnen."""
 
     def register(self, spec: ToolSpec, handler: ToolHandler | None = None) -> None:
         if spec.name in self._specs:
@@ -84,7 +120,14 @@ class ToolRegistry:
             raise UnknownTool(f"Unbekanntes Werkzeug: {name!r}")
         return spec
 
-    async def execute(self, auth: ExecutionGrant, *, run_id: UUID, user_id: UUID) -> ToolResult:
+    async def execute(
+        self,
+        auth: ExecutionGrant,
+        *,
+        run_id: UUID,
+        user_id: UUID,
+        now: datetime | None = None,
+    ) -> ToolResult:
         """Führt ein Werkzeug aus — der einzige Weg dorthin.
 
         Es gibt bewusst keine Methode, die den Handler herausgibt. Wer ein
@@ -92,7 +135,7 @@ class ToolRegistry:
         entsteht ausschließlich im ``ApprovalGateway`` nach Hash-Vergleich und
         erneuter Policy-Prüfung.
 
-        **Vier Prüfungen, und die erste ist die, die hier einmal gefehlt hat:**
+        **Fünf Prüfungen, und zwei davon haben hier einmal gefehlt:**
 
         1. **Herkunft.** ``type(auth) is ExecutionGrant`` — nominal, nicht
            strukturell. Frühere Fassungen nahmen ein ``Protocol`` entgegen und
@@ -116,9 +159,27 @@ class ToolRegistry:
         4. **Implementierung.** Ein registrierter Spec ohne Handler ist ein
            Konfigurationsfehler und kein Berechtigungsproblem.
 
+        5. **Verbrauch.** Die vier Prüfungen oben sind allesamt Aussagen über
+           den Grant, und sie gelten beim zweiten Mal unverändert: Der Typ
+           bleibt derselbe, der Hash passt weiterhin, Lauf und Nutzer auch. Ein
+           externer Prüfer hat daraus zwei Ausführungen aus einer Bestätigung
+           gemacht, zehn nebenläufige aus derselben. Der Verbrauch ist die
+           einzige der fünf Prüfungen, die den *Zustand* verändert — deshalb
+           steht sie zuletzt, unmittelbar vor dem Handler.
+
+           Dass sie zuletzt steht, ist bedeutungstragend: Stünde sie vor den
+           anderen, würde ein Grant mit falschem Hash den Anspruch verbrennen,
+           und ein Angreifer könnte fremde Erlaubnisse entwerten, ohne sie
+           einzulösen. Dieselbe Überlegung wie beim Nonce-Verbrauch und beim
+           Ausführungsanspruch.
+
         Der Aufrufer nennt ``run_id`` und ``user_id`` ausdrücklich, statt dass
         die Registry sie dem Grant entnimmt: Ein Vergleich eines Wertes mit sich
         selbst prüft nichts.
+
+        ``now`` geht nur in den Vermerk des Verbrauchs ein, nicht in eine
+        Entscheidung — anders als bei den Fristen des Approval Gateways, wo der
+        Zeitpunkt ausdrücklich hereingereicht wird.
         """
         # Lokal, um den Zyklus zu vermeiden: Die Policy-Schicht braucht die
         # Registry zur Werkzeugauflösung.
@@ -149,6 +210,20 @@ class ToolRegistry:
                 f"Die Autorisierung für {spec.name!r} gehört zu einem anderen Lauf oder "
                 "Nutzer. Eine Erlaubnis gilt für genau einen Aufruf in genau einem Lauf."
             )
+
+        if self._grants is None:
+            raise UnguardedExecution(
+                f"Für {spec.name!r} ist kein Grant-Verbrauch eingerichtet. Ohne ihn wäre "
+                "dieselbe Erlaubnis beliebig oft einlösbar; die Ausführung wird "
+                "abgebrochen."
+            )
+        if not await self._grants.consume(auth.invocation_id, now=now or datetime.now(tz=UTC)):
+            raise GrantAlreadyUsed(
+                f"Die Erlaubnis für {spec.name!r} ließ sich nicht einlösen: Sie wurde "
+                "bereits verwendet, oder es gibt keinen protokollierten Aufruf, zu dem "
+                "sie gehört. Eine Bestätigung führt höchstens einmal aus."
+            )
+
         return await handler(**auth.arguments)
 
     def names(self) -> set[str]:

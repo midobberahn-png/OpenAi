@@ -489,6 +489,16 @@ class ToolInvocation(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Wann der ExecutionGrant dieser Invokation eingelöst wurde.
+
+    Getrennt von ``executed_at``, obwohl beide dasselbe Ereignis umgeben:
+    ``executed_at`` schreibt das Protokoll fort und wird von ``mark()`` gesetzt,
+    also nach der Wirkung. ``consumed_at`` ist der Anspruch und entsteht davor,
+    als bedingtes UPDATE. Beides auf dieselbe Spalte zu legen hieße, die
+    Einmaligkeitszusage an den Protokollpfad zu hängen — und der darf sich
+    ändern, ohne dass jemand an eine Sicherheitseigenschaft denkt.
+    """
 
     __table_args__ = (
         CheckConstraint(

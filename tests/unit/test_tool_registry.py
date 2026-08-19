@@ -18,7 +18,9 @@ from jarvis_contracts import DataClass, PayloadInspectability, RiskLevel, ToolSp
 from jarvis_core.tools import (
     DuplicateTool,
     ForgedAuthorization,
+    InProcessGrants,
     ToolRegistry,
+    UnguardedExecution,
     UnknownTool,
 )
 
@@ -134,7 +136,7 @@ class TestRegistrierung:
 
         from tests.fakes import echter_grant
 
-        reg = ToolRegistry()
+        reg = ToolRegistry(grants=InProcessGrants())
         spec = _spec("system.time")
         reg.register(spec, handler)
         grant = await echter_grant(reg, spec, {}, run_id=RUN, user_id=USER)
@@ -158,7 +160,7 @@ class TestRegistrierung:
         async def handler(**kwargs: object) -> ToolResult:
             return ToolResult(ok=True, display="fertig")
 
-        reg = ToolRegistry()
+        reg = ToolRegistry(grants=InProcessGrants())
         spec = _spec("system.time")
         reg.register(spec, handler)
 
@@ -166,13 +168,41 @@ class TestRegistrierung:
         result = await reg.execute(grant, run_id=RUN, user_id=USER)
         assert result.ok
 
+    @pytest.mark.invariant("grant-single-use")
+    async def test_ohne_verbraucher_fuehrt_die_registry_nichts_aus(self) -> None:
+        """Ein fehlender Grant-Verbrauch schließt, statt zu öffnen.
+
+        Die bequeme Variante wäre ein Vorgabewert gewesen — eine Registry ohne
+        Verbraucher führt eben ungesichert aus. Damit hinge eine
+        Sicherheitseigenschaft daran, dass jede Aufrufstelle daran denkt, und
+        das ist genau die Sorte Zusicherung, die still verschwindet. Derselbe
+        Grund, aus dem ``allowed_data_class`` keinen Vorgabewert hat.
+        """
+        from jarvis_contracts import ToolResult
+        from tests.fakes import echter_grant
+
+        called: list[object] = []
+
+        async def handler(**kwargs: object) -> ToolResult:
+            called.append(kwargs)
+            return ToolResult(ok=True, display="fertig")
+
+        reg = ToolRegistry()
+        spec = _spec("system.time")
+        reg.register(spec, handler)
+        grant = await echter_grant(reg, spec, {}, run_id=RUN, user_id=USER)
+
+        with pytest.raises(UnguardedExecution, match="kein Grant-Verbrauch"):
+            await reg.execute(grant, run_id=RUN, user_id=USER)
+        assert not called, "Ohne Verbrauch darf der Handler nicht laufen"
+
     async def test_werkzeug_ohne_implementierung(self) -> None:
         """Spezifikation und Implementierung sind getrennt: Wer Berechtigungen
         prüfen will, braucht den Handler nicht."""
 
         from tests.fakes import echter_grant
 
-        reg = ToolRegistry()
+        reg = ToolRegistry(grants=InProcessGrants())
         spec = _spec("system.time")
         reg.register(spec)
         assert reg.get("system.time") is not None

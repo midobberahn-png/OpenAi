@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 41/43**
+**Security Invariant Coverage: 42/43**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -28,6 +28,7 @@ nicht nachträglich passend machen.
 | `approval-toctou-protected` | Kein Zeitfenster zwischen Prüfung und Ausführung | Unmittelbar vor der Ausführung werden Payload-Hash und Policy erneut geprüft; zwischenzeitlich entzogene Rechte greifen sofort. | `core.policy.approval` |
 | `approval-nonce-single-use` | Bestätigungen sind einmalig | Eine Nonce lässt sich genau einmal einlösen, auch unter Nebenläufigkeit. | `core.policy.approval` |
 | `execution-claim-single-use` | Eine Bestätigung erwirkt höchstens einen Ausführungsanspruch | Eine bestätigte Aktion erwirkt genau einen Ausführungsanspruch; jede weitere Autorisierung derselben Bestätigung wird abgewiesen, auch unter Nebenläufigkeit. | `core.policy.approval` |
+| `grant-single-use` | Ein ausgestellter Grant führt höchstens einmal aus | Ein ExecutionGrant erlaubt genau einen Werkzeugaufruf; jede weitere Vorlage desselben Grants — auch als Kopie, aus einem anderen Prozess oder nebenläufig — erreicht den Handler nicht. | `core.tools.registry` |
 | `approval-not-forgeable-by-model` | Ein Modell kann keine Bestätigung erzeugen | Bestätigungen entstehen ausschließlich aus einer Nutzerinteraktion; Modellausgaben und Werkzeugargumente haben keinen Einfluss darauf. | `core.policy.engine` |
 | `approval-channel-bound` | Bestätigt wird dort, wo angezeigt wurde | Eine Bestätigung ist an Nutzer, Sitzung und Anzeigekanal gebunden und lässt sich nicht über einen anderen Kanal oder eine andere Sitzung einlösen. | `core.policy.approval` |
 | `identity-derives-from-session` | Identität entsteht an genau einer Stelle | Kein HTTP-Endpunkt übernimmt user_id, session_id oder eine andere Identitätsangabe aus Body, Query, Header oder Pfad; sie stammt ausschließlich aus der verifizierten Sitzung. | `api.http` |
@@ -65,5 +66,4 @@ abgesichert, bevor der Kontrollpunkt existiert.
 
 | Kennung | Invariante | Wird gebraucht, weil | Komponente |
 |---|---|---|---|
-| `grant-single-use` | Ein ausgestellter Grant führt höchstens einmal aus | Der Titel der Vorgänger-Invariante versprach mehr, als der Mechanismus hielt. claim_execution() sichert den Übergang von der Bestätigung zum Grant; die Registry prüft danach Herkunft, Hash, Lauf und Nutzer — allesamt Werte, die bei einer Wiedervorlage desselben Objekts unverändert gelten — und ruft den Handler. Nachgemessen: ein Grant, zweimal vorgelegt, ergab zwei Handler-Aufrufe; zehn nebenläufig vorgelegte ergaben zehn. Damit ist dies der dritte Replay-Pfad desselben Musters — die Einmaligkeit hing wieder einen Schritt zu früh. | `core.tools.registry` |
 | `session-token-rotation` | Ein benutzter Sitzungstoken wird ersetzt | Ohne Rotation bleibt ein entwendeter Token bis zum Ablauf gültig, auch wenn der rechtmäßige Nutzer weiterarbeitet — das Zeitfenster für einen Replay ist die volle Sitzungsdauer. Der Grund für den Aufschub ist ein Wettlauf: Zwei gleichzeitige Anfragen mit demselben Token dürfen nicht dazu führen, dass eine davon abgemeldet wird. Die Semantik des Überlappungsfensters ist zu spezifizieren, bevor sie implementiert wird (ADR-007, Nachtrag). | `core.auth` |

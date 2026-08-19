@@ -206,9 +206,10 @@ INVARIANTS: tuple[Invariant, ...] = (
             "Handler. Nachgemessen: ein Grant, zweimal vorgelegt, ergab zwei "
             "Handler-Aufrufe; zehn nebenläufig vorgelegte ergaben zehn. Damit ist dies "
             "der dritte Replay-Pfad desselben Musters — die Einmaligkeit hing wieder "
-            "einen Schritt zu früh."
+            "einen Schritt zu früh. Geschlossen durch einen Verbrauch an der "
+            "invocation_id, als letzter Schritt vor dem Handler."
         ),
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.tools.registry",
     ),
     Invariant(

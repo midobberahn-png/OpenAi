@@ -13,19 +13,18 @@ und **nur** diesen. Der Übergang danach ist ungesichert:
 
     ExecutionGrant → ToolRegistry.execute() → Handler
 
-``ToolRegistry.execute()`` prüft Herkunft, Hash, Lauf und Nutzer — alles
+``ToolRegistry.execute()`` prüfte Herkunft, Hash, Lauf und Nutzer — alles
 Eigenschaften, die bei einer Wiedervorlage desselben Objekts unverändert
-gelten. Danach ruft sie den Handler. Es gibt keinen Verbrauch.
+gelten. Danach rief sie den Handler. Ein Verbrauch fehlte.
 
 Dreimal dasselbe Muster: Die Einmaligkeit hing jedes Mal einen Schritt zu
 früh. Deshalb prüfen diese Tests dort, wo die Wirkung entsteht — am
 Handler-Zähler, nicht an der Zahl der ausgestellten Grants.
 
-Die Tests sind ``xfail(strict=True)``: Sie belegen eine Lücke, die noch offen
-ist. Sobald der Verbrauch existiert, schlagen sie als XPASS fehl und erzwingen
-das Entfernen dieser Markierung — ein stiller Übergang ins Grüne ist damit
-ausgeschlossen. Die zugehörige Invariante ``grant-single-use`` steht auf
-PLANNED, damit die Kennzahl die Lücke zeigt statt sie zu verdecken.
+Geschlossen durch ``GrantConsumer``: ein Verbrauch an der ``invocation_id``,
+als letzter Schritt vor dem Handler. Diese Tests entstanden **vor** der
+Reparatur und schlugen alle vier fehl; sie sind der Grund, warum die Reparatur
+so aussieht, wie sie aussieht — und nicht umgekehrt.
 """
 
 from __future__ import annotations
@@ -48,7 +47,7 @@ from jarvis_contracts import (
     ToolSpec,
 )
 from jarvis_core.policy import ApprovalGateway, PolicyEngine, UnverifiedSessions
-from jarvis_core.tools.registry import ToolRegistry
+from jarvis_core.tools import GrantAlreadyUsed, ToolRegistry
 from tests.fakes import (
     FakePermissions,
     HandlerSpy,
@@ -60,8 +59,6 @@ pytestmark = pytest.mark.security
 
 NOW = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
 USER = uuid4()
-
-OFFEN = "grant-single-use ist noch nicht durchgesetzt: die Registry verbraucht den Grant nicht."
 
 
 def _aufbau(werkzeug: str, *, scope_mode: str) -> tuple[ToolRegistry, HandlerSpy, ToolSpec, Any]:
@@ -127,7 +124,6 @@ async def _bestaetigter_grant(
 class TestGrantWiedervorlage:
     """Ein ausgestellter Grant erlaubt genau einen Werkzeugaufruf."""
 
-    @pytest.mark.xfail(strict=True, reason=OFFEN)
     @pytest.mark.invariant("grant-single-use")
     async def test_derselbe_grant_zweimal_fuehrt_einmal_aus(self) -> None:
         """Der Kern des Befundes.
@@ -142,7 +138,7 @@ class TestGrantWiedervorlage:
         grant = await _bestaetigter_grant(gateway, spec, args, run_id=run_id)
 
         await registry.execute(grant, run_id=run_id, user_id=USER)
-        with pytest.raises(Exception):  # noqa: B017 - die Ausnahmeart legt erst die Reparatur fest
+        with pytest.raises(GrantAlreadyUsed):
             await registry.execute(grant, run_id=run_id, user_id=USER)
 
         assert spy.call_count == 1, (
@@ -150,7 +146,6 @@ class TestGrantWiedervorlage:
             "sichert die Ausstellung des Grants, nicht seine Verwendung."
         )
 
-    @pytest.mark.xfail(strict=True, reason=OFFEN)
     @pytest.mark.invariant("grant-single-use")
     async def test_zehn_parallele_ausfuehrungen_gewinnt_genau_eine(self) -> None:
         """Wie beim Nonce-Verbrauch: Die Zusicherung muss unter Nebenläufigkeit
@@ -167,7 +162,6 @@ class TestGrantWiedervorlage:
 
         assert spy.call_count == 1, f"{spy.call_count} von 10 parallelen Aufrufen kamen durch."
 
-    @pytest.mark.xfail(strict=True, reason=OFFEN)
     @pytest.mark.invariant("grant-single-use")
     async def test_kopien_des_grants_teilen_den_verbrauch(self) -> None:
         """Die Probe darauf, dass der Verbrauch nicht am Objekt hängt.
@@ -184,9 +178,10 @@ class TestGrantWiedervorlage:
         grant = await _bestaetigter_grant(gateway, spec, args, run_id=run_id)
 
         for zwilling in (grant, grant.model_copy(), copy.copy(grant), copy.deepcopy(grant)):
-            # Die Ablehnung ist hier der erwartete Ausgang — gezählt wird am
-            # Handler, nicht an der Ausnahme.
-            with contextlib.suppress(Exception):
+            # Die Ablehnung ist der erwartete Ausgang für drei der vier —
+            # welcher zuerst durchkommt, ist gleichgültig, gezählt wird am
+            # Handler.
+            with contextlib.suppress(GrantAlreadyUsed):
                 await registry.execute(zwilling, run_id=run_id, user_id=USER)
 
         assert spy.call_count == 1, (
@@ -198,16 +193,29 @@ class TestGrantWiedervorlage:
 class TestGrantOhneBestaetigung:
     """Auch der bestätigungsfreie Pfad kennt eine Wiedervorlage.
 
-    Hier ist der Ertrag für einen Angreifer geringer — wer ``authorize_allowed()``
-    aufrufen darf, bekommt jederzeit einen neuen Grant. Der Unterschied ist ein
-    anderer: Der neue Grant entsteht aus einer **frischen** Policy-Prüfung, die
-    Wiedervorlage nicht. Ein zwischenzeitlich entzogenes Recht wirkt damit auf
-    dem einen Weg und auf dem anderen nicht.
+    Der Ertrag für einen Angreifer ist hier geringer: Wer ``authorize_allowed()``
+    aufrufen darf, bekommt jederzeit einen neuen Grant — die Erlaubnis ist auf
+    diesem Pfad nicht knapp. Ein Unterschied bleibt trotzdem, und er ist der
+    Grund für diesen Test: Ein **neuer** Grant entsteht aus einer frischen
+    Policy-Prüfung, eine Wiedervorlage nicht. Ohne Verbrauch überlebt eine
+    Erlaubnis den Entzug des Rechts, aus dem sie entstanden ist.
     """
 
-    @pytest.mark.xfail(strict=True, reason=OFFEN)
     @pytest.mark.invariant("grant-single-use")
-    async def test_entzogenes_recht_stoppt_die_wiedervorlage(self) -> None:
+    async def test_wiedervorlage_ueberlebt_den_entzug_des_rechts_nicht(self) -> None:
+        """Vorsicht bei der Deutung dieses Tests.
+
+        Er belegt **nicht**, dass die Registry die Berechtigung erneut prüft —
+        das tut sie nicht und soll sie nicht: Die Policy-Prüfung gehört ins
+        Gate, nicht in den Katalog. Er belegt, dass die Frage sich nicht
+        stellt, weil die zweite Vorlage schon am Verbrauch scheitert.
+
+        Der Unterschied ist wichtig, weil genau hier zweimal etwas
+        durchgerutscht ist: Ein Test, der grün ist, prüft nicht automatisch das,
+        wonach er heißt. Der Entzug steht deshalb im Ablauf — als Beleg, dass
+        der Verbrauch auch dann greift, wenn die Berechtigungslage sich
+        geändert hat.
+        """
         registry, spy, spec, gateway = _aufbau("calendar.read", scope_mode="allow")
         run_id = uuid4()
         args = {"zeitraum": "heute"}
@@ -225,7 +233,7 @@ class TestGrantOhneBestaetigung:
         # bekommen. Der alte darf es deshalb auch nicht sein.
         gateway._policy._permissions = FakePermissions()  # type: ignore[attr-defined]
 
-        with pytest.raises(Exception):  # noqa: B017 - Ausnahmeart offen bis zur Reparatur
+        with pytest.raises(GrantAlreadyUsed):
             await registry.execute(grant, run_id=run_id, user_id=USER)
 
         assert spy.call_count == 1, (

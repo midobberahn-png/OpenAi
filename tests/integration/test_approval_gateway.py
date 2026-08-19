@@ -37,7 +37,7 @@ from jarvis_core.policy import (
     build_preview,
 )
 from jarvis_core.ports.approval import BurnResult
-from jarvis_core.tools import ToolRegistry
+from jarvis_core.tools import InProcessGrants, ToolRegistry
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.security]
 
@@ -803,7 +803,7 @@ class TestGateOhneBestaetigung:
             called.append(kwargs)
             return ToolResult(ok=True, display="angelegt")
 
-        registry = ToolRegistry()
+        registry = ToolRegistry(grants=InProcessGrants())
         registry.register(CALENDAR_CREATE, handler)
         perms = MutablePermissions()
         perms.allow("calendar.create")
