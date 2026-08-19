@@ -2,6 +2,7 @@
 
 from .approval import ApprovalStore, BurnResult
 from .invocations import InvocationStore
+from .llm import LLMProvider
 from .permissions import PermissionStore, RateLimiter, ToolLookup
 from .sessions import SessionStore
 from .webauthn import AttestationVerifier, ChallengeStore, CredentialStore
@@ -13,6 +14,7 @@ __all__ = [
     "ChallengeStore",
     "CredentialStore",
     "InvocationStore",
+    "LLMProvider",
     "PermissionStore",
     "RateLimiter",
     "SessionStore",

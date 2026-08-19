@@ -470,6 +470,44 @@ INVARIANTS: tuple[Invariant, ...] = (
         status=InvariantStatus.ENFORCED,
         component="core.policy.engine",
     ),
+    # -- Sprachmodelle --------------------------------------------------
+    Invariant(
+        id="model-never-sees-excess-data-class",
+        title="Ein Anbieter sieht nie Daten oberhalb seiner Zulassung",
+        statement=(
+            "Eine Anfrage erreicht einen Anbieteradapter nur, wenn dessen Modell für die "
+            "Datenklasse zugelassen ist; P3 erreicht ausschließlich lokale Modelle."
+        ),
+        why=(
+            "Der Router filtert bei der Modellwahl, aber die Wahl fällt einmal pro Turn "
+            "und der Aufruf geschieht danach — oft mehrfach, aus Agentenketten heraus, "
+            "mit einem Kontext, der inzwischen P2 gesehen hat. Eine Prüfung nur bei der "
+            "Wahl prüft den Zustand von vorhin. Und der Nachweis ist die Null: Der "
+            "Adapter darf die Daten nicht einmal im Speicher haben, denn bei einem "
+            "Netzwerkadapter wären sie damit bereits unterwegs."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.providers.gateway",
+    ),
+    Invariant(
+        id="model-tool-calls-are-proposals",
+        title="Ein Modell schlägt vor, es ordnet nicht an",
+        statement=(
+            "Werkzeugaufrufe aus einer Modellantwort tragen keine Erlaubnis: Der "
+            "Vertragstyp führt weder Risiko noch Scope noch Bestätigung, und jeder "
+            "Vorschlag durchläuft Policy Engine und Ausführungs-Gate wie jede andere "
+            "Absicht."
+        ),
+        why=(
+            "Die verbreitete Bauart nennt dieselbe Struktur „tool_call“ und behandelt "
+            "sie als Anweisung. Von dort ist es ein kleiner Schritt zu einer Schleife, "
+            "die Modellausgabe ausführt — und damit zur Fernsteuerung für jeden, der dem "
+            "Modell Text unterschieben kann. Der Name ProposedToolCall ist deshalb Teil "
+            "der Absicherung, nicht Kosmetik."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="contracts.llm",
+    ),
     # -- Orchestrierung (noch offen, Punkt 9) ---------------------------
     Invariant(
         id="orchestrator-consumes-decisions",

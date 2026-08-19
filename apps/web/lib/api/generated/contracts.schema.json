@@ -1070,6 +1070,259 @@
         }
       ]
     },
+    "CompletionRequest": {
+      "$defs": {
+        "Message": {
+          "description": "Eine Nachricht im Gesprächsverlauf.",
+          "properties": {
+            "content": {
+              "default": "",
+              "title": "Content",
+              "type": "string"
+            },
+            "is_untrusted": {
+              "default": false,
+              "title": "Is Untrusted",
+              "type": "boolean"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Name"
+            },
+            "role": {
+              "$ref": "#/$defs/MessageRole"
+            },
+            "tool_call_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Tool Call Id"
+            }
+          },
+          "required": [
+            "role"
+          ],
+          "title": "Message",
+          "type": "object"
+        },
+        "MessageRole": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "MessageRole",
+          "type": "string"
+        }
+      },
+      "description": "Anfrage an ein Modell.\n\nEnthält **keine** Datenklasse und keinen Taint-Zustand. Das ist Absicht:\nDer Sicherheitskontext gehört nicht in die Anfrage, sondern um sie herum —\ndas Model Gateway nimmt ihn getrennt entgegen und entscheidet damit, ob\ndiese Anfrage diesen Provider überhaupt erreichen darf. Ein Feld in der\nAnfrage wäre ein Wert, den der Aufrufer selbst setzt, und ein Aufrufer,\nder seine eigene Obergrenze bestimmt, hat keine.",
+      "properties": {
+        "max_tokens": {
+          "default": 4096,
+          "exclusiveMinimum": 0,
+          "title": "Max Tokens",
+          "type": "integer"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/$defs/Message"
+          },
+          "minItems": 1,
+          "title": "Messages",
+          "type": "array"
+        },
+        "model": {
+          "minLength": 1,
+          "title": "Model",
+          "type": "string"
+        },
+        "response_format": {
+          "default": "text",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "title": "Response Format",
+          "type": "string"
+        },
+        "stop": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stop",
+          "type": "array"
+        },
+        "temperature": {
+          "default": 0.7,
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "title": "Temperature",
+          "type": "number"
+        },
+        "timeout_s": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "maximum": 600,
+          "title": "Timeout S",
+          "type": "number"
+        },
+        "tools": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Tools",
+          "type": "array"
+        }
+      },
+      "required": [
+        "model",
+        "messages"
+      ],
+      "title": "CompletionRequest",
+      "type": "object"
+    },
+    "CompletionResult": {
+      "$defs": {
+        "FinishReason": {
+          "enum": [
+            "stop",
+            "length",
+            "tool_calls",
+            "content_filter",
+            "error"
+          ],
+          "title": "FinishReason",
+          "type": "string"
+        },
+        "ModelUsage": {
+          "description": "Verbrauch eines Modellaufrufs — Zahlen, keine Inhalte.\n\nBewusst ohne Prompt- oder Antworttext: Dieses Objekt landet in\nProtokollen und Kostenübersichten, und dort haben P2- und P3-Daten nichts\nverloren.",
+          "properties": {
+            "cached_tokens_in": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Cached Tokens In",
+              "type": "integer"
+            },
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0",
+              "title": "Cost Eur"
+            },
+            "latency_ms": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Latency Ms",
+              "type": "integer"
+            },
+            "tokens_in": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tokens In",
+              "type": "integer"
+            },
+            "tokens_out": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tokens Out",
+              "type": "integer"
+            }
+          },
+          "title": "ModelUsage",
+          "type": "object"
+        },
+        "ProposedToolCall": {
+          "description": "Ein vom Modell **vorgeschlagener** Werkzeugaufruf.\n\nDer Name ist die Entscheidung. Diese Struktur ist die Stelle, an der ein\nkompromittiertes Modell — oder ein Modell, das eine präparierte Mail\ngelesen hat — seine Absicht äußert. Sie enthält deshalb ausdrücklich\nnichts, was einer Erlaubnis ähnelt: kein Risiko, keinen Scope, keine\nBestätigung, kein ``approved``-Feld.\n\nWas hier ankommt, geht denselben Weg wie jede andere Absicht:\n``PolicyEngine.decide()`` → gegebenenfalls Bestätigung →\n``ExecutionGrant``. Ein Feld, das diesen Weg abkürzen könnte, wäre die\nUmgehung des gesamten Sicherheitssockels.",
+          "properties": {
+            "arguments": {
+              "additionalProperties": true,
+              "title": "Arguments",
+              "type": "object"
+            },
+            "id": {
+              "maxLength": 120,
+              "minLength": 1,
+              "title": "Id",
+              "type": "string"
+            },
+            "tool_name": {
+              "maxLength": 80,
+              "minLength": 1,
+              "title": "Tool Name",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "tool_name"
+          ],
+          "title": "ProposedToolCall",
+          "type": "object"
+        }
+      },
+      "description": "Antwort eines Modells — Fremdinhalt, bis das Gegenteil gezeigt ist.",
+      "properties": {
+        "finish_reason": {
+          "$ref": "#/$defs/FinishReason",
+          "default": "stop"
+        },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
+        "taints_context": {
+          "default": true,
+          "title": "Taints Context",
+          "type": "boolean"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "tool_calls": {
+          "items": {
+            "$ref": "#/$defs/ProposedToolCall"
+          },
+          "title": "Tool Calls",
+          "type": "array"
+        },
+        "usage": {
+          "$ref": "#/$defs/ModelUsage"
+        }
+      },
+      "title": "CompletionResult",
+      "type": "object"
+    },
     "ConstraintViolation": {
       "description": "Warum ein Aufruf an einer Einschränkung scheitert.",
       "properties": {
@@ -3113,6 +3366,65 @@
       "title": "MemoryRecord",
       "type": "object"
     },
+    "Message": {
+      "$defs": {
+        "MessageRole": {
+          "enum": [
+            "system",
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "MessageRole",
+          "type": "string"
+        }
+      },
+      "description": "Eine Nachricht im Gesprächsverlauf.",
+      "properties": {
+        "content": {
+          "default": "",
+          "title": "Content",
+          "type": "string"
+        },
+        "is_untrusted": {
+          "default": false,
+          "title": "Is Untrusted",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole"
+        },
+        "tool_call_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Call Id"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
     "ModelCapability": {
       "$defs": {
         "DataClass": {
@@ -3204,6 +3516,50 @@
         "context_window"
       ],
       "title": "ModelCapability",
+      "type": "object"
+    },
+    "ModelUsage": {
+      "description": "Verbrauch eines Modellaufrufs — Zahlen, keine Inhalte.\n\nBewusst ohne Prompt- oder Antworttext: Dieses Objekt landet in\nProtokollen und Kostenübersichten, und dort haben P2- und P3-Daten nichts\nverloren.",
+      "properties": {
+        "cached_tokens_in": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Cached Tokens In",
+          "type": "integer"
+        },
+        "cost_eur": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "title": "Cost Eur"
+        },
+        "latency_ms": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Latency Ms",
+          "type": "integer"
+        },
+        "tokens_in": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tokens In",
+          "type": "integer"
+        },
+        "tokens_out": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Tokens Out",
+          "type": "integer"
+        }
+      },
+      "title": "ModelUsage",
       "type": "object"
     },
     "PasskeyCredential": {
@@ -4160,6 +4516,34 @@
       "title": "Problem",
       "type": "object"
     },
+    "ProposedToolCall": {
+      "description": "Ein vom Modell **vorgeschlagener** Werkzeugaufruf.\n\nDer Name ist die Entscheidung. Diese Struktur ist die Stelle, an der ein\nkompromittiertes Modell — oder ein Modell, das eine präparierte Mail\ngelesen hat — seine Absicht äußert. Sie enthält deshalb ausdrücklich\nnichts, was einer Erlaubnis ähnelt: kein Risiko, keinen Scope, keine\nBestätigung, kein ``approved``-Feld.\n\nWas hier ankommt, geht denselben Weg wie jede andere Absicht:\n``PolicyEngine.decide()`` → gegebenenfalls Bestätigung →\n``ExecutionGrant``. Ein Feld, das diesen Weg abkürzen könnte, wäre die\nUmgehung des gesamten Sicherheitssockels.",
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "id": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Tool Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "tool_name"
+      ],
+      "title": "ProposedToolCall",
+      "type": "object"
+    },
     "Provenance": {
       "$defs": {
         "SourceType": {
@@ -4251,6 +4635,43 @@
         "source_type"
       ],
       "title": "Provenance",
+      "type": "object"
+    },
+    "ProviderCapabilities": {
+      "description": "Was ein Adapter kann — sichtbar gemacht statt versteckt (ADR-009).\n\nDie Unterschiede zwischen den Anbietern werden hier ausgewiesen, damit der\nOrchestrator sie berücksichtigen kann, statt sie hinter einer\nKompatibilitätsfassade zu verlieren.",
+      "properties": {
+        "prompt_caching": {
+          "default": false,
+          "title": "Prompt Caching",
+          "type": "boolean"
+        },
+        "streaming": {
+          "default": true,
+          "title": "Streaming",
+          "type": "boolean"
+        },
+        "structured_output": {
+          "default": false,
+          "title": "Structured Output",
+          "type": "boolean"
+        },
+        "token_counting": {
+          "default": false,
+          "title": "Token Counting",
+          "type": "boolean"
+        },
+        "tool_calling": {
+          "default": true,
+          "title": "Tool Calling",
+          "type": "boolean"
+        },
+        "vision": {
+          "default": false,
+          "title": "Vision",
+          "type": "boolean"
+        }
+      },
+      "title": "ProviderCapabilities",
       "type": "object"
     },
     "ReferenceResolution": {
@@ -6963,6 +7384,97 @@
         "finished_at"
       ],
       "title": "StepOutcome",
+      "type": "object"
+    },
+    "StreamChunk": {
+      "$defs": {
+        "FinishReason": {
+          "enum": [
+            "stop",
+            "length",
+            "tool_calls",
+            "content_filter",
+            "error"
+          ],
+          "title": "FinishReason",
+          "type": "string"
+        },
+        "ModelUsage": {
+          "description": "Verbrauch eines Modellaufrufs — Zahlen, keine Inhalte.\n\nBewusst ohne Prompt- oder Antworttext: Dieses Objekt landet in\nProtokollen und Kostenübersichten, und dort haben P2- und P3-Daten nichts\nverloren.",
+          "properties": {
+            "cached_tokens_in": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Cached Tokens In",
+              "type": "integer"
+            },
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0",
+              "title": "Cost Eur"
+            },
+            "latency_ms": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Latency Ms",
+              "type": "integer"
+            },
+            "tokens_in": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tokens In",
+              "type": "integer"
+            },
+            "tokens_out": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Tokens Out",
+              "type": "integer"
+            }
+          },
+          "title": "ModelUsage",
+          "type": "object"
+        }
+      },
+      "description": "Ein Stück einer laufenden Antwort.\n\nWerkzeugvorschläge kommen bei allen Anbietern stückweise an. Sie werden\ndeshalb erst im vollständigen ``CompletionResult`` geführt — ein halb\nübertragener Aufruf ist kein Vorschlag, sondern ein Fragment.",
+      "properties": {
+        "delta": {
+          "default": "",
+          "title": "Delta",
+          "type": "string"
+        },
+        "finish_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FinishReason"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "StreamChunk",
       "type": "object"
     },
     "TimeWindow": {

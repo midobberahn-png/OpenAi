@@ -59,6 +59,17 @@ from .identity import (
     Proactivity,
     ResponseLength,
 )
+from .llm import (
+    CompletionRequest,
+    CompletionResult,
+    FinishReason,
+    Message,
+    MessageRole,
+    ModelUsage,
+    ProposedToolCall,
+    ProviderCapabilities,
+    StreamChunk,
+)
 from .memory import (
     DEFAULT_RETRIEVAL_WEIGHTS,
     MemoryCandidate,
@@ -136,6 +147,16 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "DEFAULT_SESSION_TTL",
     "DEFAULT_IDLE_TIMEOUT",
     "DEFAULT_CHALLENGE_TTL",
+    # llm
+    "Message",
+    "MessageRole",
+    "ProposedToolCall",
+    "CompletionRequest",
+    "CompletionResult",
+    "StreamChunk",
+    "FinishReason",
+    "ModelUsage",
+    "ProviderCapabilities",
     # permissions
     "ApprovalChannel",
     "RiskLevel",
