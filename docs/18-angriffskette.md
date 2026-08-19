@@ -1,6 +1,17 @@
 # Die Angriffskette — was wo erzwungen wird
 
-> Stand: Commit `316f9ce`. Erzeugt als Security-Gate nach dem Auth-Block.
+> Stand: Commit `316f9ce`, überarbeitet nach dem externen Review.
+
+> **Nachtrag.** Ein externes Review hat Glied ⑦ praktisch falsifiziert, während
+> es hier als gesichert geführt war. `ExecutionAuthorization` war ein
+> `Protocol`; die Registry prüfte Hash, Lauf und Nutzer, aber nicht die
+> Herkunft des Objekts. Ein `SimpleNamespace` mit passenden Attributen führte
+> `mail.send` aus — ohne Policy Engine, ohne Approval Gateway, ohne Grant. Die
+> Invariante `policy-single-entry-point` stand dabei auf ENFORCED.
+>
+> Behoben durch nominale Prüfung (`type(auth) is ExecutionGrant`). Die Lehre
+> steht in Abschnitt 5: Eine Tabelle wie diese sagt, was geprüft *wird* — sie
+> kann nicht sagen, ob die Prüfung das Richtige prüft.
 
 Bis Punkt 9 bestand das System aus einzeln geprüften Komponenten. Die Frage,
 die seitdem den Maßstab bildet, ist eine andere:
@@ -75,6 +86,23 @@ Test noch aus.
 | **Globale Rate-Limit-Stufe** | Ist selbst ein Denial-of-Service-Werkzeug: Wer sie füllt, sperrt auch den rechtmäßigen Nutzer aus. | Bewusst in Kauf genommen; Grenze liegt weit über der Alltagsnutzung. Eine volle Challenge-Tabelle wäre schlimmer. |
 | **Audit-Sink fehlt** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Sicherheitsvorfälle (Klonverdacht, abgewiesene Grants) landen derzeit nur im Anwendungsprotokoll. | Offen. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ist ebenfalls noch nicht implementiert. |
 | **Keine Modellanbindung** | Die größte kommende Fläche: Prompt Injection, Tool-Call-Injection, unvertrauenswürdige Modellausgabe, P3-Abfluss. | Der Taint-Schutz ist dafür gebaut, aber noch nie gegen ein echtes Modell erprobt. |
+
+---
+
+## 5. Was ein solches Dokument nicht leisten kann
+
+Der Bypass in Glied ⑦ stand in der Tabelle als gesichert, mit Verweis auf drei
+Tests. Alle drei liefen grün. Sie prüften, dass ein Grant mit falschem Hash,
+falschem Lauf oder falschem Nutzer abgewiesen wird — nur nicht, ob überhaupt
+ein Grant vorliegt. Die Lücke war nicht, dass zu wenig geprüft wurde, sondern
+dass die falsche Frage gestellt war.
+
+Gefunden hat sie ein Prüfer mit dem Quelltext in der Hand, der eine eigene
+Angriffsidee ausprobiert hat. Kein Test der Suite hätte darauf kommen können,
+weil Tests nur Fragen beantworten, die jemand vorher gestellt hat.
+
+Daraus folgt für dieses Dokument: Es ordnet, was geprüft wird. Es ersetzt
+keinen Prüfer, der etwas versucht, woran niemand gedacht hat.
 
 ---
 

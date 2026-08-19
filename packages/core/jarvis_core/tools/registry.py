@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from secrets import compare_digest
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from jarvis_contracts import RiskLevel, ToolResult, ToolSpec
-from jarvis_core.ports.permissions import ExecutionAuthorization
+
+if TYPE_CHECKING:  # nur für die Typprüfung — zur Laufzeit ein lokaler Import
+    from jarvis_core.policy.approval import ExecutionGrant
 
 __all__ = [
     "DuplicateTool",
@@ -82,39 +84,59 @@ class ToolRegistry:
             raise UnknownTool(f"Unbekanntes Werkzeug: {name!r}")
         return spec
 
-    async def execute(
-        self, auth: ExecutionAuthorization, *, run_id: UUID, user_id: UUID
-    ) -> ToolResult:
+    async def execute(self, auth: ExecutionGrant, *, run_id: UUID, user_id: UUID) -> ToolResult:
         """Führt ein Werkzeug aus — der einzige Weg dorthin.
 
         Es gibt bewusst keine Methode, die den Handler herausgibt. Wer ein
-        Werkzeug ausführen will, braucht eine ``ExecutionAuthorization``, und
-        die entsteht ausschließlich in ``ApprovalGateway`` nach Hash-Vergleich
-        und erneuter Policy-Prüfung.
+        Werkzeug ausführen will, braucht einen ``ExecutionGrant``, und der
+        entsteht ausschließlich im ``ApprovalGateway`` nach Hash-Vergleich und
+        erneuter Policy-Prüfung.
 
-        Drei Prüfungen, die getrennte Angriffe abdecken:
+        **Vier Prüfungen, und die erste ist die, die hier einmal gefehlt hat:**
 
-        1. **Hash.** Autorisierung und Ausführung sind getrennte Aufrufe;
+        1. **Herkunft.** ``type(auth) is ExecutionGrant`` — nominal, nicht
+           strukturell. Frühere Fassungen nahmen ein ``Protocol`` entgegen und
+           prüften nur die Attribute. Das war ein Gate-Bypass: Ein
+           ``SimpleNamespace`` mit passendem Werkzeugnamen, korrekt berechnetem
+           Hash und beliebigen IDs erfüllte das Protokoll und führte
+           ``mail.send`` aus — ohne Policy Engine, ohne Approval Gateway, ohne
+           Grant. Strukturelle Typisierung fragt „sieht es so aus?"; hier muss
+           die Frage lauten „kommt es von dort?".
+
+           ``type(...) is`` und nicht ``isinstance``: Eine Unterklasse könnte
+           ``__init__`` überschreiben und damit den Sentinel im Konstruktor
+           umgehen.
+
+        2. **Hash.** Autorisierung und Ausführung sind getrennte Aufrufe;
            zwischen ihnen könnte ein Aufrufer andere Argumente einsetzen.
-        2. **Lauf.** ``run_id`` und ``user_id`` müssen zu dem Kontext passen, in
+        3. **Lauf.** ``run_id`` und ``user_id`` müssen zu dem Kontext passen, in
            dem tatsächlich ausgeführt wird. Ohne diese Prüfung wäre ein gültiger
            Grant aus Lauf A in Lauf B verwendbar — Werkzeugname und Argumente
-           passen dort ja weiterhin. Die Bindung hinge dann allein daran, dass
-           niemand einen Grant über eine Laufgrenze trägt, und das ist keine
-           Zusicherung, sondern eine Hoffnung.
-        3. **Implementierung.** Ein registrierter Spec ohne Handler ist ein
+           passen dort ja weiterhin.
+        4. **Implementierung.** Ein registrierter Spec ohne Handler ist ein
            Konfigurationsfehler und kein Berechtigungsproblem.
 
         Der Aufrufer nennt ``run_id`` und ``user_id`` ausdrücklich, statt dass
         die Registry sie dem Grant entnimmt: Ein Vergleich eines Wertes mit sich
         selbst prüft nichts.
         """
+        # Lokal, um den Zyklus zu vermeiden: Die Policy-Schicht braucht die
+        # Registry zur Werkzeugauflösung.
+        from jarvis_core.policy.approval import ExecutionGrant as _Grant
+
+        if type(auth) is not _Grant:
+            raise ForgedAuthorization(
+                "Die vorgelegte Autorisierung ist kein ExecutionGrant. Ein Objekt, das "
+                "nur so aussieht, ist keines — Erlaubnis entsteht ausschließlich im "
+                "ApprovalGateway."
+            )
+
         spec = self.require(auth.tool_name)
         handler = self._handlers.get(auth.tool_name)
         if handler is None:
             raise UnknownTool(f"Für {auth.tool_name!r} ist keine Implementierung registriert.")
 
-        from jarvis_core.policy.approval import payload_hash  # lokal: Zyklus vermeiden
+        from jarvis_core.policy.approval import payload_hash
 
         actual = payload_hash(spec.name, auth.arguments)
         if not compare_digest(actual, auth.verified_hash):

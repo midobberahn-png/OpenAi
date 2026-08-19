@@ -69,12 +69,21 @@ def test_core_kennt_keine_konkreten_provider(path: Path) -> None:
 
 @pytest.mark.invariant("policy-single-entry-point")
 def test_execution_grant_wird_nur_im_gateway_erzeugt() -> None:
-    """Der Sentinel in ``ExecutionGrant`` macht Fremderzeugung unbequem —
-    verhindern kann Python sie nicht. Dieser Test ist die eigentliche
-    Absicherung: Er findet jede Konstruktion außerhalb von ``approval.py``,
-    auch eine, die den Sentinel importiert hat.
+    """Findet jede Konstruktion außerhalb von ``approval.py``.
 
-    Der Docstring von ``ExecutionGrant`` verweist auf genau diese Prüfung.
+    Die erste Fassung suchte ausschließlich ``ExecutionGrant(...)`` als
+    ``ast.Name``. Ein externes Review hat sie mit ``approval.ExecutionGrant(...)``
+    umgangen — ein Attributzugriff, und der Test blieb grün. Seitdem wird jeder
+    Aufruf geprüft, dessen *aufgerufener Name* am Ende ``ExecutionGrant`` heißt,
+    unabhängig davon, wie er erreicht wird.
+
+    Zusätzlich werden Import-Aliase erfasst: ``from ... import ExecutionGrant as
+    EG`` verschiebt den Namen, nicht die Sache.
+
+    Wichtig zur Einordnung: Dieser Test ist seit dem Bypass-Befund **nicht mehr
+    die eigentliche Absicherung**. Die trägt die nominale Prüfung in
+    ``ToolRegistry.execute()``. Ein AST-Test kennt nur die Muster, die man ihm
+    beigebracht hat; die Laufzeit kennt das Objekt.
     """
     gateway = CORE / "policy" / "approval.py"
     offenders: list[str] = []
@@ -83,13 +92,28 @@ def test_execution_grant_wird_nur_im_gateway_erzeugt() -> None:
         if path == gateway:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+        # Aliase auflösen: Unter welchen Namen ist die Klasse hier bekannt?
+        namen = {"ExecutionGrant"}
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "ExecutionGrant"
-            ):
-                offenders.append(f"{path.relative_to(REPO)}:{node.lineno}")
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "ExecutionGrant" and alias.asname:
+                        namen.add(alias.asname)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                gerufen = node.func
+                # Sowohl Name(...) als auch modul.Name(...) und a.b.Name(...)
+                schluss = (
+                    gerufen.id
+                    if isinstance(gerufen, ast.Name)
+                    else gerufen.attr
+                    if isinstance(gerufen, ast.Attribute)
+                    else ""
+                )
+                if schluss in namen:
+                    offenders.append(f"{path.relative_to(REPO)}:{node.lineno}")
             if isinstance(node, ast.Name) and node.id == "_GRANT_SENTINEL":
                 offenders.append(f"{path.relative_to(REPO)}:{node.lineno} (Sentinel)")
 

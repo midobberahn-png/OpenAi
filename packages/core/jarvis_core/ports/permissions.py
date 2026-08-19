@@ -7,12 +7,12 @@ Komponente, die über jede Werkzeugausführung entscheidet, keine Nebensache.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 from uuid import UUID
 
 from jarvis_contracts import PermissionGrant, ToolSpec
 
-__all__ = ["ExecutionAuthorization", "PermissionStore", "RateLimiter", "ToolLookup"]
+__all__ = ["PermissionStore", "RateLimiter", "ToolLookup"]
 
 
 class PermissionStore(Protocol):
@@ -39,35 +39,19 @@ class RateLimiter(Protocol):
     async def exceeded(self, user_id: UUID, tool_name: str, limit: str) -> bool: ...
 
 
-class ExecutionAuthorization(Protocol):
-    """Nachweis, dass ein Werkzeugaufruf das Ausführungs-Gate durchlaufen hat.
-
-    Strukturell typisiert statt per Import, damit die Registry nicht von der
-    Policy-Schicht abhängt — sonst entstünde ein Zyklus, weil die Policy die
-    Registry für die Werkzeugauflösung braucht.
-
-    Erfüllt wird das Protokoll ausschließlich von
-    ``jarvis_core.policy.approval.ExecutionGrant``, dessen Konstruktor gegen
-    Fremderzeugung gesichert ist.
-
-    ``run_id`` und ``user_id`` gehören zum Protokoll, weil die Registry sie
-    prüft: Ein Grant ist die Erlaubnis für *einen* Aufruf in *einem* Lauf. Ohne
-    diese Felder wäre er ein Wertobjekt, das überall dort gilt, wo Werkzeugname
-    und Argumente zufällig passen — und dann hinge die Bindung allein daran,
-    dass niemand ihn weiterreicht.
-    """
-
-    @property
-    def tool_name(self) -> str: ...
-
-    @property
-    def verified_hash(self) -> str: ...
-
-    @property
-    def arguments(self) -> dict[str, Any]: ...
-
-    @property
-    def run_id(self) -> UUID: ...
-
-    @property
-    def user_id(self) -> UUID: ...
+# ``ExecutionAuthorization`` gab es hier einmal als ``Protocol``. Es ist
+# entfernt, und der Grund gehört in den Quelltext, weil er allgemein gilt:
+#
+# Das Protokoll führte ``tool_name``, ``verified_hash``, ``arguments``,
+# ``run_id`` und ``user_id`` und behauptete im Docstring, es werde
+# ausschließlich von ``ExecutionGrant`` erfüllt. Strukturelle Typisierung
+# leistet diese Exklusivität aber gerade nicht: Ein externes Review baute ein
+# ``SimpleNamespace`` mit denselben Attributen und einem korrekt berechneten
+# Hash — und führte damit ``mail.send`` aus, ohne Policy Engine, ohne Approval
+# Gateway, ohne Grant.
+#
+# Die Lehre ist nicht „dieses Protokoll war schlecht benannt", sondern: Ein
+# Protocol beantwortet die Frage „sieht es so aus?". Wo es um Erlaubnis geht,
+# lautet die Frage „kommt es von dort?" — und die beantwortet nur eine nominale
+# Prüfung. ``ToolRegistry.execute()`` verlangt deshalb ``type(auth) is
+# ExecutionGrant``.

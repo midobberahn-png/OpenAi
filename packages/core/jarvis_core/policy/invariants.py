@@ -348,10 +348,19 @@ INVARIANTS: tuple[Invariant, ...] = (
         id="policy-single-entry-point",
         title="Die Policy Engine ist der einzige Weg",
         statement=(
-            "Kein Werkzeug wird ohne Policy-Entscheidung ausgeführt: Die Registry "
-            "gibt keinen Handler heraus und verlangt eine ExecutionAuthorization."
+            "Kein Werkzeug wird ohne Policy-Entscheidung ausgeführt: Die Registry gibt "
+            "keinen Handler heraus und verlangt einen ExecutionGrant — nominal geprüft "
+            "(type(auth) is ExecutionGrant), nicht strukturell."
         ),
-        why="Ein zweiter Pfad wäre der Pfad, den niemand prüft.",
+        why=(
+            "Ein zweiter Pfad wäre der Pfad, den niemand prüft. Das „nominal“ ist "
+            "teuer erkauft: Eine frühere Fassung nahm ein Protocol entgegen und prüfte "
+            "nur Attribute. Ein externes Review baute daraufhin ein SimpleNamespace mit "
+            "passendem Hash und führte mail.send aus — ohne Policy, ohne Approval, ohne "
+            "Grant. Die Invariante stand zu diesem Zeitpunkt auf ENFORCED und war es "
+            "nicht. Strukturelle Typisierung fragt „sieht es so aus?“; Erlaubnis "
+            "verlangt „kommt es von dort?“."
+        ),
         status=InvariantStatus.ENFORCED,
         component="core.policy.engine",
     ),

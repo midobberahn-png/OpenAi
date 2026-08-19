@@ -54,19 +54,35 @@ def _route_files() -> list[Path]:
     return sorted(p for p in ROUTES.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+HTTP_METHODEN = {"get", "post", "put", "patch", "delete", "head", "options", "api_route"}
+
+
 def _endpoints(tree: ast.AST) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
-    """Funktionen mit einem ``@router.<methode>``-Dekorator."""
+    """Funktionen mit einem HTTP-Dekorator — **egal, wie das Objekt heißt**.
+
+    Die erste Fassung suchte wörtlich ``router.<methode>``. Ein externes Review
+    hat sie mit zwei Zeilen umgangen::
+
+        _alias = router
+
+        @_alias.post("/…")
+        async def ohne_sitzung(payload: MitUserId): ...
+
+    Elf von elf Strukturtests blieben grün, während ein Endpunkt ohne
+    Sitzungsprüfung ``user_id`` aus dem Body las. Der Fehler lag nicht im
+    Alias, sondern in der Annahme: Der Test hat nach einem *Namen* gesucht,
+    obwohl ihn die *Form* interessiert.
+
+    Jetzt zählt jeder Dekorator, dessen Attribut eine HTTP-Methode ist. Ein
+    Endpunkt, der so nicht erkannt wird, ist auch für FastAPI keiner.
+    """
     found: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
         for deco in node.decorator_list:
             call = deco.func if isinstance(deco, ast.Call) else deco
-            if (
-                isinstance(call, ast.Attribute)
-                and isinstance(call.value, ast.Name)
-                and call.value.id == "router"
-            ):
+            if isinstance(call, ast.Attribute) and call.attr in HTTP_METHODEN:
                 found.append(node)
                 break
     return found
@@ -238,4 +254,39 @@ def test_jeder_oeffentliche_endpunkt_ist_begrenzt(path: Path) -> None:
     assert not fehlend, (
         f"{path.name}: Öffentliche Endpunkte ohne Zugriffsgrenze: {fehlend}. "
         "Wer ohne Anmeldung erreichbar ist, braucht eine."
+    )
+
+
+@pytest.mark.invariant("identity-derives-from-session")
+@pytest.mark.parametrize("path", _route_files(), ids=lambda p: p.name)
+def test_kein_zweitname_fuer_den_router(path: Path) -> None:
+    """Ein Alias auf den Router ist ein zweiter Eingang.
+
+    Der Test oben erkennt Endpunkte inzwischen an der HTTP-Methode statt am
+    Objektnamen und ist damit gegen Aliase unempfindlich. Diese Prüfung kommt
+    trotzdem dazu, weil ein Alias auch ohne Umgehungsabsicht ein schlechtes
+    Zeichen ist: Wer einen zweiten Namen für denselben Router einführt, hat
+    entweder einen Grund, den man lesen können sollte, oder keinen.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    aliase: list[str] = []
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "router"
+        ):
+            aliase.extend(t.id for t in node.targets if isinstance(t, ast.Name))
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "router"
+            and isinstance(node.target, ast.Name)
+        ):
+            aliase.append(node.target.id)
+
+    assert not aliase, (
+        f"{path.name}: Zweitname(n) für den Router: {aliase}. "
+        "Ein zweiter Name für denselben Eingang ist ein zweiter Eingang."
     )

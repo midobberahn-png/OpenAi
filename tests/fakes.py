@@ -29,6 +29,7 @@ from jarvis_contracts import (
     Run,
     RunStatus,
     ScopeConstraints,
+    TaintLevel,
     ToolResult,
     ToolSpec,
 )
@@ -338,4 +339,42 @@ def build_run(
         routing=routing,
         trace_id="trace-test",
         started_at=NOW,
+    )
+
+
+async def echter_grant(
+    registry: ToolRegistry,
+    spec: ToolSpec,
+    arguments: dict[str, Any],
+    *,
+    run_id: UUID,
+    user_id: UUID = USER,
+    scope_mode: str = "allow",
+) -> Any:
+    """Erzeugt einen Grant auf dem einzigen Weg, auf dem er entstehen darf.
+
+    Existiert, weil die Registry seit dem Bypass-Befund nominal prüft: Ein
+    nachgebautes Objekt reicht nicht mehr, und das ist der ganze Punkt. Wer in
+    einem Test eine Ausführung braucht, muss durch Policy Engine und Approval
+    Gateway — genau wie die Anwendung.
+    """
+    from datetime import UTC, datetime
+
+    from jarvis_contracts import PolicyRequest
+    from jarvis_core.policy import ApprovalGateway, PolicyEngine, UnverifiedSessions
+
+    perms = FakePermissions()
+    for scope in spec.scopes:
+        perms.allow(scope) if scope_mode == "allow" else perms.confirm(scope)
+
+    policy = PolicyEngine(registry, perms)
+    gateway = ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions())
+    return await gateway.authorize_allowed(
+        request=PolicyRequest(
+            user_id=user_id, run_id=run_id, tool_name=spec.name, arguments=arguments
+        ),
+        spec=spec,
+        taint=TaintLevel.CLEAN,
+        invocation_id=uuid4(),
+        now=datetime.now(tz=UTC),
     )
