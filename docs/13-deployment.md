@@ -128,6 +128,28 @@ Variante B hat eine wichtige Konsequenz: Ohne laufenden Mac gibt es kein lokales
 | Backups | siehe §5 |
 | Autostart | launchd (macOS) für Edge + Compose; systemd auf Linux |
 | Debug | aus; keine Stacktraces in API-Antworten |
+| `TRUSTED_PROXIES` | **Pflicht**, sobald Caddy davorsteht — siehe unten |
+
+### `TRUSTED_PROXIES` hinter dem Reverse Proxy
+
+Die Anwendung glaubt `X-Forwarded-For` nur, wenn die tatsächliche Gegenstelle
+in `TRUSTED_PROXIES` steht. Das ist der sichere Standard: Ohne diese Bedingung
+wäre der Header ein Feld, das der Anfragende selbst füllt, und das Rate-Limit
+auf den Anmeldeendpunkten wäre wirkungslos.
+
+Die Kehrseite ist im Betrieb spürbar und deshalb hier vermerkt: **Steht Caddy
+davor und ist `TRUSTED_PROXIES` nicht gesetzt, sehen alle Anfragen wie eine
+einzige Gegenstelle aus** — die des Proxys. Die gesamte Installation teilt
+sich dann einen Zähler und sperrt sich nach zehn Anmeldeversuchen pro Minute
+selbst aus.
+
+```env
+# Adresse, unter der Caddy die API erreicht — nicht die öffentliche.
+TRUSTED_PROXIES=172.18.0.1
+```
+
+Der Fehler äußert sich als „429 Too Many Requests" bei völlig normaler
+Nutzung. Wer ihn sucht, sucht ihn erfahrungsgemäß zuerst im Limit selbst.
 
 ---
 
