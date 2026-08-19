@@ -161,6 +161,33 @@ PORTIONEN: tuple[Portion, ...] = (
             "tests/integration/test_rate_limit.py",
         ),
     ),
+    Portion(
+        nummer="08",
+        titel="Sprachmodelle — Gateway, Adapter, Modellschleife",
+        auftrag=(
+            "Die jüngste Schicht und die einzige, die noch keine Prüfung gesehen hat. "
+            "Hier bekommt ein Sprachmodell zum ersten Mal die Möglichkeit, etwas zu "
+            "bewirken. Zu prüfen: Gibt es einen Weg zu einem Modellaufruf, der nicht "
+            "durch ModelGateway.complete() führt? Führt die Schleife irgendwo selbst "
+            "aus, statt über AgentSession.call_tool() zu gehen? Ist "
+            "ModelGateway._kontaminiert() richtig — die Antwort erbt den Taint ihres "
+            "Kontexts, statt pauschal als Fremdinhalt zu gelten; wo bricht diese Regel? "
+            "Und der wunde Punkt, den ich selbst sehe: data_class ist ein Parameter "
+            "von complete(). Das Gateway kann nicht erzwingen, dass er aus dem "
+            "persistierten Lauf stammt — es vertraut dem Aufrufer. Gibt es einen "
+            "Aufrufer, bei dem dieses Vertrauen nicht gerechtfertigt ist? "
+            "Hinweis: Der Ollama-Adapter ist nie gegen ein laufendes Ollama gelaufen, "
+            "nur gegen aufgezeichnete Antworten."
+        ),
+        dateien=(
+            "packages/contracts/jarvis_contracts/llm.py",
+            "packages/core/jarvis_core/ports/llm.py",
+            "packages/core/jarvis_core/providers/gateway.py",
+            "packages/core/jarvis_core/agents/model_loop.py",
+            "packages/providers/jarvis_providers/ollama.py",
+            "tests/unit/test_model_loop.py",
+        ),
+    ),
 )
 
 
@@ -191,6 +218,13 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B13 | `X-Forwarded-For` wird nur bei konfiguriertem Proxy geglaubt. | `deps.py:client_identifier` | 04 |
 | B14 | Jede Einmaligkeitszusage liegt in der `WHERE`-Klausel, nicht in einer Prüfung davor. | `db/*_store.py`, `rate_limit_store.py` | 05 |
 | B15 | Zählen und Fristsetzen sind unteilbar (Lua). | `rate_limit_store.py` | 05 |
+| B20 | Es gibt keinen Modellaufruf am Gateway vorbei; der Port kennt weder Datenklasse noch Taint und kann deshalb nichts über die eigene Zulassung entscheiden. | `providers/gateway.py`, `ports/llm.py` | 08 |
+| B21 | P3 bleibt lokal, und zwar über **zwei** unabhängige Prüfungen — `accepts()` ist Konfiguration, `is_local` eine Eigenschaft des Deployments. | `providers/gateway.py:_zugelassen` | 08 |
+| B22 | Unbekanntes Modell, fehlender Anbieter, überschrittene Datenklasse: jeder Fall endet in einer Ausnahme, nirgends in einem Rückfall auf ein verfügbares Modell. | `providers/gateway.py` | 08 |
+| B23 | Eine Antwort erbt die Kontamination ihres Kontexts — nicht mehr (sonst wäre nach dem ersten Aufruf jeder Lauf kontaminiert) und nicht weniger. Der Adapter kann daran nichts ändern; das Gateway überschreibt in beide Richtungen. | `providers/gateway.py:_kontaminiert` | 08 |
+| B24 | Die Modellschleife führt **nichts** aus. Jeder Vorschlag geht durch `AgentSession.call_tool()` und damit denselben Weg wie eine Absicht des Nutzers. | `agents/model_loop.py:act` | 08, 02 |
+| B25 | Das Werkzeugangebot wird in **jeder** Runde neu berechnet; nach einem Werkzeug, das Fremdinhalt gelesen hat, fehlen die sendenden Werkzeuge im Schema. | `agents/model_loop.py:_angebot` | 08, 02 |
+| B26 | Die Schleife bestätigt nicht selbst: Verlangt die Policy eine Bestätigung, endet die Runde mit `NEEDS_CONFIRMATION`. Und sie ist endlich (`max_iterations` plus Laufbudget). | `agents/model_loop.py:act` | 08 |
 
 ### Was seit dem letzten Paket geschah
 
@@ -277,7 +311,40 @@ Drei weitere Befunde derselben Runde, alle behoben (`dfecbb9`):
 Frage geprüft. Beide Male gefunden von jemandem mit dem Quelltext in der Hand,
 der etwas ausprobiert hat.
 
+### Neu in diesem Paket: der Sprachmodell-Block (Portion 08)
+
+Seit dem letzten Paket ist die Schicht dazugekommen, auf die alles andere
+hinauslief: Model Gateway, LLM-Port, Ollama-Adapter und die Modellschleife.
+**Sie hat noch keine externe Prüfung gesehen.** Wer nur eine Portion lesen
+kann, sollte diese nehmen.
+
+Beim Bauen sind mir zwei eigene Fehler aufgefallen, beide vor dem Commit
+behoben — sie stehen hier, weil sie zeigen, wo die Stolperstellen dieser
+Schicht liegen:
+
+* **„Jede Modellantwort ist Fremdinhalt"** war die erste Regel. Sie ist
+  bequem, streng und falsch: Nach dem ersten Modellaufruf wäre *jeder* Lauf
+  kontaminiert und `mail.send` nie wieder möglich — genau der Widerspruch aus
+  V1.0, den das Sanitization-Gate aufgelöst hat. Jetzt erbt die Antwort, was
+  im Kontext stand.
+* **`AgentSession.tools` war ein eingefrorenes Set.** Damit galt die Zusage
+  „das Angebot verengt sich mit der Kontamination" nicht — die Schleife hätte
+  in Runde 3 mit dem Angebot aus Runde 1 gearbeitet. Die Werkzeugmenge wird
+  jetzt bei jedem Zugriff neu berechnet.
+
+Beide Male war die Beschreibung richtig und der Code nicht. Das ist dasselbe
+Muster wie bei den beiden Bypässen, nur diesmal früher bemerkt.
+
 ### Wo ich die Prüfung am dringendsten für nötig halte
+
+0. **Den Modellblock überhaupt erst einmal ansehen** (Portion 08). Er ist
+   ungeprüft, und er ist die Stelle, an der ein Modell erstmals etwas
+   auslösen kann. Die konkrete Frage, bei der ich selbst unsicher bin: Das
+   Gateway nimmt `data_class` als Parameter entgegen und kann nicht erzwingen,
+   dass er aus dem persistierten Lauf stammt. Bei den Werkzeugen war genau
+   diese Konstruktion — der Aufrufer bringt seine eigene Obergrenze mit — der
+   Befund `allowed_data_class`. Ist sie hier aus einem guten Grund vertretbar
+   oder aus Gewohnheit stehengeblieben?
 
 1. **Den Ausführungsanspruch gegenprüfen** (Portion 01 und 05). Der Anspruch
    ist ein bedingtes UPDATE auf `pending_actions.executed_at`. Gibt es einen
@@ -389,8 +456,8 @@ def schreibe_anleitung(commit: str, uebersicht: list[tuple[str, str, int]]) -> P
     zeilen += [
         "",
         "Die Portionen sind unabhängig lesbar. Wer nur eine prüfen kann, sollte",
-        "**04 (HTTP-Grenze)** oder **06 (Strukturtests)** nehmen — die jüngste und",
-        "die tragendste Schicht.",
+        "**08 (Sprachmodelle)** oder **06 (Strukturtests)** nehmen — die jüngste,",
+        "noch ungeprüfte Schicht und die tragendste.",
         "",
         "---",
         "",
@@ -400,8 +467,8 @@ def schreibe_anleitung(commit: str, uebersicht: list[tuple[str, str, int]]) -> P
         "",
         "## Was im Paket fehlt",
         "",
-        "* **Verträge** (`packages/contracts/`) außer `auth.py` — 12 Module, überwiegend",
-        "  Datenstrukturen. Bei Bedarf einzeln nachreichbar.",
+        "* **Verträge** (`packages/contracts/`) außer `auth.py` und `llm.py` — 12 Module,",
+        "  überwiegend Datenstrukturen. Bei Bedarf einzeln nachreichbar.",
         "* **Migrationen** und das Datenmodell (`db/models.py`, ~950 Zeilen).",
         "* **Die übrigen Testsuiten** — Policy, Taint, Approval-Primitive, Klassifikation,",
         "  Planer. Zusammen etwa 2.500 Zeilen.",
@@ -417,16 +484,27 @@ def schreibe_anleitung(commit: str, uebersicht: list[tuple[str, str, int]]) -> P
         "",
         "```bash",
         "cd ~/jarvis",
-        "uv run pytest -q                                    # 702 Tests",
-        "uv run pytest -m security -q                        # 405 blockierende",
-        "uv run pytest tests/unit/test_invariant_coverage.py -q -s   # 39/40",
-        "uv run mypy packages apps/api                       # strict, 73 Dateien",
+        "docker compose up -d                                # Postgres und Redis",
+        "make gate                                           # alles unten in einem Lauf",
+        "```",
+        "",
+        "Einzeln, wenn die Zahlen interessieren:",
+        "",
+        "```bash",
+        "uv run pytest -q                                    # 749 Tests",
+        "uv run pytest -m security -q                        # 445 blockierende",
+        "uv run pytest tests/unit/test_invariant_coverage.py -q -s   # 41/42",
+        "uv run mypy packages apps/api                       # strict, 81 Dateien",
         "uv run ruff check . && uv run ruff format --check .",
         "```",
         "",
-        "Die Integrationstests brauchen Postgres und Redis (`docker compose up -d`).",
-        "Ohne sie überspringt die Suite still — das ist beim Nachprüfen zu beachten:",
-        "Eine grüne Ausgabe ohne laufende Dienste sagt weniger, als sie aussieht.",
+        "**Ein Hinweis, der beim letzten Mal Zeit gekostet hat:** Ohne laufende",
+        "Dienste überspringt `pytest` die Integrationstests und meldet ein sattes",
+        "Grün — einschließlich der Tests, die Nebenläufigkeit belegen sollen. Ein",
+        "Prüfer hat genau das erlebt: 702 Tests, 0 Fehler, 110 übersprungen. Der",
+        "Schalter `JARVIS_REQUIRE_SERVICES=1` macht das Überspringen zum Fehler;",
+        "`make gate` und `make proof` setzen ihn, in CI ist er gesetzt. Eine grüne",
+        "Ausgabe ohne ihn sagt weniger, als sie aussieht.",
     ]
     ziel = OUT / "00-anleitung.md"
     ziel.write_text("\n".join(zeilen), encoding="utf-8")
