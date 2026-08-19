@@ -127,15 +127,20 @@ PORTIONEN: tuple[Portion, ...] = (
         nummer="06",
         titel="Strukturtests — die Absicherung gegen künftige Fehler",
         auftrag=(
-            "Diese Tests sollen Fehler finden, die noch niemand gemacht hat. Zu "
-            "prüfen: Was genau fangen sie, und was fangen sie nicht? Lässt sich eine "
-            "Verletzung so schreiben, dass der AST-Test sie übersieht — etwa durch "
-            "eine Zuweisung statt einer Annotation, einen anderen Dekoratornamen oder "
-            "eine ausgelagerte Hilfsfunktion?"
+            "Diese Tests sollen Fehler finden, die noch niemand gemacht hat — und "
+            "zwei von ihnen haben beim letzten Review versagt (siehe „Was seit dem "
+            "letzten Paket geschah“). Beide sind gehärtet. Zu prüfen: Lässt sich die "
+            "Härtung erneut umgehen? Der Grant-Test folgt jetzt dem aufgerufenen Namen "
+            "samt Aliasen, der HTTP-Test der Methode statt des Objektnamens. Wo ist "
+            "die nächste Lücke — Dekoratoren über eine Hilfsfunktion, dynamisch "
+            "registrierte Routen, `add_api_route()`? Und: Genügt die nominale Prüfung "
+            "in test_tool_registry.py, oder gibt es einen Weg an `type(auth) is "
+            "ExecutionGrant` vorbei?"
         ),
         dateien=(
             "tests/unit/test_http_boundary.py",
             "tests/unit/test_layering.py",
+            "tests/unit/test_tool_registry.py",
             "tests/unit/test_invariant_coverage.py",
         ),
     ),
@@ -167,7 +172,7 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 
 | # | Behauptung | Fundstelle | Portion |
 |---|---|---|---|
-| B1 | Ein Werkzeug wird nie ohne `ExecutionGrant` ausgeführt, und Grants entstehen nur im `ApprovalGateway`. | `tools/registry.py:execute`, `policy/approval.py` | 01 |
+| B1 | Ein Werkzeug wird nie ohne `ExecutionGrant` ausgeführt. Die Registry prüft die Herkunft **nominal** (`type(auth) is ExecutionGrant`), nicht strukturell. | `tools/registry.py:execute` | 01, 06 |
 | B2 | Der Grant ist an Lauf **und** Nutzer gebunden; die Registry vergleicht beide gegen den Ausführungskontext. | `tools/registry.py:execute` | 01 |
 | B3 | Die Taint-Prüfung steht vor der Berechtigungsprüfung, und die Reihenfolge ist bedeutungstragend. | `policy/engine.py:decide` | 01 |
 | B4 | `authorize_allowed()` nimmt keine mitgebrachte Entscheidung entgegen, sondern fragt selbst. | `policy/approval.py` | 01 |
@@ -183,14 +188,58 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B14 | Jede Einmaligkeitszusage liegt in der `WHERE`-Klausel, nicht in einer Prüfung davor. | `db/*_store.py`, `rate_limit_store.py` | 05 |
 | B15 | Zählen und Fristsetzen sind unteilbar (Lua). | `rate_limit_store.py` | 05 |
 
+### Was seit dem letzten Paket geschah
+
+Das vorige Paket führte zu einem Befund, der die wichtigste Zusicherung des
+Systems widerlegt hat. Er ist hier vollständig aufgeführt, weil die
+Gegenprüfung der Reparatur jetzt der dringendste Prüfauftrag ist.
+
+**Der Bypass.** `ExecutionAuthorization` war ein `Protocol`. Die Registry
+prüfte Hash, Lauf und Nutzer — aber nicht die Herkunft des Objekts. Ein
+`SimpleNamespace` mit passenden Attributen und korrekt berechnetem Hash führte
+`mail.send` aus, ohne Policy Engine, ohne Approval Gateway, ohne Grant. Die
+Invariante `policy-single-entry-point` stand dabei auf ENFORCED, und drei
+grüne Tests deckten die Stelle ab: Sie prüften, dass ein Grant mit falschem
+Hash, falschem Lauf oder falschem Nutzer abgewiesen wird — nur nicht, ob
+überhaupt einer vorliegt.
+
+**Zwei Strukturtests waren umgehbar.** Der Grant-Test suchte nur
+`ExecutionGrant(...)` als `ast.Name`; `approval.ExecutionGrant(...)` kam
+durch. Der HTTP-Test erkannte Endpunkte am wörtlichen Namen `router`; mit
+`_alias = router` ließ sich ein ungeschützter Endpunkt einschmuggeln, der
+`user_id` aus dem Body las.
+
+**Was daraufhin geändert wurde** (Commit `04d983a`):
+
+* `ToolRegistry.execute()` prüft `type(auth) is ExecutionGrant` — nominal und
+  ausdrücklich nicht `isinstance`, weil eine Unterklasse `__init__`
+  überschreiben könnte. Die Prüfung steht vor allen anderen.
+* `ExecutionAuthorization` ist entfernt; an seiner Stelle steht der Grund.
+* Beide Strukturtests sind gehärtet, beide Umgehungen nachgestellt und als
+  abgewehrt belegt.
+* Die Registry-Tests bauten Auth-Objekte nach und bestätigten damit den
+  Bypass. Sie gehen jetzt durch `echter_grant()` — also durch Policy Engine
+  und Approval Gateway.
+
+**Die unangenehme Erkenntnis steht in `docs/18` §5:** Die Kennzahl blieb
+während des gesamten Vorfalls bei 38/39. Der Metatest prüft, ob eine
+Invariante einen Test hat — nicht, ob der Test das Richtige prüft.
+
 ### Wo ich die Prüfung am dringendsten für nötig halte
 
-1. **Portion 06 — die Strukturtests.** Sie tragen einen großen Teil der
-   Zusicherungen, und ein AST-Test ist nur so gut wie die Muster, die er kennt.
-   Ich habe zwei davon gegengeprüft, indem ich Verletzungen eingebaut habe;
-   das ist eine Stichprobe, kein Beweis.
+1. **Die Reparatur des Bypasses gegenprüfen** (Portion 01 und 06). Die
+   nominale Prüfung schließt den bekannten Weg. Gibt es einen anderen? Ein
+   Grant, der über `copy`/`pickle`/`__reduce__` entsteht; ein Aufruf von
+   `execute()` mit einem echten, aber für einen anderen Zweck erzeugten Grant;
+   ein Weg, `ExecutionGrant` neu zu binden, bevor die Registry ihn lokal
+   importiert.
 
-2. **`client_identifier()` hinter einem Reverse Proxy.** Ohne gesetztes
+2. **Die gehärteten Strukturtests erneut angreifen** (Portion 06). Sie waren
+   schon einmal umgehbar, und die Härtung folgt wieder Mustern —
+   `add_api_route()`, ein Dekorator aus einer Hilfsfunktion, eine Route in
+   einer Datei außerhalb von `routes/`.
+
+3. **`client_identifier()` hinter einem Reverse Proxy.** Ohne gesetztes
    `TRUSTED_PROXIES` ist `request.client.host` die Adresse des Proxys — für
    *alle* Nutzer dieselbe. Die Installation teilt sich dann einen Zähler und
    sperrt sich nach zehn Anmeldeversuchen pro Minute selbst aus. Die sichere
@@ -204,7 +253,7 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
    (422/400) und inhaltlichen Fehlschlägen (einheitlich 401). Das ist kein
    Orakel über Kontoexistenz — nachgemessen, nicht angenommen.)*
 
-3. **Die Ausnahmeliste `OEFFENTLICH`** in `test_http_boundary.py`. Sie ist die
+4. **Die Ausnahmeliste `OEFFENTLICH`** in `test_http_boundary.py`. Sie ist die
    Stelle, an der sich eine fehlende Sitzungsprüfung legalisieren lässt, indem
    man einen Namen einträgt. Der Test zwingt zur sichtbaren Änderung, aber
    nicht zur Begründung.
@@ -307,8 +356,8 @@ def schreibe_anleitung(commit: str, uebersicht: list[tuple[str, str, int]]) -> P
         "",
         "```bash",
         "cd ~/jarvis",
-        "uv run pytest -q                                    # 587 Tests",
-        "uv run pytest -m security -q                        # 291 blockierende",
+        "uv run pytest -q                                    # 601 Tests",
+        "uv run pytest -m security -q                        # 305 blockierende",
         "uv run pytest tests/unit/test_invariant_coverage.py -q -s   # 38/39",
         "uv run mypy packages apps/api                       # strict, 73 Dateien",
         "uv run ruff check . && uv run ruff format --check .",
