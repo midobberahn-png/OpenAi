@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "jarvis-contracts",
     "jarvis-core",
+    "jarvis-providers",
 ]
 
 [dependency-groups]
@@ -30,6 +31,7 @@ members = ["packages/*", "apps/api"]
 [tool.uv.sources]
 jarvis-contracts = { workspace = true }
 jarvis-core = { workspace = true }
+jarvis-providers = { workspace = true }
 
 
 # --------------------------------------------------------------------------
@@ -70,6 +72,9 @@ ignore = [
 # werden. Deshalb bleibt TID251 ausschließlich in packages/contracts aktiv;
 # überall sonst ist der Import der eigenen bzw. tieferen Schicht legitim.
 "packages/core/**" = ["TID251"]
+# Die Adapterschicht darf sich selbst importieren — die Schranke meint die
+# Richtung nach oben, nicht das eigene Paket.
+"packages/providers/**" = ["TID251"]
 "apps/**" = ["TID251"]
 "scripts/**" = ["TID251"]
 # PgUUID hält den PostgreSQL-Typ vom gleichnamigen uuid.UUID auseinander;

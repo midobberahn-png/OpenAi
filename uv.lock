@@ -8,6 +8,7 @@ members = [
     "jarvis-api",
     "jarvis-contracts",
     "jarvis-core",
+    "jarvis-providers",
 ]
 
 [[package]]
@@ -423,6 +424,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "jarvis-contracts" },
     { name = "jarvis-core" },
+    { name = "jarvis-providers" },
 ]
 
 [package.dev-dependencies]
@@ -440,6 +442,7 @@ dev = [
 requires-dist = [
     { name = "jarvis-contracts", editable = "packages/contracts" },
     { name = "jarvis-core", editable = "packages/core" },
+    { name = "jarvis-providers", editable = "packages/providers" },
 ]
 
 [package.metadata.requires-dev]
@@ -517,6 +520,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "jarvis-contracts", editable = "packages/contracts" }]
+
+[[package]]
+name = "jarvis-providers"
+version = "0.1.0"
+source = { editable = "packages/providers" }
+dependencies = [
+    { name = "httpx" },
+    { name = "jarvis-contracts" },
+    { name = "jarvis-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "jarvis-contracts", editable = "packages/contracts" },
+    { name = "jarvis-core", editable = "packages/core" },
+]
 
 [[package]]
 name = "librt"
