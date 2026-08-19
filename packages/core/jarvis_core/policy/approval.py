@@ -151,11 +151,18 @@ _GRANT_SENTINEL = object()
 
 
 class ExecutionGrant(BaseModel):
-    """Erlaubnis, genau einen Werkzeugaufruf auszuführen.
+    """Erlaubnis, einen Werkzeugaufruf auszuführen.
 
     Existiert, damit ein Werkzeug nicht ohne Gate ausführbar ist: Die Registry
     verlangt einen Grant, und der entsteht ausschließlich in
     ``ApprovalGateway.authorize_execution()``.
+
+    **Was der Grant nicht leistet:** Er wird bei der Verwendung nicht
+    verbraucht. Wer ihn hat, kann ihn mehrfach vorlegen — die Registry prüft
+    Herkunft, Hash, Lauf und Nutzer, und alle vier gelten beim zweiten Mal
+    unverändert. Hier stand vorher „genau einen Werkzeugaufruf"; das war eine
+    Zusage, die der Mechanismus nicht trägt. Offen als ``grant-single-use``
+    (PLANNED), nachgemessen in ``tests/unit/test_grant_replay.py``.
 
     Python kann eine Konstruktion nicht wirklich verhindern — der Sentinel
     macht sie unbequem, die eigentliche Absicherung ist der AST-Test in

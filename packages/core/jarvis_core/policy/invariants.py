@@ -173,7 +173,7 @@ INVARIANTS: tuple[Invariant, ...] = (
     ),
     Invariant(
         id="execution-claim-single-use",
-        title="Eine Bestätigung führt höchstens einmal aus",
+        title="Eine Bestätigung erwirkt höchstens einen Ausführungsanspruch",
         statement=(
             "Eine bestätigte Aktion erwirkt genau einen Ausführungsanspruch; jede weitere "
             "Autorisierung derselben Bestätigung wird abgewiesen, auch unter "
@@ -189,6 +189,27 @@ INVARIANTS: tuple[Invariant, ...] = (
         ),
         status=InvariantStatus.ENFORCED,
         component="core.policy.approval",
+    ),
+    Invariant(
+        id="grant-single-use",
+        title="Ein ausgestellter Grant führt höchstens einmal aus",
+        statement=(
+            "Ein ExecutionGrant erlaubt genau einen Werkzeugaufruf; jede weitere Vorlage "
+            "desselben Grants — auch als Kopie, aus einem anderen Prozess oder "
+            "nebenläufig — erreicht den Handler nicht."
+        ),
+        why=(
+            "Der Titel der Vorgänger-Invariante versprach mehr, als der Mechanismus hielt. "
+            "claim_execution() sichert den Übergang von der Bestätigung zum Grant; die "
+            "Registry prüft danach Herkunft, Hash, Lauf und Nutzer — allesamt Werte, die "
+            "bei einer Wiedervorlage desselben Objekts unverändert gelten — und ruft den "
+            "Handler. Nachgemessen: ein Grant, zweimal vorgelegt, ergab zwei "
+            "Handler-Aufrufe; zehn nebenläufig vorgelegte ergaben zehn. Damit ist dies "
+            "der dritte Replay-Pfad desselben Musters — die Einmaligkeit hing wieder "
+            "einen Schritt zu früh."
+        ),
+        status=InvariantStatus.PLANNED,
+        component="core.tools.registry",
     ),
     Invariant(
         id="approval-not-forgeable-by-model",
