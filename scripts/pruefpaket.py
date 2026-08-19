@@ -45,12 +45,20 @@ PORTIONEN: tuple[Portion, ...] = (
             "Gibt es einen Pfad zu einem ExecutionGrant, der nicht durch "
             "PolicyEngine.decide() führt? Kann ein Aufrufer die Entscheidung "
             "beeinflussen, statt sie einzuholen? Ist die Reihenfolge der Prüfungen in "
-            "decide() an einer Stelle vertauschbar, ohne dass ein Test bricht?"
+            "decide() an einer Stelle vertauschbar, ohne dass ein Test bricht? "
+            "Neu und deshalb besonders zu prüfen: der Grant-Verbrauch in "
+            "ToolRegistry.execute() als fünfte Prüfung. Gibt es einen Weg zum Handler, "
+            "der an ihm vorbeiführt? Ist seine Stellung am Ende richtig — verbrennt "
+            "eine abgelehnte Prüfung wirklich keinen Anspruch? Und hält die Bindung an "
+            "die invocation_id, oder gibt es einen Grant, dessen invocation_id sich "
+            "beeinflussen lässt?"
         ),
         dateien=(
             "packages/core/jarvis_core/policy/engine.py",
             "packages/core/jarvis_core/policy/approval.py",
             "packages/core/jarvis_core/tools/registry.py",
+            "packages/core/jarvis_core/tools/grants.py",
+            "packages/core/jarvis_core/ports/grants.py",
             "packages/core/jarvis_core/ports/permissions.py",
             "packages/core/jarvis_core/policy/invariants.py",
         ),
@@ -120,6 +128,7 @@ PORTIONEN: tuple[Portion, ...] = (
             "apps/api/jarvis_api/db/session_store.py",
             "apps/api/jarvis_api/db/webauthn_store.py",
             "apps/api/jarvis_api/db/invocation_store.py",
+            "apps/api/jarvis_api/db/grant_store.py",
             "apps/api/jarvis_api/rate_limit_store.py",
         ),
     ),
@@ -159,6 +168,8 @@ PORTIONEN: tuple[Portion, ...] = (
             "tests/integration/test_http_auth.py",
             "tests/integration/test_e2e_identity_to_execution.py",
             "tests/integration/test_rate_limit.py",
+            "tests/unit/test_grant_replay.py",
+            "tests/integration/test_grant_consumption.py",
         ),
     ),
     Portion(
@@ -225,6 +236,8 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B24 | Die Modellschleife führt **nichts** aus. Jeder Vorschlag geht durch `AgentSession.call_tool()` und damit denselben Weg wie eine Absicht des Nutzers. | `agents/model_loop.py:act` | 08, 02 |
 | B25 | Das Werkzeugangebot wird in **jeder** Runde neu berechnet; nach einem Werkzeug, das Fremdinhalt gelesen hat, fehlen die sendenden Werkzeuge im Schema. | `agents/model_loop.py:_angebot` | 08, 02 |
 | B26 | Die Schleife bestätigt nicht selbst: Verlangt die Policy eine Bestätigung, endet die Runde mit `NEEDS_CONFIRMATION`. Und sie ist endlich (`max_iterations` plus Laufbudget). | `agents/model_loop.py:act` | 08 |
+| B27 | Ein ausgestellter Grant erreicht den Handler höchstens einmal — auch als Kopie, aus einem anderen Prozess und nebenläufig. Der Verbrauch hängt an der `invocation_id`, nicht am Objekt, und steht als letzter Schritt vor dem Handler. | `tools/registry.py:execute`, `db/grant_store.py` | 01, 05 |
+| B28 | Eine Registry ohne eingerichteten Grant-Verbrauch führt gar nichts aus. Es gibt keinen Vorgabewert, der ungesichert durchliefe. | `tools/registry.py:execute` | 01 |
 
 ### Was seit dem letzten Paket geschah
 
@@ -311,7 +324,38 @@ Drei weitere Befunde derselben Runde, alle behoben (`dfecbb9`):
 Frage geprüft. Beide Male gefunden von jemandem mit dem Quelltext in der Hand,
 der etwas ausprobiert hat.
 
-### Neu in diesem Paket: der Sprachmodell-Block (Portion 08)
+### Und ein drittes Mal, an derselben Stelle eine Etage tiefer
+
+Die dritte Prüfrunde fand den nächsten Replay-Pfad, und das Muster ist
+inzwischen unverkennbar. Gemeldet wurde: Ein echter `ExecutionGrant` lässt
+sich mehrfach an `ToolRegistry.execute()` übergeben. Nachgemessen, auf beiden
+Wegen — der Prüfer hatte über `authorize_allowed()` reproduziert, also den
+Pfad ohne Bestätigung:
+
+    Pfad A (ohne Bestätigung): 2 seriell, 10 parallel
+      — dort ist ein Grant allerdings ohnehin beliebig oft neu zu bekommen.
+    Pfad B (nach echter Bestätigung): 2 seriell, 12 nach zehn parallelen.
+      — der zweite authorize_execution() wurde korrekt abgewiesen. Der Claim
+        wirkt; er sichert nur die Ausstellung, nicht die Verwendung.
+
+Der Prüfer hatte recht, und der Befund reichte weiter als sein Nachweis:
+Betroffen war auch der bestätigte Pfad, den er nicht getestet hatte.
+
+**Dreimal dasselbe Muster.** Erst hing die Einmaligkeit an der Nonce statt an
+der Ausführung. Dann an der Autorisierung statt am Aufruf. Jetzt an der
+Ausstellung statt an der Verwendung. Jedes Mal einen Schritt zu früh, jedes
+Mal mit grüner Suite, jedes Mal von außen gefunden.
+
+Behoben durch einen Verbrauch an der `invocation_id`, als letzter Schritt vor
+dem Handler (`GrantConsumer`, `InProcessGrants`, `PostgresGrantConsumer`). Die
+vier Regressionstests entstanden **vor** der Reparatur und schlugen alle fehl;
+dazu drei Integrationstests über getrennte Datenbankverbindungen.
+
+Der dringendste Prüfauftrag dieser Runde ist damit: **Ist es diesmal der
+richtige Schritt?** Die Frage, die dreimal falsch beantwortet wurde, lautet
+nicht „wird geprüft?", sondern „wo entsteht die Wirkung?".
+
+### Neu seit der zweiten Runde: der Sprachmodell-Block (Portion 08)
 
 Seit dem letzten Paket ist die Schicht dazugekommen, auf die alles andere
 hinauslief: Model Gateway, LLM-Port, Ollama-Adapter und die Modellschleife.
@@ -491,10 +535,10 @@ def schreibe_anleitung(commit: str, uebersicht: list[tuple[str, str, int]]) -> P
         "Einzeln, wenn die Zahlen interessieren:",
         "",
         "```bash",
-        "uv run pytest -q                                    # 749 Tests",
-        "uv run pytest -m security -q                        # 445 blockierende",
-        "uv run pytest tests/unit/test_invariant_coverage.py -q -s   # 41/42",
-        "uv run mypy packages apps/api                       # strict, 81 Dateien",
+        "uv run pytest -q                                    # 766 Tests",
+        "uv run pytest -m security -q                        # 458 blockierende",
+        "uv run pytest tests/unit/test_invariant_coverage.py -q -s   # 42/43",
+        "uv run mypy packages apps/api                       # strict, 85 Dateien",
         "uv run ruff check . && uv run ruff format --check .",
         "```",
         "",

@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> Stand: 19.08.2026, Commit `007a2fd`. Dieses Dokument ist der Einstieg für
+> Stand: 19.08.2026, Commit `476461d`. Dieses Dokument ist der Einstieg für
 > eine frische Claude-Code-Sitzung. Es ersetzt kein Architekturdokument,
 > sondern sagt, wo das Projekt steht und was als Nächstes zu tun ist.
 
@@ -27,12 +27,12 @@ Umbenennung steht aus.
 
 | | |
 |---|---|
-| Commits | 31 (`9875468` … `007a2fd`), Branch `main`, Remote auf GitHub |
-| Tests | **749** gesamt — 445 mit `-m security`, 114 mit `-m integration` |
-| **Security Invariant Coverage** | **41/42** |
-| mypy | `strict`, sauber über 81 Dateien |
+| Commits | 34 (`9875468` … `476461d`), Branch `main`, Remote auf GitHub |
+| Tests | **766** gesamt — 458 mit `-m security`, 117 mit `-m integration` |
+| **Security Invariant Coverage** | **42/43** |
+| mypy | `strict`, sauber über 85 Dateien |
 | Ruff | sauber (check + format) |
-| Datenbank | 32 Tabellen, 7 Migrationen, bi-direktional geprüft |
+| Datenbank | 32 Tabellen, 8 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis als Dienste |
 
 ### Was seit dem letzten Dossier geschah
@@ -158,7 +158,8 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Tool Registry | `core/tools/registry.py` | prüft die **Herkunft** des Grants nominal |
 | Policy Engine | `core/policy/engine.py` | 7 Prüfstufen, Taint zuerst |
 | Approval Gateway | `core/policy/approval.py` | request → respond → **claim** → authorize |
-| Invarianten-Register | `core/policy/invariants.py` | 42 Invarianten |
+| Grant-Verbrauch | `core/tools/grants.py`, `api/db/grant_store.py` | an der `invocation_id`, zuletzt vor dem Handler |
+| Invarianten-Register | `core/policy/invariants.py` | 43 Invarianten |
 
 ### Orchestrator und Agenten
 
@@ -208,6 +209,9 @@ Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
 - **Rate-Limit**: 100 gleichzeitige Redis-Treffer ergeben die Stände 1–100
 - **Exfiltration über ein Modell**: Das Modell liest die präparierte Mail,
   schlägt `mail.send` an die fremde Adresse vor — und bekommt es nicht
+- **Replay des Grants**: derselbe echte Grant zweimal, zehnmal nebenläufig,
+  als vier Kopien (`model_copy`/`copy`/`deepcopy`) und über getrennte
+  Datenbankverbindungen → der Handler läuft genau einmal
 
 ## 6. Was **nicht** existiert
 
@@ -240,7 +244,7 @@ benannte Invarianten in `core/policy/invariants.py`. Tests binden sich per
 `ENFORCED`-Invariante ohne Test dasteht oder ein Test sich auf eine unbekannte
 Kennung beruft.
 
-**Stand 41/42.** Offen: `session-token-rotation` (bewusst, siehe Abschnitt 8).
+**Stand 42/43.** Offen: `session-token-rotation` (bewusst, siehe Abschnitt 8).
 
 ### Die wichtigste Lektion dieses Projekts
 
@@ -261,10 +265,30 @@ Nonce sicherte die *Bestätigung*, nicht die *Ausführung*. Drei Aufrufe von
 `authorize_execution()` ergaben drei Grants und drei versendete Mails — bei
 erteilter Zustimmung für genau eine.
 
-**Was beide gemeinsam haben:** Es wurde nicht zu wenig geprüft, sondern die
+**Bypass 3 — die Erlaubnis war nicht knapp** (`476461d`). Der Anspruch aus
+Bypass 2 sicherte die *Ausstellung* des Grants. Danach war der Grant ein Wert
+wie jeder andere: Die Registry prüfte Herkunft, Hash, Lauf und Nutzer — vier
+Aussagen, die bei der zweiten Vorlage unverändert gelten — und rief den
+Handler. Ein echter Grant, zweimal vorgelegt, ergab zwei Ausführungen; zehn
+nebenläufige ergaben zehn.
+
+Der Prüfer hatte über `authorize_allowed()` reproduziert, also den Pfad ohne
+Bestätigung, wo ein Grant ohnehin beliebig oft neu zu bekommen ist. Die
+Nachmessung ergab, dass es auch den bestätigten Pfad trifft — der Befund war
+**schwerer als sein Nachweis**. Behoben durch einen Verbrauch an der
+`invocation_id`, als letzter Schritt vor dem Handler.
+
+**Was alle drei gemeinsam haben:** Es wurde nicht zu wenig geprüft, sondern die
 falsche Frage gestellt. Drei grüne Tests deckten Bypass 1 ab; sie prüften, ob
 ein Grant mit falschem Hash abgewiesen wird — nur nicht, ob überhaupt einer
 vorliegt.
+
+**Und das Muster hat eine Richtung:** Die Einmaligkeit hing dreimal einen
+Schritt zu früh — an der Nonce statt an der Ausführung, an der Autorisierung
+statt am Aufruf, an der Ausstellung statt an der Verwendung. Die brauchbare
+Frage bei jeder Einmaligkeitszusage lautet deshalb nicht „wird geprüft?",
+sondern **„wo entsteht die Wirkung, und wie weit ist der Anspruch davon
+entfernt?"**
 
 **Für die neue Sitzung heißt das:** Eine grüne Suite und eine hohe Kennzahl
 sind kein Beweis. Vor jeder Zusicherung lohnt die Frage, ob der Test die
@@ -293,6 +317,13 @@ Laufübersicht. Zwei Gründe:
 
 Beim Bauen gilt, was bei den Auth-Routen galt: **Strukturtest zuerst**, sonst
 schreibt man ihn passend zum Code.
+
+**Nicht vergessen:** Die Registry braucht seit `476461d` einen
+`GrantConsumer`, sonst führt sie nichts aus (`UnguardedExecution`). Beim
+Verdrahten der Endpunkte gehört dort `PostgresGrantConsumer` hin — nicht
+`InProcessGrants`, das ist der Testdoppelgänger und hält nur innerhalb eines
+Prozesses. Der Executor muss die Invokation vorher protokollieren, sonst
+findet der Verbrauch keine Zeile und lehnt ab.
 
 ### 2. Web-UI, Grundfassung
 
