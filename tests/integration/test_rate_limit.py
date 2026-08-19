@@ -35,7 +35,9 @@ async def redis() -> AsyncIterator[Redis]:
         await client.ping()
     except Exception as exc:  # pragma: no cover - Umgebungsproblem
         await client.aclose()
-        pytest.skip(f"Kein Redis erreichbar ({exc.__class__.__name__}).")
+        from tests.integration.conftest import _fehlt
+
+        _fehlt("Redis", exc)
     yield client
     await client.aclose()
 

@@ -81,6 +81,19 @@ test-security: ## Injection- und Policy-Suite (blockierend in CI)
 cov: ## Testabdeckung
 	$(UV) run pytest --cov --cov-report=term-missing --cov-report=html
 
+.PHONY: proof
+proof: ## Beweislauf: Integrationstests MÜSSEN laufen, Überspringen ist ein Fehler
+	@echo "→ Dienste prüfen"
+	@docker compose ps --status running --format '{{.Service}}' | sort | tr '\n' ' '; echo
+	JARVIS_REQUIRE_SERVICES=1 $(UV) run pytest -m integration -q -rs
+
+.PHONY: gate
+gate: lint types gen-check ## Vollständiges Gate inkl. erzwungener Integrationstests
+	$(UV) run pytest -q
+	JARVIS_REQUIRE_SERVICES=1 $(UV) run pytest -m integration -q
+	$(UV) run pytest -m security -q
+	$(UV) run pytest tests/unit/test_invariant_coverage.py -q -s
+
 .PHONY: check
 check: lint types test ## Vollständige lokale Prüfung
 

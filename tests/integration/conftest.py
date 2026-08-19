@@ -23,6 +23,34 @@ def _url() -> str:
     return os.environ.get("DATABASE_URL", DEFAULT_URL)
 
 
+REQUIRE_SERVICES = os.environ.get("JARVIS_REQUIRE_SERVICES") == "1"
+"""Macht das Überspringen zum Fehler.
+
+Ohne diesen Schalter meldet die Suite ein sattes Grün, auch wenn kein einziger
+Integrationstest gelaufen ist — die Dienste fehlten eben. Für eine
+Entwicklungsmaschine ohne Docker ist das richtig; für einen Prüflauf, der die
+Nebenläufigkeit belegen soll, ist es die gefährlichste Art von Fehlmeldung.
+
+Ein externer Prüfer hat genau das erlebt: 702 Tests, 0 Fehler, 110
+übersprungen — darunter der einzige Test, der den atomaren Anspruch unter
+echter Nebenläufigkeit zeigt. Wer die Zusammenfassung liest und die
+Skip-Zeile übersieht, hält den Beweis für erbracht.
+
+    JARVIS_REQUIRE_SERVICES=1 uv run pytest -m integration
+"""
+
+
+def _fehlt(dienst: str, exc: Exception) -> None:
+    """Überspringen — oder scheitern, wenn ein Beweis erwartet wird."""
+    hinweis = f"{dienst} nicht erreichbar ({exc.__class__.__name__}). 'make up' ausführen."
+    if REQUIRE_SERVICES:
+        pytest.fail(
+            f"{hinweis}\nJARVIS_REQUIRE_SERVICES=1 verlangt einen echten Lauf: Ein "
+            "übersprungener Integrationstest ist kein bestandener."
+        )
+    pytest.skip(hinweis)
+
+
 @pytest_asyncio.fixture
 async def engine() -> AsyncIterator[AsyncEngine]:
     """Bewusst funktionsweit.
@@ -37,7 +65,7 @@ async def engine() -> AsyncIterator[AsyncEngine]:
             pass
     except Exception as exc:  # pragma: no cover - Umgebungsproblem
         await eng.dispose()
-        pytest.skip(f"Keine Datenbank erreichbar ({exc.__class__.__name__}). 'make up' ausführen.")
+        _fehlt("Datenbank", exc)
     yield eng
     await eng.dispose()
 
@@ -70,7 +98,7 @@ async def frische_grenzen() -> AsyncIterator[None]:
         await client.ping()
     except Exception as exc:  # pragma: no cover - Umgebungsproblem
         await client.aclose()
-        pytest.skip(f"Kein Redis erreichbar ({exc.__class__.__name__}). 'make up' ausführen.")
+        _fehlt("Redis", exc)
 
     async def leeren() -> None:
         schluessel = [k async for k in client.scan_iter("ratelimit:*")]

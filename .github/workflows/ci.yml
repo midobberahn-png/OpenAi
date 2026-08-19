@@ -79,14 +79,28 @@ jobs:
           uv run alembic downgrade base
           uv run alembic upgrade head
 
-      - name: Integrationstests
-        run: uv run pytest -m integration
+      # JARVIS_REQUIRE_SERVICES macht das Überspringen zum Fehler.
+      #
+      # Ohne den Schalter meldet die Suite ein sattes Grün, auch wenn kein
+      # einziger Integrationstest gelaufen ist — die Dienste waren eben nicht
+      # da. Genau das ist einem externen Prüfer passiert: 702 Tests, 0 Fehler,
+      # 110 übersprungen, darunter der einzige Test, der den atomaren
+      # Ausführungsanspruch unter echter Nebenläufigkeit zeigt.
+      #
+      # In CI ist das die gefährlichste Fehlmeldung überhaupt: Ein
+      # kaputter Dienstcontainer sähe aus wie eine bestandene Prüfung.
+      - name: Integrationstests (Überspringen ist ein Fehler)
+        env:
+          JARVIS_REQUIRE_SERVICES: "1"
+        run: uv run pytest -m integration -rs
 
       # 6 — Sicherheits-Suite: blockierend, wird nie übersprungen.
       # Sie verhindert, dass die wichtigste Eigenschaft des Systems
       # unbemerkt kaputtgeht (docs/15-testing.md §4.4).
       - name: Sicherheits- und Injection-Suite
-        run: uv run pytest -m security
+        env:
+          JARVIS_REQUIRE_SERVICES: "1"
+        run: uv run pytest -m security -rs
 
   secrets:
     name: Secret-Scan
