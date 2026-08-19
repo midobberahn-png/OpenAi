@@ -487,3 +487,141 @@ class TestZugriffsgrenzen:
         gesperrt = [a for a in antworten if a.status_code == 429]
         assert gesperrt
         assert len({a.json()["detail"] for a in gesperrt}) == 1
+
+
+# ==========================================================================
+# Nachgetragen aus dem externen Review (Prüfpaket 07)
+# ==========================================================================
+
+
+class TestRegistrierungUnterAngriff:
+    """Die Zeremonie, die bisher nur im Normalfall geprüft war.
+
+    Der Review hat zu Recht bemerkt: ``SoftwareAuthenticator.register()``
+    nimmt ``origin`` und ``rp_id`` entgegen, aber kein Test hat davon Gebrauch
+    gemacht. Die Angriffe waren also nur für die Anmeldung belegt — obwohl die
+    Registrierung der gefährlichere Zeitpunkt ist: Wer dort einen Schlüssel
+    unterschiebt, kommt dauerhaft hinein.
+    """
+
+    async def _registriere_mit(self, client: AsyncClient, engine: AsyncEngine, **kw: Any) -> Any:
+        from webauthn.helpers import base64url_to_bytes
+
+        await _wipe_users(engine)
+        gestartet = await client.post(
+            "/auth/bootstrap",
+            json={"email": f"{MAIL_PRAEFIX}{uuid.uuid4()}@example.test", "display_name": "Reg"},
+        )
+        assert gestartet.status_code == 201
+        authenticator = SoftwareAuthenticator()
+        challenge = bytes(base64url_to_bytes(gestartet.json()["challenge"]))
+        return await client.post(
+            "/auth/register/finish",
+            json={
+                "credential": authenticator.register(challenge, **kw),
+                "challenge": gestartet.json()["challenge"],
+            },
+        )
+
+    async def test_regulaere_registrierung_gelingt(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Der Gegentest — ohne ihn wüsste man nicht, ob die folgenden aus dem
+        richtigen Grund scheitern."""
+        assert (await self._registriere_mit(client, engine)).status_code == 201
+
+    async def test_fremder_origin_bei_der_registrierung(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Der Phishing-Fall zum Zeitpunkt der Schlüsselerzeugung: Ein
+        Authenticator auf einer nachgebauten Seite signiert für deren
+        Herkunft."""
+        antwort = await self._registriere_mit(
+            client, engine, origin="https://jarvis-phishing.example"
+        )
+        assert antwort.status_code == 401
+        assert antwort.json()["detail"] == "Anmeldung nicht möglich."
+
+    async def test_fremde_rp_id_bei_der_registrierung(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        antwort = await self._registriere_mit(client, engine, rp_id="angreifer.example")
+        assert antwort.status_code == 401
+
+    async def test_kein_passkey_bleibt_nach_einem_gescheiterten_versuch(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Der eigentliche Schaden wäre ein registrierter Fremdschlüssel."""
+        await self._registriere_mit(client, engine, origin="https://boese.example")
+        async with engine.begin() as conn:
+            anzahl = (
+                await conn.execute(text("SELECT count(*) FROM webauthn_credentials"))
+            ).scalar_one()
+        assert anzahl == 0
+
+
+class TestVerstuemmelteAntworten:
+    """Was passiert bei Bytes, die keine gültige Struktur ergeben?
+
+    Der Review vermutete hier ``500 Internal Server Error`` — ein Serverfehler
+    wäre nicht nur hässlich, sondern ein Unterschied im Antwortverhalten und
+    damit ein Signal. Gemessen: Es sind 401, weil der Dienst die Ausnahmen der
+    Fremdbibliothek in seine eigene übersetzt. Dieser Test hält das fest.
+    """
+
+    @pytest.mark.parametrize(
+        "feld,wert",
+        [
+            ("signature", b"\xff" * 40),
+            ("signature", b"kurz"),
+            ("authenticatorData", b"\x00" * 5),
+            ("clientDataJSON", b"kein json {{{"),
+        ],
+        ids=["muellsignatur", "kurze-signatur", "kurze-authdata", "kaputtes-clientdata"],
+    )
+    async def test_kaputte_bytes_ergeben_401_und_keinen_serverfehler(
+        self, client: AsyncClient, engine: AsyncEngine, feld: str, wert: bytes
+    ) -> None:
+        from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
+
+        authenticator = await _bootstrap(client, engine)
+        start = await client.post("/auth/login/start")
+        challenge = bytes(base64url_to_bytes(start.json()["challenge"]))
+        credential = authenticator.authenticate(challenge)
+        credential["response"][feld] = bytes_to_base64url(wert)
+
+        antwort = await client.post(
+            "/auth/login/finish",
+            json={"credential": credential, "challenge": start.json()["challenge"]},
+        )
+        assert antwort.status_code == 401, f"Serverfehler statt Ablehnung: {antwort.status_code}"
+        assert antwort.json()["detail"] == "Anmeldung nicht möglich."
+
+
+class TestSynchronisierterPasskey:
+    @pytest.mark.invariant("passkey-clone-detection")
+    async def test_ein_authenticator_ohne_zaehler_meldet_sich_an(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Die Ausnahme in ``sign_count_is_plausible`` — über HTTP belegt.
+
+        Apple und Google synchronisieren Passkeys und melden dauerhaft 0. Die
+        Ausnahme für zwei Nullen ist der Grund, warum diese Geräte überhaupt
+        funktionieren; ohne einen Test dafür wäre sie eine Zeile, die beim
+        nächsten Aufräumen verschwindet — und mit ihr die verbreitetste
+        Bauart.
+        """
+        from webauthn.helpers import base64url_to_bytes
+
+        authenticator = await _bootstrap(client, engine)
+        start = await client.post("/auth/login/start")
+        challenge = bytes(base64url_to_bytes(start.json()["challenge"]))
+
+        antwort = await client.post(
+            "/auth/login/finish",
+            json={
+                "credential": authenticator.authenticate(challenge, sign_count=0),
+                "challenge": start.json()["challenge"],
+            },
+        )
+        assert antwort.status_code == 200, "Synchronisierte Passkeys müssen sich anmelden können"
