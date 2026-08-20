@@ -160,6 +160,63 @@ class TestAusbruchsversuche:
         assert str(geheim) not in str(ueber_symlink.value)
 
 
+class TestZugangsdaten:
+    """Die zweite Schicht **innerhalb** der freigegebenen Ordner.
+
+    Die Wurzelgrenze beantwortet „darf hier gelesen werden?". Sie beantwortet
+    nicht, ob im freigegebenen Ordner zufällig ein SSH-Schlüssel liegt. Ein
+    Heimatverzeichnis freizugeben ist nachvollziehbar, den Schlüssel darin
+    mitzuliefern nicht.
+
+    Die Idee stammt aus OpenJarvis (Apache 2.0), wo eine solche Musterliste
+    allerdings die *primäre* Prüfung ist. Als alleinige Grenze wäre sie
+    untauglich — jede Sperrliste übersieht etwas.
+    """
+
+    @pytest.mark.invariant("file-access-confined-to-roots")
+    @pytest.mark.parametrize("name", ["id_rsa", ".env", "server.key", "id_ed25519", ".netrc"])
+    async def test_zugangsdaten_im_freigegebenen_ordner_bleiben_gesperrt(
+        self, freigegeben: Path, name: str
+    ) -> None:
+        (freigegeben / name).write_text("geheim", encoding="utf-8")
+
+        with pytest.raises(FileAccessDenied):
+            await LocalFileReader([freigegeben]).read_text(str(freigegeben / name), max_bytes=1000)
+
+    @pytest.mark.invariant("file-access-confined-to-roots")
+    async def test_harmloser_name_auf_schluesseldatei_wird_erkannt(
+        self, freigegeben: Path, tmp_path: Path
+    ) -> None:
+        """Der Fall, den die Berechtigungsprüfung nicht sehen kann.
+
+        Der Symlink heißt ``notizen.txt`` und liegt im freigegebenen Ordner —
+        für jede Prüfung auf der Zeichenkette ist er einwandfrei. Sein Ziel
+        heißt ``id_rsa`` und liegt ebenfalls dort, verletzt also nicht einmal
+        die Wurzelgrenze. Erst der aufgelöste **Name** verrät es.
+        """
+        (freigegeben / "id_rsa").write_text("PRIVATER SCHLUESSEL", encoding="utf-8")
+        tarnung = freigegeben / "notizen.txt"
+        tarnung.symlink_to(freigegeben / "id_rsa")
+
+        with pytest.raises(FileAccessDenied):
+            await LocalFileReader([freigegeben]).read_text(str(tarnung), max_bytes=1000)
+
+    async def test_unverdaechtiger_ordnername_blockiert_nicht(self, tmp_path: Path) -> None:
+        """Geprüft wird der Basisname, nicht der ganze Pfad.
+
+        Ein Ordner ``keys`` ist unverdächtig; erst die Datei darin entscheidet.
+        Andernfalls sperrte ein unglücklich benannter Ordner alles unter sich.
+        """
+        wurzel = tmp_path / "keys"
+        wurzel.mkdir()
+        (wurzel / "liesmich.md").write_text("harmlos", encoding="utf-8")
+
+        inhalt = await LocalFileReader([wurzel]).read_text(
+            str(wurzel / "liesmich.md"), max_bytes=1000
+        )
+        assert inhalt.text == "harmlos"
+
+
 class TestKeineRegulaerenDateien:
     @pytest.mark.invariant("file-access-confined-to-roots")
     async def test_verzeichnis_wird_abgewiesen(self, freigegeben: Path) -> None:

@@ -40,6 +40,7 @@ Einstieg: **[docs/00-uebersicht.md](docs/00-uebersicht.md)** — Zielbild, Risik
 | [15 Testing](docs/15-testing.md) | Tests, Contract-Tests, Evals, CI |
 | [16 V1.1-Review](docs/16-v1.1-review.md) | Bewertung externer Reviews — **einschließlich der abgelehnten Vorschläge mit Begründung** |
 | [17 Identity & Ziele](docs/17-identity-goals.md) | Identity, Ziele, Entitäten |
+| [19 Fremdprojekte](docs/19-fremdprojekte.md) | Vergleich mit zwei öffentlichen JARVIS-Projekten: was übernommen ist, wo wir strenger sind |
 | [18 Angriffskette](docs/18-angriffskette.md) | Jeder Übergang von HTTP bis zur Ausführung: wodurch gesichert, wo noch ungeprüft |
 | [generiert](docs/generated/) | Scope-Katalog und Invariantentabelle — **erzeugt, nicht bearbeiten** |
 

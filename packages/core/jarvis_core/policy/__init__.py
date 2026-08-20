@@ -13,10 +13,12 @@ from .approval import (
 )
 from .engine import PolicyEngine, build_preview
 from .invariants import INVARIANTS, Invariant, InvariantStatus, invariant_ids
+from .secrets import SECRET_PATTERNS, data_class_for_content, looks_like_secret
 
 __all__ = [
     "DEFAULT_TTL",
     "INVARIANTS",
+    "SECRET_PATTERNS",
     "ApprovalGateway",
     "ApprovalOutcome",
     "ExecutionDenied",
@@ -28,6 +30,8 @@ __all__ = [
     "UnverifiedSessions",
     "build_preview",
     "canonical_arguments",
+    "data_class_for_content",
     "invariant_ids",
+    "looks_like_secret",
     "payload_hash",
 ]

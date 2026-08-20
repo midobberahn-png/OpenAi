@@ -168,6 +168,22 @@ class TestFilesConstraints:
         with pytest.raises(ValidationError):
             FilesConstraints(allowed_roots=["/Users/test/Dokumente/.."])
 
+    @pytest.mark.invariant("file-access-confined-to-roots")
+    def test_zugangsdaten_sind_auch_im_freigegebenen_ordner_gesperrt(self) -> None:
+        """Zweite Schicht innerhalb der Wurzeln — ohne Abschaltmöglichkeit.
+
+        Ein Feld, das diese Liste leeren könnte, wäre eine Berechtigung,
+        ``id_rsa`` zu lesen. Dafür gibt es über ``files.read`` keinen legitimen
+        Anlass; wird einer bekannt, kommt ein ausdrückliches Opt-in dazu.
+        """
+        c = FilesConstraints(allowed_roots=["/Users/test/Dokumente"])
+        for name in ("id_rsa", ".env", "zugang.pem", ".netrc"):
+            verletzung = c.check({"path": f"/Users/test/Dokumente/{name}"})
+            assert verletzung is not None, f"nicht gesperrt: {name}"
+            assert verletzung.field == "path"
+
+        assert c.check({"path": "/Users/test/Dokumente/notiz.txt"}) is None
+
     def test_gesperrte_dateitypen(self) -> None:
         c = FilesConstraints(allowed_roots=["/Users/test"])
         v = c.check({"path": "/Users/test/boese.sh"})

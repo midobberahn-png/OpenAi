@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, time
 from enum import StrEnum
+from fnmatch import fnmatch
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal, Self
 from uuid import UUID
@@ -22,6 +23,7 @@ from .classification import DataClass
 
 __all__ = [
     "CONSTRAINTS_BY_SCOPE",
+    "SENSITIVE_FILE_PATTERNS",
     "ActionPreview",
     "AmountConstraints",
     "ConstraintViolation",
@@ -39,6 +41,7 @@ __all__ = [
     "ScopeSpec",
     "TimeWindow",
     "constraints_for",
+    "is_sensitive_filename",
 ]
 
 
@@ -273,6 +276,62 @@ class MailSendConstraints(ScopeConstraints):
         return None
 
 
+SENSITIVE_FILE_PATTERNS: frozenset[str] = frozenset(
+    {
+        ".env",
+        ".env.*",
+        "*.env",
+        ".netrc",
+        ".pgpass",
+        ".htpasswd",
+        "credentials",
+        "credentials.*",
+        "*.credentials",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+        "*.pem",
+        "*.key",
+        "*.p12",
+        "*.pfx",
+        "*.jks",
+        "*.keystore",
+        "*.kdbx",
+        "known_hosts",
+        "shadow",
+        "*.secret",
+        "*.secrets",
+        "secrets.*",
+    }
+)
+"""Dateinamen, die typischerweise Zugangsdaten enthalten.
+
+Eine zweite Schicht **innerhalb** der freigegebenen Ordner. Die Wurzelgrenze
+beantwortet „darf hier gelesen werden?"; sie beantwortet nicht, ob im
+freigegebenen Ordner zufällig ein ``id_rsa`` liegt. Ein Heimatverzeichnis
+freizugeben ist nachvollziehbar, den SSH-Schlüssel darin mitzuliefern nicht.
+
+Die Idee stammt aus ``security/file_policy.py`` von OpenJarvis (Apache 2.0);
+die Umsetzung hier ist eigenständig. **Als alleinige Grenze wäre eine solche
+Liste untauglich** — jede Sperrliste übersieht etwas, und dort wird sie in
+jenem Projekt tatsächlich als primäre Prüfung eingesetzt. Als zweite Schicht
+hinter einer Wurzelgrenze kostet sie nichts und fängt den häufigsten Unfall.
+"""
+
+
+def is_sensitive_filename(path: str) -> bool:
+    """Passt der Dateiname auf ein Muster für Zugangsdaten?
+
+    Geprüft wird der **Basisname**, nicht der ganze Pfad: Ein Ordner namens
+    ``keys`` ist unverdächtig, die Datei ``server.key`` darin nicht. Der
+    Vergleich läuft ohne Groß-/Kleinschreibung, weil Dateisysteme sich darin
+    unterscheiden und ``ID_RSA`` derselbe Schlüssel ist.
+    """
+    name = PurePosixPath(path).name.lower()
+    return any(fnmatch(name, muster) for muster in SENSITIVE_FILE_PATTERNS)
+
+
 class FilesConstraints(ScopeConstraints):
     """Einschränkungen für ``files.read`` / ``files.write``."""
 
@@ -356,6 +415,20 @@ class FilesConstraints(ScopeConstraints):
             return ConstraintViolation(
                 field="path",
                 message=f"Dateityp {candidate.suffix} ist gesperrt.",
+            )
+
+        # Zugangsdaten sind auch im freigegebenen Ordner gesperrt — und zwar
+        # ohne Abschaltmöglichkeit. Ein Feld, das diese Liste leeren könnte,
+        # wäre eine Berechtigung, ``id_rsa`` zu lesen; dafür gibt es über
+        # ``files.read`` keinen legitimen Anlass. Wird einer bekannt, kommt ein
+        # ausdrückliches Opt-in dazu — bis dahin ist die strengere Antwort die
+        # richtige.
+        if is_sensitive_filename(str(raw)):
+            return ConstraintViolation(
+                field="path",
+                message=(
+                    "Dateien mit Zugangsdaten sind gesperrt, auch innerhalb freigegebener Ordner."
+                ),
             )
         return None
 

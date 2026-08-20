@@ -84,6 +84,7 @@ from .memory import (
 )
 from .permissions import (
     CONSTRAINTS_BY_SCOPE,
+    SENSITIVE_FILE_PATTERNS,
     ActionPreview,
     AmountConstraints,
     ApprovalChannel,
@@ -102,6 +103,7 @@ from .permissions import (
     ScopeSpec,
     TimeWindow,
     constraints_for,
+    is_sensitive_filename,
 )
 from .run_state import Correction, RunState, StepOutcome
 from .runs import (
@@ -170,6 +172,8 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "MailSendConstraints",
     "FilesConstraints",
     "CONSTRAINTS_BY_SCOPE",
+    "SENSITIVE_FILE_PATTERNS",
+    "is_sensitive_filename",
     "AmountConstraints",
     "constraints_for",
     "ConstraintViolation",

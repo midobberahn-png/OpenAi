@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any
 
 from jarvis_contracts import DataClass, PayloadInspectability, RiskLevel, ToolResult, ToolSpec
+from jarvis_core.policy.secrets import data_class_for_content
 from jarvis_core.ports.files import FileAccessDenied, FileReader, FileUnavailable
 
 __all__ = ["FILES_READ", "MAX_BYTES", "files_read_handler"]
@@ -114,6 +115,13 @@ def files_read_handler(reader: FileReader) -> Any:
         except FileUnavailable as fehlt:
             return ToolResult(ok=False, error=str(fehlt), display="Datei nicht lesbar")
 
+        # Die Einstufung des Ergebnisses kann strenger ausfallen als die
+        # statische des Werkzeugs: Steht in der Datei etwas, das wie ein
+        # Zugangsdatum aussieht, gilt der Inhalt als P3 und verlässt das Gerät
+        # nicht mehr. Die Richtung ist einseitig — hochstufen, nie herab
+        # (``policy/secrets.py``).
+        klasse = data_class_for_content(inhalt.text, declared=FILES_READ.data_class)
+
         hinweis = " (gekürzt)" if inhalt.truncated else ""
         return ToolResult(
             ok=True,
@@ -124,7 +132,7 @@ def files_read_handler(reader: FileReader) -> Any:
                 "bytes_read": inhalt.bytes_read,
             },
             display=f"{inhalt.path} — {inhalt.bytes_read} Bytes{hinweis}",
-            produced_data_class=DataClass.P2,
+            produced_data_class=klasse,
             taints_context=True,
         )
 

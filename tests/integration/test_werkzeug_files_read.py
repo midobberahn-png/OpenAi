@@ -179,6 +179,38 @@ class TestDerVolleWeg:
         finally:
             await _aufraeumen(engine, uid)
 
+    async def test_zugangsdaten_im_inhalt_heben_die_datenklasse_auf_p3(
+        self, engine: AsyncEngine, freigegeben: Path
+    ) -> None:
+        """Der Inhalt entscheidet mit, nicht nur die Deklaration des Werkzeugs.
+
+        ``files.read`` deklariert P2. Steht in der Datei ein Private-Key-Header,
+        gilt das Ergebnis als P3 — und P3 verlässt das Gerät strukturell nie.
+        Die Richtung ist einseitig: Ohne Treffer bleibt es bei P2.
+        """
+        (freigegeben / "config.md").write_text(
+            "# Zugang\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKC\n", encoding="utf-8"
+        )
+        uid, rid = await _nutzer_mit_recht(
+            engine, constraints=FilesConstraints(allowed_roots=[str(freigegeben)])
+        )
+        try:
+            ergebnis = await _ausfuehren(
+                engine,
+                registry=_registry(engine, [freigegeben]),
+                uid=uid,
+                rid=rid,
+                pfad=str(freigegeben / "config.md"),
+            )
+            assert getattr(ergebnis, "ok", False) is True, ergebnis
+            assert ergebnis.produced_data_class is DataClass.P3, (  # type: ignore[union-attr]
+                "Ein Schlüssel im Inhalt muss die Klasse heben, sonst dürfte er "
+                "an ein Cloud-Modell gehen."
+            )
+            assert ergebnis.produced_data_class.cloud_allowed is False  # type: ignore[union-attr]
+        finally:
+            await _aufraeumen(engine, uid)
+
     @pytest.mark.invariant("file-access-confined-to-roots")
     async def test_pfad_ausserhalb_der_berechtigung_wird_von_der_policy_abgewiesen(
         self, engine: AsyncEngine, freigegeben: Path, tmp_path: Path

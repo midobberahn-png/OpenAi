@@ -47,6 +47,7 @@ import stat
 from collections.abc import Sequence
 from pathlib import Path
 
+from jarvis_contracts import is_sensitive_filename
 from jarvis_core.ports.files import FileAccessDenied, FileContent, FileUnavailable
 
 __all__ = ["LocalFileReader"]
@@ -94,6 +95,24 @@ class LocalFileReader:
             # ist eine Auskunft über das Dateisystem. Eine abgewiesene Anfrage
             # soll nichts verraten, was eine erlaubte nicht verrät.
             raise FileAccessDenied("Pfad liegt außerhalb der freigegebenen Ordner.")
+
+        # Zugangsdaten: geprüft wird der **aufgelöste** Name.
+        #
+        # Die Berechtigung prüft denselben Punkt auf dem genannten Pfad — und
+        # sieht damit nur, was draufsteht. Ein Symlink ``harmlos.txt`` auf
+        # ``~/.ssh/id_rsa`` besteht dort einwandfrei; erst hier steht der echte
+        # Name fest. Dieselbe Arbeitsteilung wie bei der Wurzelgrenze.
+        if is_sensitive_filename(str(aufgeloest)):
+            # Die Meldung nennt die Kategorie, nicht den aufgelösten Pfad. Der
+            # Rest ist eine Abwägung: Wer über einen Symlink fragt, erfährt,
+            # dass das Ziel wie eine Schlüsseldatei heißt. Das in Kauf zu
+            # nehmen ist die kleinere Übel gegenüber einer Meldung, die einem
+            # rechtmäßigen Nutzer verschweigt, warum seine ``.env`` nicht
+            # lesbar ist.
+            raise FileAccessDenied(
+                "Dateien mit Zugangsdaten werden nicht gelesen, auch nicht innerhalb "
+                "freigegebener Ordner."
+            )
 
         return self._oeffnen_und_lesen(aufgeloest, max_bytes)
 
