@@ -22,11 +22,14 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.db.grant_store import PostgresGrantConsumer
+from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_contracts import (
     DataClass,
+    PolicyEffect,
     PolicyRequest,
     RiskLevel,
     TaintLevel,
+    ToolInvocation,
     ToolResult,
     ToolSpec,
 )
@@ -271,6 +274,101 @@ class TestVerbrauchUeberVerbindungsgrenzen:
             await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
 
         assert not gesehen, "Ohne protokollierte Invokation darf nichts laufen"
+
+        async with engine.begin() as cleanup:
+            await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})
+
+    @pytest.mark.invariant("grant-single-use")
+    async def test_das_protokoll_traegt_den_anspruch_ohne_zutun_des_tests(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Protokoll und Anspruch greifen ineinander — beide eigenständig.
+
+        Die Tests darüber legen die Invokationszeile selbst per SQL an. Das ist
+        für sie richtig, prüft aber nicht, ob der Weg zusammenpasst, den die
+        Anwendung tatsächlich geht: ``InvocationStore.record()`` schreibt die
+        Zeile, ``GrantConsumer.consume()`` löst den Anspruch daran ein — und
+        beide öffnen inzwischen ihre **eigene** Transaktion, damit sie einen
+        Absturz überstehen.
+
+        Genau daraus entsteht die Bedingung, die sie aneinander bindet: Eine
+        eigene Transaktion sieht keine fremden uncommitteten Zeilen. Hätte der
+        Store weiter auf der Verbindung des Aufrufers geschrieben, fände der
+        Anspruch nichts, und dieser Test wäre der erste, der es merkt — statt
+        des ersten Endpunkts, den jemand verdrahtet.
+        """
+        async with engine.begin() as setup:
+            uid, rid, _ = await _seed(setup)
+
+        iid = uuid.uuid4()
+        await PostgresInvocationStore(engine).record(
+            ToolInvocation(
+                id=iid,
+                run_id=rid,
+                tool_name=CALENDAR_READ.name,
+                arguments={},
+                risk_level=RiskLevel.LOW,
+                policy_decision=PolicyEffect.ALLOW,
+                decision_reason="Integrationstest",
+                created_at=NOW,
+            )
+        )
+
+        gesehen: list[object] = []
+        registry = _registry(engine, gesehen)
+        grant = await _grant(registry, uid, rid, iid)
+        await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
+        with pytest.raises(GrantAlreadyUsed):
+            await registry.execute(grant, run_id=rid, user_id=uid)  # type: ignore[arg-type]
+
+        assert len(gesehen) == 1, f"Der Handler lief {len(gesehen)}-mal."
+
+        async with engine.begin() as cleanup:
+            await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})
+
+    @pytest.mark.invariant("grant-single-use")
+    async def test_protokoll_ueberlebt_den_rollback_des_aufrufers(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Das Protokoll gehört nicht in die Transaktion dessen, worüber es
+        Auskunft gibt.
+
+        Der Modulkopf von ``invocation_store.py`` sagt seit jeher zu, der
+        Eintrag sei auch dann da, „wenn der Lauf abgestürzt ist". Gehalten hat
+        das die erste Fassung nicht: Sie schrieb auf der Verbindung des
+        Requests und verschwand mit ihr — und zwar genau in dem Fall, für den
+        man ein Protokoll liest.
+        """
+        async with engine.begin() as setup:
+            uid, rid, _ = await _seed(setup)
+
+        iid = uuid.uuid4()
+        async with engine.connect() as conn:
+            transaktion = await conn.begin()
+            await PostgresInvocationStore(engine).record(
+                ToolInvocation(
+                    id=iid,
+                    run_id=rid,
+                    tool_name=CALENDAR_READ.name,
+                    arguments={},
+                    risk_level=RiskLevel.LOW,
+                    policy_decision=PolicyEffect.ALLOW,
+                    decision_reason="Absturz gleich danach",
+                    created_at=NOW,
+                )
+            )
+            await transaktion.rollback()
+
+        async with engine.begin() as pruefung:
+            vorhanden = (
+                await pruefung.execute(
+                    text("SELECT count(*) FROM tool_invocations WHERE id = :i"), {"i": iid}
+                )
+            ).scalar_one()
+        assert vorhanden == 1, (
+            "Der Protokolleintrag ist mit der Transaktion des Aufrufers verschwunden — "
+            "also genau dann, wenn man ihn braucht."
+        )
 
         async with engine.begin() as cleanup:
             await cleanup.execute(text("DELETE FROM users WHERE id = :i"), {"i": uid})

@@ -31,6 +31,17 @@ class InvocationStore(Protocol):
         Die Reihenfolge ist bedeutungstragend: Ein Aufruf, der erst nach seiner
         Wirkung protokolliert wird, fehlt genau dann, wenn er abgestürzt ist —
         also in dem Fall, für den man das Protokoll liest.
+
+        **Und „vorher" heißt festgeschrieben, nicht bloß geschrieben.** Eine
+        persistente Implementierung darf den Eintrag nicht in einer Transaktion
+        zurücklassen, die der Aufrufer noch zurückrollen kann. Sonst gilt die
+        Zusage oben genau im Absturzfall nicht, für den sie gemacht ist.
+
+        Der zweite Grund ist unmittelbarer: Der Grant-Verbrauch hängt an dieser
+        Zeile und liegt in einer eigenen Transaktion, damit er selbst einen
+        Absturz übersteht. Er sieht deshalb nur, was committed ist. Ein
+        Protokoll in der Request-Transaktion hieße: kein sichtbarer Anspruch,
+        keine Ausführung.
         """
         ...
 

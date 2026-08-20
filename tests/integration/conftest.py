@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -71,14 +73,58 @@ async def engine() -> AsyncIterator[AsyncEngine]:
 
 
 @pytest_asyncio.fixture
-async def conn(engine: AsyncEngine) -> AsyncIterator[AsyncConnection]:
-    """Verbindung mit Rollback nach jedem Test — keine Testdaten bleiben zurück."""
+async def conn(
+    engine: AsyncEngine, aufgeraeumte_nutzer: list[UUID]
+) -> AsyncIterator[AsyncConnection]:
+    """Verbindung mit Rollback nach jedem Test — keine Testdaten bleiben zurück.
+
+    Bequem und für alles richtig, was **innerhalb** einer Transaktion geprüft
+    wird. Für Abläufe, die Transaktionsgrenzen überschreiten, ist es die
+    falsche Fixture: Wer alles in einer Transaktion hält, die nie committet,
+    prüft eine Umgebung, die es in Produktion nicht gibt. Der vierte
+    Replay-Befund lag genau dort. Solche Tests nehmen ``engine`` und
+    ``aufgeraeumte_nutzer``.
+
+    **Warum diese Fixture ``aufgeraeumte_nutzer`` anfordert, obwohl sie es
+    nicht benutzt:** Sie erzwingt damit die Abbaureihenfolge. Fixtures werden
+    in umgekehrter Aufbaureihenfolge abgebaut; als Abhängige wird diese hier
+    zuerst abgebaut, der Rollback läuft also **vor** dem Aufräumen. Ohne das
+    wartet das ``DELETE`` auf Zeilensperren einer Transaktion, die erst danach
+    zurückrollt — die Testsuite bleibt stehen, und zwar ohne Fehlermeldung.
+    Der Fall ist einmal eingetreten; die Kopplung ist die Lehre daraus.
+    """
     async with engine.connect() as connection:
         trans = await connection.begin()
         try:
             yield connection
         finally:
             await trans.rollback()
+
+
+@pytest_asyncio.fixture
+async def aufgeraeumte_nutzer(engine: AsyncEngine) -> AsyncIterator[list[UUID]]:
+    """Aufräumen für Tests, die committen müssen.
+
+    Der Gegenentwurf zur ``conn``-Fixture: Wo der Ablauf eigene Transaktionen
+    öffnet — das Werkzeugprotokoll und der Grant-Verbrauch tun das, und zwar
+    aus Gründen der Absturzsicherheit —, kann die Isolation nicht mehr aus
+    einem umschließenden Rollback kommen. Sie kommt stattdessen aus dem
+    Löschen danach.
+
+    Der Test hängt die von ihm angelegten Nutzer-IDs an die Liste; ``users``
+    kaskadiert auf Läufe, Invokationen, Bestätigungen und Berechtigungen. Das
+    Löschen läuft auch, wenn der Test scheitert — sonst vergiftet ein
+    Fehlschlag die folgenden Läufe.
+    """
+    ids: list[UUID] = []
+    try:
+        yield ids
+    finally:
+        if ids:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text("DELETE FROM users WHERE id = ANY(:ids)"), {"ids": list(ids)}
+                )
 
 
 @pytest_asyncio.fixture

@@ -31,7 +31,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
@@ -165,42 +165,59 @@ fehl.
 """
 
 
-async def _seed_user(conn: AsyncConnection, scopes: dict[str, str]) -> uuid.UUID:
+async def _seed_user(engine: AsyncEngine, scopes: dict[str, str]) -> uuid.UUID:
+    """Nutzer und Berechtigungen — **committed**.
+
+    Bis zum vierten Replay-Befund lief das auf der Verbindung des Tests und
+    rollte mit ihr zurück. Das ging, solange alles in einer Transaktion lag.
+    Seit das Werkzeugprotokoll eigenständig committet — damit es einen Absturz
+    übersteht —, sieht es nur, was festgeschrieben ist. Der Fremdschlüssel auf
+    ``runs`` und über ihn auf ``users`` verlangt deshalb echte Zeilen.
+
+    Der Aufrufer hängt die zurückgegebene ID an ``aufgeraeumte_nutzer``; das
+    Löschen kaskadiert.
+    """
     uid = uuid.uuid4()
-    await conn.execute(
-        text("INSERT INTO users (id, email, display_name) VALUES (:id, :m, 'E2E')"),
-        {"id": uid, "m": f"{uid}@example.test"},
-    )
-    for scope, mode in scopes.items():
-        default_mode, risk = SCOPE_KATALOG[scope]
+    async with engine.begin() as conn:
         await conn.execute(
-            text(
-                "INSERT INTO scopes (name, description, default_mode, risk_level) "
-                "VALUES (:n, :d, :dm, :r) ON CONFLICT (name) DO NOTHING"
-            ),
-            {"n": scope, "d": f"Scope {scope}", "dm": default_mode, "r": risk},
+            text("INSERT INTO users (id, email, display_name) VALUES (:id, :m, 'E2E')"),
+            {"id": uid, "m": f"{uid}@example.test"},
         )
-        await conn.execute(
-            text(
-                "INSERT INTO permissions (id, user_id, scope, mode, granted_at) "
-                "VALUES (:i, :u, :s, :m, :g)"
-            ),
-            {"i": uuid.uuid4(), "u": uid, "s": scope, "m": mode, "g": NOW - timedelta(days=1)},
-        )
+        for scope, mode in scopes.items():
+            default_mode, risk = SCOPE_KATALOG[scope]
+            await conn.execute(
+                text(
+                    "INSERT INTO scopes (name, description, default_mode, risk_level) "
+                    "VALUES (:n, :d, :dm, :r) ON CONFLICT (name) DO NOTHING"
+                ),
+                {"n": scope, "d": f"Scope {scope}", "dm": default_mode, "r": risk},
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO permissions (id, user_id, scope, mode, granted_at) "
+                    "VALUES (:i, :u, :s, :m, :g)"
+                ),
+                {"i": uuid.uuid4(), "u": uid, "s": scope, "m": mode, "g": NOW - timedelta(days=1)},
+            )
     return uid
 
 
-async def _insert_run(conn: AsyncConnection, run_id: uuid.UUID, user_id: uuid.UUID) -> None:
-    await conn.execute(
-        text(
-            "INSERT INTO runs (id, user_id, trace_id, budget) VALUES (:r, :u, 'e2e', '{}'::jsonb)"
-        ),
-        {"r": run_id, "u": user_id},
-    )
+async def _insert_run(engine: AsyncEngine, run_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Der Lauf — ebenfalls committed, und aus demselben Grund."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO runs (id, user_id, trace_id, budget) "
+                "VALUES (:r, :u, 'e2e', '{}'::jsonb)"
+            ),
+            {"r": run_id, "u": user_id},
+        )
 
 
 class TestKompletterAblauf:
-    async def test_mails_lesen_dann_termin_blockieren(self, conn: AsyncConnection) -> None:
+    async def test_mails_lesen_dann_termin_blockieren(
+        self, conn: AsyncConnection, engine: AsyncEngine, aufgeraeumte_nutzer: list[uuid.UUID]
+    ) -> None:
         """Der Durchstich. Jeder Abschnitt prüft, was an dieser Stelle gelten
         muss — nicht nur, dass am Ende ein Termin existiert."""
         # Vorbedingung: Ohne strukturierte Einstufung und ohne attendees als
@@ -209,9 +226,10 @@ class TestKompletterAblauf:
         assert CALENDAR_CREATE.payload_inspectability.clearable_by_confirmation
 
         user_id = await _seed_user(
-            conn,
+            engine,
             {"mail.read": "allow", "calendar.read": "allow", "calendar.create": "confirm"},
         )
+        aufgeraeumte_nutzer.append(user_id)
         session_id = uuid.uuid4()
         permissions = DbPermissions(conn, user_id)
         tools, spies = build_registry()
@@ -225,7 +243,7 @@ class TestKompletterAblauf:
             policy=policy,
             gateway=gateway,
             audit=audit,
-            invocations=PostgresInvocationStore(conn),
+            invocations=PostgresInvocationStore(engine),
             clock=lambda: NOW,
         )
 
@@ -249,7 +267,7 @@ class TestKompletterAblauf:
 
         # -- 4. Lauf anlegen ---------------------------------------------
         run_id = uuid.uuid4()
-        await _insert_run(conn, run_id, user_id)
+        await _insert_run(engine, run_id, user_id)
         from jarvis_contracts import Run
 
         run = Run(
@@ -352,7 +370,7 @@ class TestKompletterAblauf:
 
         # -- 10. Sanierter Lauf: sauber, ohne Kontext, mit Verweis -------
         clean = executor.sanitized_run(step3.run, outcome.sanitized)
-        await _insert_run(conn, clean.id, user_id)
+        await _insert_run(engine, clean.id, user_id)
         assert clean.taint_level is TaintLevel.CLEAN
         assert clean.conversation_id is None
         assert clean.sanitized_from_run_id == step3.run.id
@@ -384,7 +402,7 @@ class TestKompletterAblauf:
         assert not verify_chain(rows), "Die Hash-Kette muss unversehrt sein"
 
     async def test_eingeschmuggelter_teilnehmer_bricht_den_ablauf_ab(
-        self, conn: AsyncConnection
+        self, conn: AsyncConnection, engine: AsyncEngine, aufgeraeumte_nutzer: list[uuid.UUID]
     ) -> None:
         """Derselbe Weg, aber die präparierte Mail hat einen Teilnehmer
         eingeschmuggelt. Ein Kalendereintrag mit Teilnehmern verschickt
@@ -393,7 +411,8 @@ class TestKompletterAblauf:
         Der Unterschied zum Test oben ist ein einziges Argument. Genau das ist
         der Punkt: Die Einstufung hängt am Aufruf, nicht am Werkzeug.
         """
-        user_id = await _seed_user(conn, {"mail.read": "allow", "calendar.create": "allow"})
+        user_id = await _seed_user(engine, {"mail.read": "allow", "calendar.create": "allow"})
+        aufgeraeumte_nutzer.append(user_id)
         session_id = uuid.uuid4()
         tools, spies = build_registry()
         policy = PolicyEngine(tools, DbPermissions(conn, user_id))
@@ -403,12 +422,12 @@ class TestKompletterAblauf:
             gateway=ApprovalGateway(
                 PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
             ),
-            invocations=PostgresInvocationStore(conn),
+            invocations=PostgresInvocationStore(engine),
             clock=lambda: NOW,
         )
 
         run_id = uuid.uuid4()
-        await _insert_run(conn, run_id, user_id)
+        await _insert_run(engine, run_id, user_id)
         from jarvis_contracts import Run
 
         run = Run(
@@ -448,7 +467,7 @@ class TestKompletterAblauf:
 
 class TestKompletterAblaufMitAgenten:
     async def test_delegation_kontaminiert_den_uebergeordneten_lauf(
-        self, conn: AsyncConnection
+        self, conn: AsyncConnection, engine: AsyncEngine, aufgeraeumte_nutzer: list[uuid.UUID]
     ) -> None:
         """Derselbe Ablauf, aber über einen Sub-Agenten — und der behauptet,
         sauber geblieben zu sein.
@@ -460,7 +479,8 @@ class TestKompletterAblaufMitAgenten:
         from jarvis_contracts import AgentResult, AgentSpec, AgentStatus, Run
         from jarvis_core.agents import AgentRegistry
 
-        user_id = await _seed_user(conn, {"mail.read": "allow", "mail.send": "allow"})
+        user_id = await _seed_user(engine, {"mail.read": "allow", "mail.send": "allow"})
+        aufgeraeumte_nutzer.append(user_id)
         session_id = uuid.uuid4()
         tools, spies = build_registry()
         policy = PolicyEngine(tools, DbPermissions(conn, user_id))
@@ -470,7 +490,7 @@ class TestKompletterAblaufMitAgenten:
             gateway=ApprovalGateway(
                 PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
             ),
-            invocations=PostgresInvocationStore(conn),
+            invocations=PostgresInvocationStore(engine),
             clock=lambda: NOW,
         )
 
@@ -501,7 +521,7 @@ class TestKompletterAblaufMitAgenten:
                 )
 
         run_id = uuid.uuid4()
-        await _insert_run(conn, run_id, user_id)
+        await _insert_run(engine, run_id, user_id)
         run = Run(
             id=run_id,
             user_id=user_id,

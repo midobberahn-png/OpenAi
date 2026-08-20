@@ -155,17 +155,23 @@ class TestIdentitaetBisAusfuehrung:
                 registry=tools,
                 policy=policy,
                 gateway=gateway,
-                invocations=PostgresInvocationStore(conn),
+                invocations=PostgresInvocationStore(engine),
             )
 
             run_id = uuid.uuid4()
-            await conn.execute(
-                text(
-                    "INSERT INTO runs (id, user_id, trace_id, budget) "
-                    "VALUES (:r, :u, 'e2e-identity', '{}'::jsonb)"
-                ),
-                {"r": run_id, "u": user_id},
-            )
+            # Eigene Transaktion, und das ist keine Testkosmetik: Das
+            # Werkzeugprotokoll schreibt seit dem vierten Replay-Befund in
+            # einer eigenen Transaktion und braucht ``runs`` als
+            # Fremdschlüssel. Ein Lauf, der nur hier drinnen existiert, ist
+            # für es nicht vorhanden — in Produktion wie im Test.
+            async with engine.begin() as lauf:
+                await lauf.execute(
+                    text(
+                        "INSERT INTO runs (id, user_id, trace_id, budget) "
+                        "VALUES (:r, :u, 'e2e-identity', '{}'::jsonb)"
+                    ),
+                    {"r": run_id, "u": user_id},
+                )
             run = Run(
                 id=run_id,
                 user_id=user_id,
@@ -258,17 +264,18 @@ class TestIdentitaetBisAusfuehrung:
                 registry=tools,
                 policy=policy,
                 gateway=gateway,
-                invocations=PostgresInvocationStore(conn),
+                invocations=PostgresInvocationStore(engine),
             )
 
             run_id = uuid.uuid4()
-            await conn.execute(
-                text(
-                    "INSERT INTO runs (id, user_id, trace_id, budget) "
-                    "VALUES (:r, :u, 'e2e-fremd', '{}'::jsonb)"
-                ),
-                {"r": run_id, "u": session.user_id},
-            )
+            async with engine.begin() as lauf:
+                await lauf.execute(
+                    text(
+                        "INSERT INTO runs (id, user_id, trace_id, budget) "
+                        "VALUES (:r, :u, 'e2e-fremd', '{}'::jsonb)"
+                    ),
+                    {"r": run_id, "u": session.user_id},
+                )
             run = Run(
                 id=run_id,
                 user_id=session.user_id,
