@@ -8,6 +8,7 @@ members = [
     "jarvis-api",
     "jarvis-contracts",
     "jarvis-core",
+    "jarvis-integrations",
     "jarvis-providers",
 ]
 
@@ -424,6 +425,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "jarvis-contracts" },
     { name = "jarvis-core" },
+    { name = "jarvis-integrations" },
     { name = "jarvis-providers" },
 ]
 
@@ -442,6 +444,7 @@ dev = [
 requires-dist = [
     { name = "jarvis-contracts", editable = "packages/contracts" },
     { name = "jarvis-core", editable = "packages/core" },
+    { name = "jarvis-integrations", editable = "packages/integrations" },
     { name = "jarvis-providers", editable = "packages/providers" },
 ]
 
@@ -467,6 +470,8 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "jarvis-contracts" },
+    { name = "jarvis-core" },
+    { name = "jarvis-integrations" },
     { name = "pgvector" },
     { name = "pydantic-settings" },
     { name = "python-multipart" },
@@ -485,6 +490,8 @@ requires-dist = [
     { name = "cryptography", specifier = ">=44.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "jarvis-contracts", editable = "packages/contracts" },
+    { name = "jarvis-core", editable = "packages/core" },
+    { name = "jarvis-integrations", editable = "packages/integrations" },
     { name = "pgvector", specifier = ">=0.3.6" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "python-multipart", specifier = ">=0.0.20" },
@@ -520,6 +527,21 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "jarvis-contracts", editable = "packages/contracts" }]
+
+[[package]]
+name = "jarvis-integrations"
+version = "0.1.0"
+source = { editable = "packages/integrations" }
+dependencies = [
+    { name = "jarvis-contracts" },
+    { name = "jarvis-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "jarvis-contracts", editable = "packages/contracts" },
+    { name = "jarvis-core", editable = "packages/core" },
+]
 
 [[package]]
 name = "jarvis-providers"

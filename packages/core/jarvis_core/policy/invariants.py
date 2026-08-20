@@ -615,6 +615,30 @@ INVARIANTS: tuple[Invariant, ...] = (
     ),
     # -- Schichtung -----------------------------------------------------
     Invariant(
+        id="file-access-confined-to-roots",
+        title="Ein Dateizugriff verlässt die freigegebenen Wurzeln nicht",
+        statement=(
+            "files.read gibt nur Inhalte heraus, deren Pfad **nach Auflösung** unterhalb "
+            "einer konfigurierten Wurzel liegt und die eine reguläre Datei bezeichnen; "
+            "eine Abweisung verrät nicht, wohin der Pfad zeigte."
+        ),
+        why=(
+            "Zwei Grenzen, und sie beantworten verschiedene Fragen. Die Berechtigung "
+            "(FilesConstraints.allowed_roots) prüft den Pfad als Zeichenkette — sie hat "
+            "kein Dateisystem und kann einen Symlink grundsätzlich nicht sehen. Der "
+            "Adapter löst auf und prüft danach; erst das beantwortet, wohin der Pfad "
+            "wirklich zeigt. Beim Bau des ersten Dateiwerkzeugs fiel dabei ein Loch in "
+            "der ersten Prüfung auf: relative_to() vergleicht Segmente und normalisiert "
+            "nicht, weshalb '/wurzel/../../etc/passwd' als erlaubt galt. Der vorhandene "
+            "Test prüfte die Präfix-Umgehung, an die jemand gedacht hatte, nicht die "
+            "Traversierung daneben. Zusätzlich abgewiesen werden nicht-reguläre Dateien: "
+            "Eine FIFO im freigegebenen Ordner hinge bis zum Timeout, /dev/zero füllte "
+            "den Speicher."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="integrations.localfs",
+    ),
+    Invariant(
         id="resource-ownership-checked-once",
         title="Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen",
         statement=(

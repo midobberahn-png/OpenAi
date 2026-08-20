@@ -6,6 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "jarvis-contracts",
     "jarvis-core",
+    "jarvis-integrations",
     "jarvis-providers",
 ]
 
@@ -31,6 +32,7 @@ members = ["packages/*", "apps/api"]
 [tool.uv.sources]
 jarvis-contracts = { workspace = true }
 jarvis-core = { workspace = true }
+jarvis-integrations = { workspace = true }
 jarvis-providers = { workspace = true }
 
 
@@ -75,6 +77,7 @@ ignore = [
 # Die Adapterschicht darf sich selbst importieren — die Schranke meint die
 # Richtung nach oben, nicht das eigene Paket.
 "packages/providers/**" = ["TID251"]
+"packages/integrations/**" = ["TID251"]
 "apps/**" = ["TID251"]
 "scripts/**" = ["TID251"]
 # PgUUID hält den PostgreSQL-Typ vom gleichnamigen uuid.UUID auseinander;
@@ -92,7 +95,13 @@ ignore = [
 "jarvis_integrations".msg = "Nur über Ports in jarvis_core.ports zugreifen."
 
 [tool.ruff.lint.isort]
-known-first-party = ["jarvis_contracts", "jarvis_core", "jarvis_api"]
+known-first-party = [
+    "jarvis_contracts",
+    "jarvis_core",
+    "jarvis_api",
+    "jarvis_providers",
+    "jarvis_integrations",
+]
 
 
 # --------------------------------------------------------------------------

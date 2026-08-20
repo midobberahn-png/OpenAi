@@ -35,6 +35,24 @@ class Settings(BaseSettings):
     session_cookie_name: str = Field(default="jarvis_session", alias="SESSION_COOKIE_NAME")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
+    files_allowed_roots: list[str] = Field(default_factory=list, alias="FILES_ALLOWED_ROOTS")
+    """Ordner, aus denen ``files.read`` überhaupt lesen darf — die Grenze des
+    **Prozesses**.
+
+    Nicht zu verwechseln mit ``FilesConstraints.allowed_roots``: Das ist die
+    Grenze einer *Berechtigung* und steht je Nutzer in der Datenbank. Diese
+    hier gilt unabhängig davon, was jemand erteilt bekommen hat, und wird erst
+    dort geprüft, wo der Pfad aufgelöst und geöffnet wird.
+
+    Zwei Grenzen sind hier keine Doppelung. Die Berechtigung beantwortet „darf
+    dieser Nutzer diesen Pfad nennen?"; der Adapter beantwortet „wohin zeigt er
+    wirklich?". Ein Symlink ist auf der ersten Ebene unsichtbar.
+
+    Leer bedeutet: nichts ist lesbar. Das ist der richtige Vorgabewert — eine
+    Dateifreigabe entsteht durch eine Entscheidung, nicht durch eine
+    Voreinstellung.
+    """
+
     trusted_proxies: list[str] = Field(default_factory=list, alias="TRUSTED_PROXIES")
     """Adressen, deren ``X-Forwarded-For`` geglaubt wird.
 
@@ -54,7 +72,7 @@ class Settings(BaseSettings):
         """
         return self.env != "development"
 
-    @field_validator("webauthn_origins", "trusted_proxies", mode="before")
+    @field_validator("webauthn_origins", "trusted_proxies", "files_allowed_roots", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
         """Kommagetrennt aus der Umgebung, Liste im Code."""

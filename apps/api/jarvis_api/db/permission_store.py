@@ -30,12 +30,19 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import structlog
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from jarvis_contracts import PermissionGrant, PermissionMode, ScopeConstraints
+from jarvis_contracts import PermissionGrant, PermissionMode, constraints_for
 
 __all__ = ["PostgresPermissionStore"]
+
+_log = structlog.get_logger(__name__)
+"""Eine abgewiesene Berechtigung sieht für den Nutzer aus wie „nicht erteilt".
+Dass sie in Wahrheit unlesbar war, gehört ins Protokoll — sonst sucht jemand
+den Fehler in der Oberfläche."""
 
 
 _GRANT = text(
@@ -77,10 +84,38 @@ class PostgresPermissionStore:
             )
         if zeile is None:
             return None
+
+        try:
+            einschraenkungen = constraints_for(scope, zeile["constraints"])
+        except ValidationError as unlesbar:
+            # Ein Datensatz, der sich nicht auslegen lässt, ist keine
+            # Berechtigung — und ausdrücklich nicht „keine Einschränkung".
+            #
+            # Der Fall entstand beim ersten echten Werkzeug: Die
+            # Einschränkungen wurden als Basisklasse gelesen, und die verbietet
+            # zusätzliche Felder. Eine erteilte files.read-Berechtigung mit
+            # Pfadgrenzen war damit überhaupt nicht ladbar. Behoben durch
+            # ``constraints_for()``; was bleibt, ist die Frage, was bei einer
+            # Zeile geschieht, die auch dazu nicht passt.
+            #
+            # Antwort: abweisen wie „nicht erteilt". Die Alternative — die
+            # Ausnahme durchreichen — machte aus einem falsch geschriebenen
+            # Datensatz einen Ausfall des ganzen Laufs. Und die schlimmste
+            # Alternative wäre ein Rückfall auf die Basisklasse: Dann verlöre
+            # eine files.read-Berechtigung ihre Pfadgrenzen und würde
+            # *weiter* gelten.
+            _log.error(
+                "berechtigung.unlesbar",
+                scope=scope,
+                user_id=str(user_id),
+                fehler=str(unlesbar),
+            )
+            return None
+
         return PermissionGrant(
             scope=zeile["scope"],
             mode=PermissionMode(zeile["mode"]),
-            constraints=ScopeConstraints.model_validate(zeile["constraints"] or {}),
+            constraints=einschraenkungen,
             granted_at=zeile["granted_at"],
             expires_at=zeile["expires_at"],
         )

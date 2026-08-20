@@ -83,6 +83,7 @@ from .memory import (
     SourceType,
 )
 from .permissions import (
+    CONSTRAINTS_BY_SCOPE,
     ActionPreview,
     AmountConstraints,
     ApprovalChannel,
@@ -100,6 +101,7 @@ from .permissions import (
     ScopeConstraints,
     ScopeSpec,
     TimeWindow,
+    constraints_for,
 )
 from .run_state import Correction, RunState, StepOutcome
 from .runs import (
@@ -167,7 +169,9 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "ScopeConstraints",
     "MailSendConstraints",
     "FilesConstraints",
+    "CONSTRAINTS_BY_SCOPE",
     "AmountConstraints",
+    "constraints_for",
     "ConstraintViolation",
     "PermissionGrant",
     "PolicyRequest",

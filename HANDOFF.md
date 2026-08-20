@@ -27,10 +27,10 @@ Umbenennung steht aus.
 
 | | |
 |---|---|
-| Commits | 39, Remote auf GitHub |
-| Tests | **869** gesamt — 549 mit `-m security`, 141 mit `-m integration`, **0 übersprungen** |
-| **Security Invariant Coverage** | **44/45** |
-| mypy | `strict`, sauber über 91 Dateien |
+| Commits | 40, Remote auf GitHub |
+| Tests | **897** gesamt — 569 mit `-m security`, 146 mit `-m integration`, **0 übersprungen** |
+| **Security Invariant Coverage** | **45/46** |
+| mypy | `strict`, sauber über 96 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 32 Tabellen, 8 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis als Dienste |
@@ -160,7 +160,7 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Approval Gateway | `core/policy/approval.py` | request → respond → **claim** → authorize |
 | Grant-Verbrauch | `core/tools/grants.py`, `api/db/grant_store.py` | an der `invocation_id`, zuletzt vor dem Handler, in **eigener** Transaktion committed |
 | Laufpersistenz | `core/ports/runs.py`, `api/db/run_store.py` | Fortschreiben nur aus dem erwarteten Status (`WHERE`-Klausel) |
-| Invarianten-Register | `core/policy/invariants.py` | 45 Invarianten |
+| Invarianten-Register | `core/policy/invariants.py` | 46 Invarianten |
 
 ### Orchestrator und Agenten
 
@@ -187,7 +187,9 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Lauf-Routen | `apps/api/jarvis_api/routes/runs.py` | `POST/GET /runs`, `GET /runs/{id}` — Eigentum über `_eigener_lauf`, 404 statt 403 |
 | Bestätigungs-Routen | `apps/api/jarvis_api/routes/actions.py` | `GET /actions`, `POST /actions/{id}/respond` — der Weg, auf „Ja" zu klicken |
 | Berechtigungen | `apps/api/jarvis_api/db/permission_store.py` | erst jetzt in der Anwendung; vorher nur als Kopie im Testcode |
-| Werkzeugkatalog | `apps/api/jarvis_api/tools.py` | **leer** — mit persistentem Grant-Verbrauch verdrahtet |
+| Werkzeugkatalog | `apps/api/jarvis_api/tools.py` | ein Werkzeug, mit persistentem Grant-Verbrauch verdrahtet |
+| Werkzeug `files.read` | `core/tools/builtin/files.py` | Spec und Handler, Handler nimmt den Port |
+| Dateizugriff | `packages/integrations/jarvis_integrations/localfs.py` | Auflösung, Wurzelgrenze, `O_NOFOLLOW`, nur reguläre Dateien |
 
 ### Sprachmodelle
 
@@ -227,9 +229,9 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 
 | Fehlt | Auswirkung |
 |---|---|
-| **Werkzeuge — überhaupt welche** | **Die kritischste Lücke, und sie stand bisher nicht in dieser Liste.** Es gibt keine einzige Werkzeug-Implementierung: `build_registry()` lebt in `tests/fakes.py`, der Katalog der Anwendung (`jarvis_api.tools`) ist leer. Policy, Approval und Grant-Verbrauch sichern damit noch nichts Reales ab. Solange das so ist, prüfte ein Ausführungsendpunkt nur die Attrappe. |
+| **Werkzeuge — mehr als eines** | Es gibt jetzt genau **ein** echtes: `files.read`. Damit sichert der Sockel erstmals etwas Reales ab. Alles Weitere (`mail.*`, `calendar.*`, `web.fetch`) fehlt; der Scope-Katalog führt 34 Einträge, der Werkzeugkatalog einen. |
 | **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
-| **Ausführung über HTTP** | Folge der Zeile oben. `POST /runs` legt einen Lauf an und stuft ihn ein, führt ihn aber nicht aus; Glieder ⑤ und ⑦ der Angriffskette bleiben „nur im Kern geprüft" (`docs/18-angriffskette.md`). |
+| **Ausführung über HTTP** | `POST /runs` legt einen Lauf an und stuft ihn ein, führt ihn aber nicht aus. Der Schritt-Endpunkt fehlt; Glieder ⑤ und ⑦ der Angriffskette bleiben „nur im Kern geprüft" (`docs/18-angriffskette.md`). **Seit `files.read` ist das nicht mehr durch fehlende Werkzeuge blockiert** — es ist die nächste Aufgabe. |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
 | **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
@@ -346,34 +348,33 @@ Kontamination" nicht hielt.
 
 Die Reihenfolge ist begründet, nicht beliebig.
 
-### 1. Werkzeuge — irgendein echtes
+### 1. Ausführung über HTTP
 
-**Das ist die Stelle, an der das Projekt jetzt steht, und sie ist beim Bauen
-der Endpunkte erst deutlich geworden.** Der gesamte Sicherheitssockel — Policy
-Engine, Approval Gateway, Grant-Verbrauch, Taint-Gate — sichert bislang **kein
-einziges reales Werkzeug** ab. `build_registry()` lebt in `tests/fakes.py`;
-`jarvis_api.tools.tool_catalog()` gibt eine leere Registry zurück.
+**Der Weg ist jetzt frei.** Mit `files.read` gibt es ein echtes Werkzeug; ein
+Schritt-Endpunkt am Lauf prüfte nicht mehr die Attrappe, sondern die Sache. Er
+schließt die Glieder ⑤ und ⑦ der Angriffskette.
 
-Solange das so ist:
+Was dabei zu beachten ist, steht bereits fest: **Strukturtest zuerst**, und die
+Zugehörigkeitsprüfung (`resource-ownership-checked-once`) gilt auch für den
+neuen Endpunkt — er nimmt eine `run_id` entgegen.
 
-* kann kein Ausführungsendpunkt entstehen, der etwas anderes als eine Attrappe
-  prüft — die Glieder ⑤ und ⑦ der Angriffskette bleiben „nur im Kern geprüft";
-* ist die Modellschleife nicht erprobbar, weil ein Modell nichts vorschlagen
-  kann;
-* bleibt jede Aussage über den Alltagsfall („Mails lesen → Termin anlegen")
-  eine Aussage über Testdoppelgänger.
+Der interessante Testfall ist der Alltagsfall aus `docs/16-v1.1-review.md §1`,
+jetzt mit echten Bestandteilen: Datei lesen (kontaminiert den Lauf) → Termin
+anlegen (bestätigungspflichtig, weil kontaminiert). Solange das zweite Werkzeug
+fehlt, endet er nach dem ersten Schritt — auch das ist ein Ergebnis.
 
-Der kleinste sinnvolle Schritt ist **ein** lesendes Werkzeug mit echter
-Außenanbindung, weil es alle Schichten auf einmal in Betrieb nimmt: Scope im
-Katalog, Berechtigung in der Tabelle, Policy-Entscheidung, Protokoll, Grant,
-Taint (`taints_context=True`, sobald Fremdinhalt hereinkommt).
+### 2. Ein zweites Werkzeug, und zwar ein schreibendes
 
-Danach ein schreibendes — erst dort wird die Bestätigungskette real, die seit
-diesem Block über HTTP bedienbar ist.
+`files.read` nimmt alle Schichten in Betrieb, aber es wirkt nicht nach außen.
+Erst ein schreibendes Werkzeug macht die Bestätigungskette real, die seit dem
+vorletzten Block über HTTP bedienbar ist: Vorschau, Payload-Hash, Nonce,
+Sanierung eines kontaminierten Laufs.
 
-### 2. Ausführung über HTTP
-
-Wenn es Werkzeuge gibt: der Schritt-Endpunkt am Lauf. Er schließt ⑤ und ⑦.
+`calendar.create` ist der im Projekt durchgehend benutzte Beispielfall und
+zugleich der interessanteste: Ohne Teilnehmer ist er `structured` und nach
+Bestätigung sanierbar, mit Teilnehmern `freeform` und nie sanierbar
+(`ToolSpec.outbound_fields`). Diese Unterscheidung ist bislang nur an
+Attrappen geprüft.
 
 Beim Bauen gilt, was bei den Auth- und Lauf-Routen galt: **Strukturtest
 zuerst**, sonst schreibt man ihn passend zum Code. Für diesen Block sind daraus
@@ -513,6 +514,9 @@ klären, indem der Fall ausgeführt wurde.
 | **Naive Ersetzungsskripte auf Testdateien** | Ein Regex über verschachtelte Klammern hat eine 900-Zeilen-Datei zerlegt. Zeilenweise arbeiten oder `git checkout` und neu ansetzen. |
 | **Ein Store, der die Verbindung des Aufrufers nimmt** | Das ist der Normalfall und für Lesen und Protokollieren richtig — für einen Einmaligkeitsanspruch nicht: Er erbt damit die Rücknehmbarkeit einer fremden Transaktion. Wo ein Anspruch *vor* einer Wirkung nach außen gelten muss, gehört ihm eine eigene Transaktion. Die Signatur soll das erzwingen (`AsyncEngine` statt `AsyncConnection`), sonst wird der unsichere Weg beim nächsten Verdrahten wieder gewählt. |
 | **Nebenläufigkeitstests belegen keine Dauerhaftigkeit** | Zehn parallele Verbindungen, eine gewinnt — und trotzdem war der Verbrauch flüchtig. Jeder dieser Tests verließ seinen `begin()`-Block regulär und committete damit. Wer Crash-Semantik zusagt, muss den ungeordneten Ausgang prüfen: `rollback()` nach dem Seiteneffekt, dann aus einer neuen Verbindung nachsehen. |
+| **Eine Pfadprüfung ohne Dateisystem kann nur streng und dumm sein** | `FilesConstraints.check()` verglich Segmente über `relative_to()` und normalisierte nicht — `/wurzel/../../etc/passwd` galt als erlaubt. Der Test daneben prüfte die Präfix-Umgehung, an die jemand gedacht hatte. `..` wird jetzt abgelehnt statt weggerechnet: Wegrechnen bildet nach, was das Dateisystem tut, und liegt spätestens bei Symlinks wieder daneben. Die echte Auflösung gehört dorthin, wo geöffnet wird. |
+| **Ein Basistyp mit `extra="forbid"` beim Lesen von JSONB** | Der Berechtigungsspeicher las Einschränkungen als `ScopeConstraints`. Jede scope-spezifische Einschränkung — der eigentliche Zweck des Feldes — war damit **nicht ladbar**. Aufgefallen erst beim ersten Werkzeug, das eine braucht. Behoben mit `constraints_for()`; wichtig war die Frage, wohin ein unlesbarer Datensatz fällt: nicht auf die Basisklasse (dann verlöre eine `files.read`-Berechtigung ihre Pfadgrenzen und **gälte weiter**), sondern auf „nicht erteilt". |
+| **`open()` auf eine FIFO blockiert** | Die Prüfung „ist das eine reguläre Datei?" steht notwendigerweise *nach* dem Öffnen — vorher gäbe es nur `lstat`, und dazwischen läge das Zeitfenster, das die Bauart schließen soll. Der erste Testlauf hing deshalb. `O_NONBLOCK` löst es; für reguläre Dateien ist die Flagge wirkungslos. Ein Test, der eine FIFO anlegt, ist billig — und er hat einen echten Hänger gefunden. |
 | **Rollback-Isolation im Test verdeckt Transaktionsgrenzen** | Die `conn`-Fixture hält alles in einer Transaktion, die nie committet. Bequem, schnell, sauber — und blind für jeden Ablauf, der über Transaktionsgrenzen geht. Sie war der Grund, warum die E2E-Suite den Befund nicht sehen konnte. Wo eine Komponente aus gutem Grund selbst committet, muss der Test committen und danach aufräumen (`aufgeraeumte_nutzer`). |
 | **Aufräum-Fixture verklemmt gegen die offene Testtransaktion** | Das `DELETE` der Aufräum-Fixture wartete auf Zeilensperren der `conn`-Transaktion, die erst später zurückrollte: Die Suite blieb stehen, **ohne Fehlermeldung** — der unangenehmste Ausgang. Fixtures werden in umgekehrter Aufbaureihenfolge abgebaut; `conn` fordert deshalb `aufgeraeumte_nutzer` an, obwohl es sie nicht benutzt. Damit rollt es zuerst zurück. Diagnose lief über `pg_stat_activity` (`wait_event_type = 'Lock'`) — bei einer hängenden Suite die erste Adresse. |
 

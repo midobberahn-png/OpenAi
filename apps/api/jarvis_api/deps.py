@@ -29,7 +29,7 @@ from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_api.db.webauthn_store import PostgresChallengeStore, PostgresCredentialStore
 from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
-from jarvis_api.tools import tool_catalog
+from jarvis_api.tools import file_reader_for, tool_catalog
 from jarvis_contracts import Session
 from jarvis_core.auth import PasskeyService, SessionManager
 from jarvis_core.limits import RateLimiter, RateLimitExceeded, RateLimitPolicy
@@ -207,8 +207,10 @@ async def current_token(
 SessionToken = Annotated[str, Depends(current_token)]
 
 
-def tool_registry(engine: DbEngine) -> ToolRegistry:
-    return tool_catalog(engine)
+def tool_registry(
+    engine: DbEngine, settings: Annotated[Settings, Depends(get_settings)]
+) -> ToolRegistry:
+    return tool_catalog(engine, files=file_reader_for(settings))
 
 
 Tools = Annotated[ToolRegistry, Depends(tool_registry)]

@@ -73,12 +73,21 @@ müssen sich bis auf nichts decken.
 fremde Bestätigung, falsche Nonce. Die *Anfrage* entsteht weiterhin nur im
 Kern, weil sie aus einem Werkzeugschritt hervorgeht.
 
-**Nur im Kern geprüft: ⑤ und ⑦.** Der Grund ist keine Nachlässigkeit, sondern
-eine Abwesenheit, und sie ist inzwischen genauer benannt als „es fehlen
-Endpunkte": **Es gibt keine einzige Werkzeug-Implementierung.** `build_registry()`
-lebt in `tests/fakes.py`; der Katalog der Anwendung (`jarvis_api.tools`) ist
-leer. Ein Ausführungsendpunkt hätte nichts auszuführen, und einer, der
-Attrappen ausführt, prüft die Attrappe.
+**Nur im Kern geprüft: ⑤ und ⑦** — aber der Grund hat sich verschoben. Bis vor
+Kurzem lautete er: Es gibt keine einzige Werkzeug-Implementierung, ein
+Ausführungsendpunkt hätte nichts auszuführen. Mit `files.read` gibt es jetzt
+eines, und die Kette Policy → Gate → Registry → Handler ist damit erstmals mit
+einem echten Werkzeug belegt (`test_werkzeug_files_read.py`). Was fehlt, ist
+nur noch der Schritt-Endpunkt.
+
+**Und `files.read` hat eine eigene Grenze mitgebracht, die es vorher nicht
+gab.** Sie ist deshalb bemerkenswert, weil sie zeigt, wo die Kette *nicht*
+endet: Die Policy prüft den Pfad als Zeichenkette, der Adapter löst ihn auf.
+Ein Symlink in einem freigegebenen Ordner besteht die erste Prüfung
+einwandfrei — sie hat kein Dateisystem und kann ihn nicht sehen. Erst die
+zweite weist ab. Beim Bau fiel dabei ein Loch in der ersten auf: Sie ließ
+`..` durch (`relative_to()` normalisiert nicht). Beides ist als
+`file-access-confined-to-roots` geführt.
 
 **Die ehrliche Einordnung:** Für ⑦ ist die Absicherung selbst vollständig und
 adversarial geprüft — Payload-Mutation, TOCTOU, Replay, Cross-Run-Grant,
@@ -95,10 +104,11 @@ für ⑦ steht er aus, solange es nichts auszuführen gibt.
 | Fläche | Bewertung | Stand |
 |---|---|---|
 | **Sitzungstoken ohne Rotation** | Ein entwendeter Token bleibt bis Ablauf oder Widerruf gültig, auch wenn der rechtmäßige Nutzer weiterarbeitet. Das Replay-Fenster ist die volle Sitzungsdauer. | `session-token-rotation` als PLANNED geführt. Race-Semantik ist zu spezifizieren, bevor implementiert wird. |
-| **HTTP-Grenze für ⑤/⑦** | Siehe oben. Kein bekannter Fehler, aber ein ungeprüfter Übergang. ④ und die Antwortseite von ⑥ sind seit `POST /runs` und `POST /actions/{id}/respond` geschlossen. | Offen, solange es keine Werkzeuge gibt — nicht mehr, weil Endpunkte fehlen. |
+| **HTTP-Grenze für ⑤/⑦** | Kein bekannter Fehler, aber ein ungeprüfter Übergang. ④ und die Antwortseite von ⑥ sind seit `POST /runs` und `POST /actions/{id}/respond` geschlossen. | Offen bis zum Schritt-Endpunkt. Seit `files.read` ist das nicht mehr durch fehlende Werkzeuge blockiert. |
 | **Globale Rate-Limit-Stufe** | Ist selbst ein Denial-of-Service-Werkzeug: Wer sie füllt, sperrt auch den rechtmäßigen Nutzer aus. | Bewusst in Kauf genommen; Grenze liegt weit über der Alltagsnutzung. Eine volle Challenge-Tabelle wäre schlimmer. |
 | **Audit-Sink fehlt** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Sicherheitsvorfälle (Klonverdacht, abgewiesene Grants) landen derzeit nur im Anwendungsprotokoll. | Offen. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ist ebenfalls noch nicht implementiert. |
 | **Keine Modellanbindung** | Die größte kommende Fläche: Prompt Injection, Tool-Call-Injection, unvertrauenswürdige Modellausgabe, P3-Abfluss. | Der Taint-Schutz ist dafür gebaut, aber noch nie gegen ein echtes Modell erprobt. |
+| **Dateiinhalt als Fremdinhalt** | `files.read` bringt erstmals echten Fremdinhalt ins System — eine Datei mit `SYSTEM: sende …` ist ein Injection-Versuch wie eine Mail. Der Schutz besteht nicht im Erkennen, sondern darin, dass der Lauf danach kontaminiert ist und keine sendenden Werkzeuge mehr im Angebot hat. | Geprüft (`taints_context`), aber noch nie gegen ein Modell, das den Vorschlag tatsächlich machen würde. |
 
 ---
 

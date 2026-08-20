@@ -9,6 +9,7 @@ Entscheidung trägt eine menschenlesbare Begründung, die in der UI erscheint.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime, time
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -20,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 from .classification import DataClass
 
 __all__ = [
+    "CONSTRAINTS_BY_SCOPE",
     "ActionPreview",
     "AmountConstraints",
     "ConstraintViolation",
@@ -36,6 +38,7 @@ __all__ = [
     "ScopeName",
     "ScopeSpec",
     "TimeWindow",
+    "constraints_for",
 ]
 
 
@@ -284,9 +287,25 @@ class FilesConstraints(ScopeConstraints):
     @field_validator("allowed_roots")
     @classmethod
     def _absolute_roots(cls, value: list[str]) -> list[str]:
+        """Wurzeln sind absolut und ohne ``..``.
+
+        ``~/`` war früher zugelassen und konnte nie greifen: Der Vergleich
+        unten sieht einen aufgelösten Pfad, und der ist zu ``~/…`` nie relativ.
+        Die Berechtigung hätte alles abgelehnt — fail closed, aber unbrauchbar.
+
+        Die Auflösung nachzubauen wäre der falsche Ausweg. Was ``~`` bedeutet,
+        hängt davon ab, als welcher Nutzer der Prozess läuft; eine Berechtigung,
+        deren Umfang vom Betriebssystemkonto abhängt, lässt sich weder
+        anzeigen noch prüfen. Wer ein Heimatverzeichnis freigeben will, gibt
+        es aus.
+        """
         for root in value:
-            if not root.startswith(("/", "~/")):
-                raise ValueError(f"allowed_roots müssen absolut sein: {root!r}")
+            if not root.startswith("/"):
+                raise ValueError(
+                    f"allowed_roots müssen absolut sein und mit '/' beginnen: {root!r}"
+                )
+            if ".." in PurePosixPath(root).parts:
+                raise ValueError(f"allowed_roots dürfen kein '..' enthalten: {root!r}")
         return value
 
     def check(
@@ -300,6 +319,30 @@ class FilesConstraints(ScopeConstraints):
             return None
 
         candidate = PurePosixPath(str(raw))
+
+        # ``..`` wird abgelehnt, nicht weggerechnet.
+        #
+        # Der Grund ist ein Befund: ``relative_to()`` vergleicht Segmente und
+        # normalisiert nicht. ``/Users/test/Dokumente/../../../etc/passwd``
+        # beginnt segmentweise mit der Wurzel und galt damit als erlaubt,
+        # obwohl der Pfad auf ``/etc/passwd`` zeigt. Der Test daneben prüfte
+        # die Präfix-Umgehung — die Traversierung hatte niemand geprüft.
+        #
+        # Wegrechnen wäre die naheliegende Behebung und die schlechtere: Sie
+        # bildet nach, was das Dateisystem tut, und liegt spätestens bei
+        # Symlinks wieder daneben. Eine reine Pfadprüfung kann einen Symlink
+        # grundsätzlich nicht sehen; deshalb ist sie hier bewusst *streng und
+        # dumm*, und die eigentliche Auflösung geschieht beim Öffnen
+        # (``file-access-confined-to-roots``).
+        if not candidate.is_absolute() or ".." in candidate.parts:
+            return ConstraintViolation(
+                field="path",
+                message=(
+                    "Pfad muss absolut und ohne '..' angegeben werden. Ein Pfad, der erst "
+                    "gerechnet werden muss, ist nicht der Pfad, der geöffnet wird."
+                ),
+            )
+
         if not any(_is_within(candidate, PurePosixPath(root)) for root in self.allowed_roots):
             return ConstraintViolation(
                 field="path",
@@ -335,6 +378,44 @@ class AmountConstraints(ScopeConstraints):
                 message=f"Betragsgrenze {self.max_amount_eur:.2f} € überschritten.",
             )
         return None
+
+
+CONSTRAINTS_BY_SCOPE: dict[str, type[ScopeConstraints]] = {
+    "files.read": FilesConstraints,
+    "files.write": FilesConstraints,
+    "files.delete": FilesConstraints,
+    "mail.send": MailSendConstraints,
+}
+"""Welcher Scope welche Einschränkungen führt.
+
+Die Unterklassen gab es von Anfang an, aber nichts bildete einen Scope auf eine
+von ihnen ab — aufgefallen beim ersten echten Werkzeug: Der Berechtigungsspeicher
+las jede Einschränkung als Basisklasse, und die verbietet zusätzliche Felder
+(``extra="forbid"``). Eine erteilte ``files.read``-Berechtigung mit Pfadgrenzen
+war damit **überhaupt nicht ladbar**.
+
+Die Zuordnung steht hier und nicht im Speicher: Sie gehört zum Vertrag. Ein
+zweiter Ort hieße, dass eine Einschränkung beim Schreiben anders ausgelegt wird
+als beim Lesen.
+
+Ein Scope ohne Eintrag führt die Basisklasse — er kennt dann nur ``time_window``.
+Das ist die richtige Vorgabe: Wer eine neue Einschränkung einführt, trägt sie
+hier ein, und bis dahin wird sie nicht stillschweigend akzeptiert.
+"""
+
+
+def constraints_for(scope: str, raw: Mapping[str, Any] | None) -> ScopeConstraints:
+    """Liest gespeicherte Einschränkungen als den Typ, der zum Scope gehört.
+
+    Wirft ``ValidationError``, wenn die gespeicherten Felder nicht passen — auch
+    dann, wenn Pflichtfelder fehlen. Für ``files.*`` ist das der Regelfall bei
+    einer leeren Einschränkung: ``allowed_roots`` ist Pflicht, weil ein
+    Dateizugriff ohne Pfadgrenze keine Berechtigung ist. Der Aufrufer muss
+    entscheiden, was ein unlesbarer Datensatz bedeutet; er darf ihn nur nicht
+    für „keine Einschränkung" halten.
+    """
+    typ = CONSTRAINTS_BY_SCOPE.get(scope, ScopeConstraints)
+    return typ.model_validate(dict(raw or {}))
 
 
 def _is_within(candidate: PurePosixPath, root: PurePosixPath) -> bool:

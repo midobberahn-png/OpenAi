@@ -147,6 +147,32 @@ PORTIONEN: tuple[Portion, ...] = (
         ),
     ),
     Portion(
+        nummer="09",
+        titel="Das erste echte Werkzeug — Dateizugriff",
+        auftrag=(
+            "Der gesamte Sicherheitssockel sicherte bis zu diesem Block nichts Reales "
+            "ab; es gab nur Attrappen. files.read ist das erste Werkzeug mit echter "
+            "Außenanbindung und deshalb der interessanteste Prüfgegenstand des Pakets. "
+            "Zu prüfen ist vor allem die Pfadgrenze, und zwar auf beiden Ebenen: Die "
+            "Berechtigung prüft eine Zeichenkette, der Adapter löst auf. Gibt es einen "
+            "Pfad, der beide besteht und trotzdem hinausführt? Hardlink? Ein Symlink, "
+            "der erst zwischen resolve() und open() entsteht? Ein Mount innerhalb der "
+            "Wurzel? Was passiert bei einer Wurzel, die selbst ein Symlink ist? "
+            "Verrät eine Fehlermeldung, ob eine Datei existiert oder wohin ein Verweis "
+            "zeigt — auch über die Laufzeit? Und: Ist die Kontamination "
+            "(reads_untrusted_content) wirklich gesetzt, oder ließe sich Dateiinhalt in "
+            "einen sauberen Lauf bringen?"
+        ),
+        dateien=(
+            "packages/core/jarvis_core/ports/files.py",
+            "packages/core/jarvis_core/tools/builtin/files.py",
+            "packages/integrations/jarvis_integrations/localfs.py",
+            "apps/api/jarvis_api/tools.py",
+            "apps/api/jarvis_api/db/permission_store.py",
+            "tests/unit/test_localfs.py",
+        ),
+    ),
+    Portion(
         nummer="06",
         titel="Strukturtests — die Absicherung gegen künftige Fehler",
         auftrag=(
@@ -265,7 +291,13 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B39 | Jeder Endpunkt mit fremder Kennung ruft den Zugehörigkeitsprüfer auf, und keiner lädt daran vorbei. Beides am Quelltext erzwungen. | `tests/unit/test_http_boundary.py` | 04, 06 |
 | B40 | Der Bestätigungskanal ist kein Feld des Requests, sondern eine Eigenschaft der Route. Ein Aufrufer kann `allows_channel()` nicht durch eine Behauptung umgehen. | `routes/actions.py` | 04 |
 | B41 | Die Liste offener Bestätigungen gibt die Nonce nur für Bestätigungen der eigenen Sitzung heraus. | `routes/actions.py:list_actions` | 04 |
-| B42 | Der Werkzeugkatalog der Anwendung ist leer, und das steht im Anwendungscode statt nur im Testcode. Die Registry dort ist mit `PostgresGrantConsumer` verdrahtet, nicht mit dem Testdoppelgänger. | `tools.py` | 04 |
+| B42 | Der Werkzeugkatalog der Anwendung steht im Anwendungscode statt nur im Testcode und ist mit `PostgresGrantConsumer` verdrahtet, nicht mit dem Testdoppelgänger. | `tools.py` | 04, 09 |
+| B43 | `files.read` gibt nur Inhalte heraus, deren Pfad **nach Auflösung** unterhalb einer konfigurierten Wurzel liegt. Ein Symlink aus dem freigegebenen Ordner heraus besteht die Berechtigungsprüfung und scheitert am Adapter. | `integrations/localfs.py` | 09 |
+| B44 | Nur reguläre Dateien werden gelesen. Verzeichnisse, FIFOs und Gerätedateien werden abgewiesen — auch innerhalb der Wurzeln. | `integrations/localfs.py` | 09 |
+| B45 | Eine abgewiesene Anfrage verrät nicht, wohin der Pfad zeigte: Symlink-Ausbruch und Pfad-von-außerhalb ergeben dieselbe Meldung. | `integrations/localfs.py` | 09 |
+| B46 | Der Lauf ist nach `files.read` kontaminiert. Eine Datei ist Fremdinhalt wie eine Mail; die sendenden Werkzeuge fallen danach aus dem Angebot. | `tools/builtin/files.py` | 09, 02 |
+| B47 | Eine Berechtigung, deren gespeicherte Einschränkungen sich nicht zum Scope auslegen lassen, gilt als **nicht erteilt** — kein Rückfall auf die Basisklasse, der die Pfadgrenzen verlöre. | `db/permission_store.py`, `contracts:constraints_for` | 09, 05 |
+| B48 | Die Pfadprüfung der Berechtigung lehnt `..` ab, statt es wegzurechnen, und akzeptiert nur absolute Pfade. | `contracts/permissions.py:FilesConstraints` | 09, 01 |
 
 ### Was seit dem letzten Paket geschah
 

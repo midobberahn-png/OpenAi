@@ -1,25 +1,27 @@
 """Der Werkzeugkatalog der Anwendung.
 
-**Er ist leer, und das ist der ehrliche Zustand.** Es gibt bislang keine
-einzige Werkzeug-Implementierung; ``build_registry()`` in ``tests/fakes.py``
-registriert Attrappen für die Durchstichtests. Diese Datei existiert trotzdem,
-und zwar aus zwei Gründen:
+Hier entsteht die Registry, mit der das System tatsächlich arbeitet — im
+Unterschied zu ``build_registry()`` in ``tests/fakes.py``, das Attrappen für
+die Durchstichtests registriert. Diese Datei existiert, damit der Unterschied
+sichtbar bleibt: Wer eine Registry mit ``mail.send`` im Testcode sieht, hält
+sie sonst für die des Systems.
 
-1. **Die Lücke gehört in den Anwendungscode.** Solange der einzige Katalog im
-   Testcode steht, sieht ein Leser eine Registry mit ``mail.send`` und
-   ``calendar.create`` und hält sie für die des Systems. Hier steht, dass es
-   sie nicht gibt.
+**Der Grant-Verbrauch wird an genau einer Stelle verdrahtet.** Das
+Übergabedossier warnt ausdrücklich davor, hier ``InProcessGrants`` zu nehmen —
+den Testdoppelgänger, der nur innerhalb eines Prozesses hält. Wer künftig ein
+Werkzeug ergänzt, muss diese Entscheidung nicht noch einmal treffen.
 
-2. **Die Verdrahtung des Grant-Verbrauchs gehört an genau eine Stelle.** Das
-   Übergabedossier warnt ausdrücklich davor, beim Verdrahten
-   ``InProcessGrants`` zu nehmen — der Testdoppelgänger, der nur innerhalb
-   eines Prozesses hält. Diese Funktion nimmt ``PostgresGrantConsumer``, und
-   wer künftig ein Werkzeug registriert, muss die Entscheidung nicht noch
-   einmal treffen.
+**Was registriert ist und was nicht.** Bislang ein einziges Werkzeug,
+``files.read``, und das ist Absicht: Es nimmt alle Schichten in Betrieb —
+Scope, Berechtigung samt Pfadgrenzen, Protokoll, Grant, Kontamination — und
+wirkt dabei nichts nach außen. Alles Weitere kommt danach, nicht daneben.
 
-Eine ``ToolRegistry`` ohne Werkzeuge ist dabei kein Sicherheitsproblem: Jeder
-Aufruf endet in ``UnknownTool``. Das ist dieselbe fail-closed-Richtung wie eine
-Registry ohne Grant-Verbrauch, die ``UnguardedExecution`` wirft.
+Ohne konfigurierte Wurzeln (``FILES_ALLOWED_ROOTS``) ist das Werkzeug
+registriert, liefert aber für jeden Pfad eine Abweisung. Das ist gewollt: Der
+Katalog soll nicht davon abhängen, ob jemand eine Umgebungsvariable gesetzt
+hat — sonst wäre das Angebot an das Modell von der Betriebsumgebung abhängig
+und der Fehler „Werkzeug fehlt" nicht von „Ordner nicht freigegeben" zu
+unterscheiden.
 """
 
 from __future__ import annotations
@@ -27,16 +29,32 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.db.grant_store import PostgresGrantConsumer
+from jarvis_api.settings import Settings
+from jarvis_core.ports.files import FileReader
 from jarvis_core.tools import ToolRegistry
+from jarvis_core.tools.builtin import FILES_READ, files_read_handler
 
 __all__ = ["tool_catalog"]
 
 
-def tool_catalog(engine: AsyncEngine) -> ToolRegistry:
+def tool_catalog(engine: AsyncEngine, *, files: FileReader) -> ToolRegistry:
     """Die Registry der Anwendung — mit persistentem Grant-Verbrauch.
 
-    Hier kommen die Werkzeuge hin. Wer eines ergänzt, registriert Spezifikation
-    **und** Handler; ein Spec ohne Handler ist ein Konfigurationsfehler und
-    wird beim Ausführen abgewiesen.
+    Die Außenanbindung kommt als Port herein und wird hier nicht gebaut: So
+    lässt sich der Katalog in einem Test mit einem anderen Dateizugriff
+    aufbauen, ohne dass diese Funktion davon wüsste.
     """
-    return ToolRegistry(grants=PostgresGrantConsumer(engine))
+    registry = ToolRegistry(grants=PostgresGrantConsumer(engine))
+    registry.register(FILES_READ, files_read_handler(files))
+    return registry
+
+
+def file_reader_for(settings: Settings) -> FileReader:
+    """Der Dateizugriff des Prozesses.
+
+    Getrennt von ``tool_catalog``, weil die Wurzeln aus der Konfiguration
+    stammen und die Registry davon nichts wissen muss.
+    """
+    from jarvis_integrations import LocalFileReader
+
+    return LocalFileReader(settings.files_allowed_roots)

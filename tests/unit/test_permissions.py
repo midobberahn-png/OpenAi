@@ -109,6 +109,65 @@ class TestFilesConstraints:
         assert c.check({"path": "/etc/passwd"}) is not None
         assert c.check({"path": "/Users/test/.ssh/id_rsa"}) is not None
 
+    @pytest.mark.invariant("file-access-confined-to-roots")
+    def test_traversierung_mit_punktpunkt_wird_erkannt(self) -> None:
+        """Der Test, der neben dem Präfixtest gefehlt hat.
+
+        ``PurePosixPath.relative_to()`` vergleicht Segmente, aber es
+        *normalisiert nicht*: ``/Users/test/Dokumente/../../../etc/passwd``
+        beginnt segmentweise mit der Wurzel und galt damit als erlaubt —
+        obwohl der Pfad auf ``/etc/passwd`` zeigt.
+
+        Gefunden beim Bau des ersten Dateiwerkzeugs; bis dahin folgenlos, weil
+        es kein Werkzeug gab, das einen Pfad öffnet. Die Lehre ist dieselbe wie
+        beim Grant-Replay: Der vorhandene Test prüfte die Umgehung, an die
+        jemand gedacht hatte (Präfix), nicht die daneben.
+
+        ``..`` wird jetzt rundheraus abgelehnt statt weggerechnet. Ein
+        rechnender Vergleich wäre wieder eine Nachbildung dessen, was das
+        Dateisystem tut — und die nächste Abweichung wartet bei Symlinks, die
+        eine reine Pfadprüfung grundsätzlich nicht sehen kann.
+        """
+        c = FilesConstraints(allowed_roots=["/Users/test/Dokumente"])
+        for pfad in (
+            "/Users/test/Dokumente/../../../etc/passwd",
+            "/Users/test/Dokumente/../.ssh/id_rsa",
+            "/Users/test/Dokumente/unter/../../geheim.txt",
+        ):
+            verletzung = c.check({"path": pfad})
+            assert verletzung is not None, f"Traversierung nicht erkannt: {pfad}"
+            assert verletzung.field == "path"
+
+    @pytest.mark.invariant("file-access-confined-to-roots")
+    def test_relativer_pfad_wird_abgelehnt(self) -> None:
+        """Ein relativer Pfad hat kein Bezugssystem, das die Policy kennt.
+
+        Wogegen er relativ ist, entscheidet erst der Prozess, der ihn öffnet.
+        Eine Prüfung, die ihn durchließe, prüfte etwas anderes als das, was
+        später geöffnet wird.
+        """
+        c = FilesConstraints(allowed_roots=["/Users/test/Dokumente"])
+        assert c.check({"path": "Dokumente/brief.pdf"}) is not None
+        assert c.check({"path": "../../etc/passwd"}) is not None
+
+    def test_tilde_wurzel_ist_unzulaessig(self) -> None:
+        """``~/`` war erlaubt und konnte nie greifen.
+
+        Der Validator ließ ``~/Dokumente`` zu, der Vergleich sah aber einen
+        aufgelösten Pfad wie ``/Users/test/Dokumente`` — der ist zu ``~/…``
+        nie relativ. Die Berechtigung hätte alles abgelehnt.
+
+        Die Auflösung nachzubauen wäre der falsche Ausweg: Was ``~`` bedeutet,
+        hängt davon ab, als welcher Nutzer der Prozess läuft. Eine Berechtigung,
+        deren Umfang vom Betriebssystemkonto abhängt, lässt sich nicht prüfen.
+        """
+        with pytest.raises(ValidationError):
+            FilesConstraints(allowed_roots=["~/Dokumente"])
+
+    def test_wurzel_mit_punktpunkt_ist_unzulaessig(self) -> None:
+        with pytest.raises(ValidationError):
+            FilesConstraints(allowed_roots=["/Users/test/Dokumente/.."])
+
     def test_gesperrte_dateitypen(self) -> None:
         c = FilesConstraints(allowed_roots=["/Users/test"])
         v = c.check({"path": "/Users/test/boese.sh"})

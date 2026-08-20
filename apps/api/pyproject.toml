@@ -18,6 +18,8 @@ dependencies = [
     "cryptography>=44.0",
     "python-multipart>=0.0.20",
     "webauthn>=2.5",
+    "jarvis-core",
+    "jarvis-integrations",
 ]
 
 [build-system]
@@ -29,3 +31,5 @@ packages = ["jarvis_api"]
 
 [tool.uv.sources]
 jarvis-contracts = { workspace = true }
+jarvis-core = { workspace = true }
+jarvis-integrations = { workspace = true }

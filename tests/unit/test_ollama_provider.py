@@ -22,7 +22,6 @@ from typing import Any
 
 import httpx
 import pytest
-from jarvis_providers.ollama import OllamaError, OllamaProvider
 
 from jarvis_contracts import (
     CompletionRequest,
@@ -30,6 +29,7 @@ from jarvis_contracts import (
     Message,
     MessageRole,
 )
+from jarvis_providers.ollama import OllamaError, OllamaProvider
 
 pytestmark = pytest.mark.security
 
