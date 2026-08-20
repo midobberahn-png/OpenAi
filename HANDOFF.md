@@ -159,6 +159,7 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Policy Engine | `core/policy/engine.py` | 7 Prüfstufen, Taint zuerst |
 | Approval Gateway | `core/policy/approval.py` | request → respond → **claim** → authorize |
 | Grant-Verbrauch | `core/tools/grants.py`, `api/db/grant_store.py` | an der `invocation_id`, zuletzt vor dem Handler, in **eigener** Transaktion committed |
+| Laufpersistenz | `core/ports/runs.py`, `api/db/run_store.py` | Fortschreiben nur aus dem erwarteten Status (`WHERE`-Klausel) |
 | Invarianten-Register | `core/policy/invariants.py` | 43 Invarianten |
 
 ### Orchestrator und Agenten
@@ -223,7 +224,7 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 | Fehlt | Auswirkung |
 |---|---|
 | **HTTP-Endpunkte für Läufe** | Es gibt `/auth/*` und `/health`, sonst nichts. Die Kette Identity → Run → Policy → Approval → Execution ist nur im Kern geprüft, nicht über HTTP (`docs/18-angriffskette.md`). |
-| **Persistenz der Läufe (`RunStore`)** | Es gibt Tabelle und Vertrag, aber weder Port noch Implementierung: Ein `Run` lebt ausschließlich im Arbeitsspeicher des Orchestrators, die Integrationstests legen die Zeile per SQL an. Damit ist ein Lauf weder pausierbar noch wiederaufnehmbar — und `tool_invocations.run_id` hat nichts, worauf es zeigen könnte. Voraussetzung für `POST /runs`, nicht danach nachrüstbar. |
+| **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
 | **Bestätigungs-Endpunkt** | `POST /actions/{id}/respond` fehlt. Der Mensch hat derzeit keinen Weg, auf „Ja" zu klicken. |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
@@ -344,8 +345,8 @@ Die Reihenfolge ist begründet, nicht beliebig.
 ### 1. HTTP-Endpunkte für Läufe und Bestätigungen
 
 `POST /runs`, `POST /actions/{id}/respond`, dazu die Sitzungs- und
-Laufübersicht — und davor der `RunStore`, ohne den `POST /runs` nichts
-abzulegen hätte. Zwei Gründe:
+Laufübersicht. Die Persistenz darunter steht seit dem `RunStore`; die Endpunkte
+legen an, laden und schreiben fort, ohne selbst SQL zu kennen. Zwei Gründe:
 
 * Es gibt **keinen Weg, eine Bestätigung zu erteilen**. Jede Aktion mit
   Außenwirkung hängt daran.
@@ -389,13 +390,28 @@ Zwei Nebenwirkungen, beide erwünscht:
   war vorher folgenlos — die Zeile verschwand mit der abgebrochenen
   Transaktion. Jetzt greift es tatsächlich.
 
-**Was offen bleibt:** Der **Lauf** muss committed sein, bevor protokolliert
-wird — `tool_invocations.run_id` ist ein Fremdschlüssel auf `runs`. Das
-scheitert laut (`IntegrityError`) und nicht still, ist also keine Falle,
-sondern eine Reihenfolge. Nur: **Es gibt noch keinen `RunStore`.** Läufe
-werden nirgends persistiert; die Integrationstests legen sie per SQL an. Wer
-`POST /runs` baut, baut damit zwangsläufig auch die Persistenz des Laufs — und
-das ist die Stelle, an der der Commit hingehört, vor dem ersten Werkzeugschritt.
+**Das erste Glied ist inzwischen gebaut.** Der Lauf muss committed sein, bevor
+protokolliert wird — `tool_invocations.run_id` ist ein Fremdschlüssel auf
+`runs`. Dafür gibt es jetzt `RunStore` und `PostgresRunStore`, ebenfalls mit
+eigener Transaktion je Schreibvorgang. Die Kette lautet damit vollständig:
+
+```
+RunStore.create()          → eigene Transaktion, committed
+InvocationStore.record()   → eigene Transaktion, committed
+GrantConsumer.consume()    → eigene Transaktion, committed
+Handler                    → wirkt nach außen
+```
+
+Jedes Glied ist festgeschrieben, bevor das nächste es braucht, und keines hängt
+an der Transaktion des Requests. `test_protokoll_findet_den_lauf_als_fremdschluessel`
+und `test_das_protokoll_traegt_den_anspruch_ohne_zutun_des_tests` prüfen die
+beiden Übergänge ohne Umweg über SQL.
+
+`save()` schreibt nur aus dem erwarteten Status fort — vierter Fall desselben
+Musters nach Nonce, Ausführungsanspruch und Grant-Verbrauch, diesmal von
+vornherein in der `WHERE`-Klausel. Neu als Invariante
+`run-state-compare-and-set` geführt; ohne den Vergleich gewinnen zehn
+nebenläufige Übergänge alle zehn.
 
 Belegt ist der Zusammenhang in
 `test_das_protokoll_traegt_den_anspruch_ohne_zutun_des_tests`: Es protokolliert

@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 42/43**
+**Security Invariant Coverage: 43/44**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -56,6 +56,7 @@ nicht nachträglich passend machen.
 | `audit-append-only` | Das Audit-Log ist unveränderlich | UPDATE und DELETE werden auf Datenbankebene abgelehnt. | `db.audit_log` |
 | `audit-tamper-evident` | Manipulation ist erkennbar | Änderung, Löschung oder Umsortierung von Einträgen bricht die Hash-Kette. | `core.audit.chain` |
 | `audit-survives-erasure` | Löschpflicht und Kette schließen sich nicht aus | Die Pseudonymisierung eines Nutzers lässt die Hash-Kette unversehrt, weil user_id nicht gehasht wird. | `core.audit.chain` |
+| `run-state-compare-and-set` | Ein Lauf wird nur aus dem erwarteten Status fortgeschrieben | save() schreibt nur, wenn der Lauf noch in dem Status steht, den der Schreiber vorzufinden erwartet; sonst wird abgewiesen und nichts geändert. | `api.db.run_store` |
 | `layering-contracts-independent` | Verträge hängen von nichts ab | packages/contracts importiert nichts aus dem Projekt. | `repo` |
 | `layering-no-provider-sdk-in-core` | Kein Provider-SDK im Kern | Weder core noch contracts importieren Anbieter-SDKs oder Agenten-Frameworks. | `repo` |
 

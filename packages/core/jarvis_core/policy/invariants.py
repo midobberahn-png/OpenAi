@@ -615,6 +615,27 @@ INVARIANTS: tuple[Invariant, ...] = (
     ),
     # -- Schichtung -----------------------------------------------------
     Invariant(
+        id="run-state-compare-and-set",
+        title="Ein Lauf wird nur aus dem erwarteten Status fortgeschrieben",
+        statement=(
+            "save() schreibt nur, wenn der Lauf noch in dem Status steht, den der "
+            "Schreiber vorzufinden erwartet; sonst wird abgewiesen und nichts geändert."
+        ),
+        why=(
+            "load() … entscheiden … save() ist bei zwei Schreibern ein Überschreiben, und "
+            "der interessante Fall ist genau dieser: Ein Schreiber, der den Lauf noch in "
+            "'queued' wähnt, dürfte einen inzwischen abgebrochenen nicht wieder in Gang "
+            "setzen. Ohne den Vergleich in der WHERE-Klausel gewinnen zehn nebenläufige "
+            "Übergänge alle zehn — nachgemessen. Vierter Fall desselben Musters nach "
+            "Nonce, Ausführungsanspruch und Grant-Verbrauch, diesmal von vornherein an "
+            "der richtigen Stelle. Was er nicht leistet: Zwei Schreiber im selben Status "
+            "überschreiben einander weiterhin in den übrigen Feldern; dagegen hülfe eine "
+            "Version je Zeile."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.db.run_store",
+    ),
+    Invariant(
         id="layering-contracts-independent",
         title="Verträge hängen von nichts ab",
         statement="packages/contracts importiert nichts aus dem Projekt.",

@@ -121,7 +121,9 @@ PORTIONEN: tuple[Portion, ...] = (
             "Alle Einmaligkeitszusagen des Systems hängen an diesen Abfragen. Zu "
             "prüfen: Ist jede Bedingung wirklich in der WHERE-Klausel, oder steht "
             "irgendwo ein lesendes SELECT vor einem schreibenden UPDATE? Kann ein "
-            "Zähler ohne Frist entstehen?"
+            "Zähler ohne Frist entstehen? Und die Frage dieser Runde: Wem gehört "
+            "die Transaktion, in der die Zusage steht — dem Aufrufer, der sie "
+            "zurückrollen kann, oder dem Store selbst?"
         ),
         dateien=(
             "apps/api/jarvis_api/db/approval_store.py",
@@ -129,6 +131,7 @@ PORTIONEN: tuple[Portion, ...] = (
             "apps/api/jarvis_api/db/webauthn_store.py",
             "apps/api/jarvis_api/db/invocation_store.py",
             "apps/api/jarvis_api/db/grant_store.py",
+            "apps/api/jarvis_api/db/run_store.py",
             "apps/api/jarvis_api/rate_limit_store.py",
         ),
     ),
@@ -243,6 +246,9 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B31 | Sieht der Verbrauch die Invokationszeile nicht — weil sie noch in einer offenen fremden Transaktion steht —, wird abgewiesen und nicht durchgewunken. | `db/grant_store.py`, `tests/integration/test_grant_consumption.py` | 05 |
 | B32 | Das Werkzeugprotokoll committet jeden Eintrag für sich und übersteht damit den Rollback des Aufrufers. Es liegt nicht in der Transaktion dessen, worüber es Auskunft gibt. | `db/invocation_store.py` | 05 |
 | B33 | Protokoll und Anspruch passen ohne Zutun des Tests zusammen: `record()` schreibt die Zeile, `consume()` löst den Anspruch daran ein, beide in eigenen Transaktionen. | `tests/integration/test_grant_consumption.py` | 05 |
+| B34 | Ein Lauf wird nur fortgeschrieben, wenn er noch im erwarteten Status steht. Zehn nebenläufige Übergänge ergeben genau einen. | `db/run_store.py:save` | 05 |
+| B35 | Der Rundlauf durch JSONB verliert nichts: `Decimal` kommt als `Decimal` zurück, nicht als Zeichenkette, und Zeitpunkte behalten ihre Zone. | `db/run_store.py` | 05 |
+| B36 | Die Kette vor jeder Außenwirkung ist lückenlos festgeschrieben: Lauf, dann Protokoll, dann Anspruch — jedes Glied committed, bevor das nächste es braucht, keines an der Transaktion des Requests. | `db/run_store.py`, `db/invocation_store.py`, `db/grant_store.py` | 05 |
 
 ### Was seit dem letzten Paket geschah
 
