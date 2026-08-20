@@ -22,7 +22,7 @@ from fastapi import FastAPI
 
 from jarvis_api.db.session import dispose
 from jarvis_api.deps import dispose_redis
-from jarvis_api.routes import auth_router
+from jarvis_api.routes import actions_router, auth_router, runs_router
 from jarvis_api.settings import get_settings
 
 __all__ = ["app", "create_app"]
@@ -49,6 +49,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(auth_router)
+    application.include_router(runs_router)
+    application.include_router(actions_router)
 
     @application.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

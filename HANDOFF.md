@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> Stand: 19.08.2026, Commit `476461d`. Dieses Dokument ist der Einstieg für
+> Stand: 20.08.2026, Branch `worktree-grant-crash-durability`. Dieses Dokument ist der Einstieg für
 > eine frische Claude-Code-Sitzung. Es ersetzt kein Architekturdokument,
 > sondern sagt, wo das Projekt steht und was als Nächstes zu tun ist.
 
@@ -27,10 +27,10 @@ Umbenennung steht aus.
 
 | | |
 |---|---|
-| Commits | 34 (`9875468` … `476461d`), Branch `main`, Remote auf GitHub |
-| Tests | **766** gesamt — 458 mit `-m security`, 117 mit `-m integration` |
-| **Security Invariant Coverage** | **42/43** |
-| mypy | `strict`, sauber über 85 Dateien |
+| Commits | 39, Remote auf GitHub |
+| Tests | **869** gesamt — 549 mit `-m security`, 141 mit `-m integration`, **0 übersprungen** |
+| **Security Invariant Coverage** | **44/45** |
+| mypy | `strict`, sauber über 91 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 32 Tabellen, 8 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis als Dienste |
@@ -160,7 +160,7 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Approval Gateway | `core/policy/approval.py` | request → respond → **claim** → authorize |
 | Grant-Verbrauch | `core/tools/grants.py`, `api/db/grant_store.py` | an der `invocation_id`, zuletzt vor dem Handler, in **eigener** Transaktion committed |
 | Laufpersistenz | `core/ports/runs.py`, `api/db/run_store.py` | Fortschreiben nur aus dem erwarteten Status (`WHERE`-Klausel) |
-| Invarianten-Register | `core/policy/invariants.py` | 43 Invarianten |
+| Invarianten-Register | `core/policy/invariants.py` | 45 Invarianten |
 
 ### Orchestrator und Agenten
 
@@ -184,6 +184,10 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | WebAuthn-Adapter | `apps/api/jarvis_api/auth/` | `py_webauthn`, Origin- und RP-ID-Bindung |
 | HTTP-Grenze | `apps/api/jarvis_api/deps.py` | einzige Quelle für Identität |
 | Auth-Routen | `apps/api/jarvis_api/routes/auth.py` | Bootstrap, Registrierung, Anmeldung, Sitzungen |
+| Lauf-Routen | `apps/api/jarvis_api/routes/runs.py` | `POST/GET /runs`, `GET /runs/{id}` — Eigentum über `_eigener_lauf`, 404 statt 403 |
+| Bestätigungs-Routen | `apps/api/jarvis_api/routes/actions.py` | `GET /actions`, `POST /actions/{id}/respond` — der Weg, auf „Ja" zu klicken |
+| Berechtigungen | `apps/api/jarvis_api/db/permission_store.py` | erst jetzt in der Anwendung; vorher nur als Kopie im Testcode |
+| Werkzeugkatalog | `apps/api/jarvis_api/tools.py` | **leer** — mit persistentem Grant-Verbrauch verdrahtet |
 
 ### Sprachmodelle
 
@@ -223,9 +227,9 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 
 | Fehlt | Auswirkung |
 |---|---|
-| **HTTP-Endpunkte für Läufe** | Es gibt `/auth/*` und `/health`, sonst nichts. Die Kette Identity → Run → Policy → Approval → Execution ist nur im Kern geprüft, nicht über HTTP (`docs/18-angriffskette.md`). |
+| **Werkzeuge — überhaupt welche** | **Die kritischste Lücke, und sie stand bisher nicht in dieser Liste.** Es gibt keine einzige Werkzeug-Implementierung: `build_registry()` lebt in `tests/fakes.py`, der Katalog der Anwendung (`jarvis_api.tools`) ist leer. Policy, Approval und Grant-Verbrauch sichern damit noch nichts Reales ab. Solange das so ist, prüfte ein Ausführungsendpunkt nur die Attrappe. |
 | **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
-| **Bestätigungs-Endpunkt** | `POST /actions/{id}/respond` fehlt. Der Mensch hat derzeit keinen Weg, auf „Ja" zu klicken. |
+| **Ausführung über HTTP** | Folge der Zeile oben. `POST /runs` legt einen Lauf an und stuft ihn ein, führt ihn aber nicht aus; Glieder ⑤ und ⑦ der Angriffskette bleiben „nur im Kern geprüft" (`docs/18-angriffskette.md`). |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
 | **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
@@ -342,25 +346,52 @@ Kontamination" nicht hielt.
 
 Die Reihenfolge ist begründet, nicht beliebig.
 
-### 1. HTTP-Endpunkte für Läufe und Bestätigungen
+### 1. Werkzeuge — irgendein echtes
 
-`POST /runs`, `POST /actions/{id}/respond`, dazu die Sitzungs- und
-Laufübersicht. Die Persistenz darunter steht seit dem `RunStore`; die Endpunkte
-legen an, laden und schreiben fort, ohne selbst SQL zu kennen. Zwei Gründe:
+**Das ist die Stelle, an der das Projekt jetzt steht, und sie ist beim Bauen
+der Endpunkte erst deutlich geworden.** Der gesamte Sicherheitssockel — Policy
+Engine, Approval Gateway, Grant-Verbrauch, Taint-Gate — sichert bislang **kein
+einziges reales Werkzeug** ab. `build_registry()` lebt in `tests/fakes.py`;
+`jarvis_api.tools.tool_catalog()` gibt eine leere Registry zurück.
 
-* Es gibt **keinen Weg, eine Bestätigung zu erteilen**. Jede Aktion mit
-  Außenwirkung hängt daran.
-* `docs/18-angriffskette.md` führt die Glieder ④ bis ⑦ als „nur im Kern
-  geprüft". Erst diese Endpunkte schließen den Durchstich über HTTP.
+Solange das so ist:
 
-Beim Bauen gilt, was bei den Auth-Routen galt: **Strukturtest zuerst**, sonst
-schreibt man ihn passend zum Code.
+* kann kein Ausführungsendpunkt entstehen, der etwas anderes als eine Attrappe
+  prüft — die Glieder ⑤ und ⑦ der Angriffskette bleiben „nur im Kern geprüft";
+* ist die Modellschleife nicht erprobbar, weil ein Modell nichts vorschlagen
+  kann;
+* bleibt jede Aussage über den Alltagsfall („Mails lesen → Termin anlegen")
+  eine Aussage über Testdoppelgänger.
 
-**Nicht vergessen:** Die Registry braucht seit `476461d` einen
-`GrantConsumer`, sonst führt sie nichts aus (`UnguardedExecution`). Beim
-Verdrahten der Endpunkte gehört dort `PostgresGrantConsumer` hin — nicht
-`InProcessGrants`, das ist der Testdoppelgänger und hält nur innerhalb eines
-Prozesses.
+Der kleinste sinnvolle Schritt ist **ein** lesendes Werkzeug mit echter
+Außenanbindung, weil es alle Schichten auf einmal in Betrieb nimmt: Scope im
+Katalog, Berechtigung in der Tabelle, Policy-Entscheidung, Protokoll, Grant,
+Taint (`taints_context=True`, sobald Fremdinhalt hereinkommt).
+
+Danach ein schreibendes — erst dort wird die Bestätigungskette real, die seit
+diesem Block über HTTP bedienbar ist.
+
+### 2. Ausführung über HTTP
+
+Wenn es Werkzeuge gibt: der Schritt-Endpunkt am Lauf. Er schließt ⑤ und ⑦.
+
+Beim Bauen gilt, was bei den Auth- und Lauf-Routen galt: **Strukturtest
+zuerst**, sonst schreibt man ihn passend zum Code. Für diesen Block sind daraus
+zwei Prüfungen geworden, die es vorher nicht gab — jeder Endpunkt mit fremder
+Kennung muss den Zugehörigkeitsprüfer aufrufen, und keiner darf daran vorbei
+laden.
+
+**Was dieser Block bereits geschlossen hat:** `POST /runs`, `GET /runs`,
+`GET /runs/{id}`, `GET /actions`, `POST /actions/{id}/respond`. Der Mensch hat
+damit einen Weg, auf „Ja" zu klicken. Ein Lauf wird angelegt und eingestuft,
+aber nicht ausgeführt.
+
+**Die Verdrahtung des Grant-Verbrauchs ist erledigt.** Die Registry braucht
+seit `476461d` einen `GrantConsumer`, sonst führt sie nichts aus
+(`UnguardedExecution`); `jarvis_api.tools.tool_catalog()` nimmt dafür
+`PostgresGrantConsumer` und nicht `InProcessGrants` — Letzteres ist der
+Testdoppelgänger und hält nur innerhalb eines Prozesses. Wer ein Werkzeug
+ergänzt, muss diese Entscheidung nicht noch einmal treffen.
 
 **Die Folgeaufgabe aus Bypass 4 ist erledigt — bis auf eine Stelle.** Der
 Anspruch committet seit der Behebung in einer eigenen Transaktion. Das machte
@@ -419,12 +450,12 @@ Belegt ist der Zusammenhang in
 Ohne den Commit im Store fällt genau dieser Test mit `GrantAlreadyUsed` — dem
 Fehlerbild, das sonst der erste verdrahtete Endpunkt gezeigt hätte.
 
-### 2. Web-UI, Grundfassung
+### 3. Web-UI, Grundfassung
 
 Chat, Statusleiste, Bestätigungsdialog, Permission Center. Ohne sie ist das
 System nicht bedienbar.
 
-### 3. Weitere Provider
+### 4. Weitere Provider
 
 Anthropic und OpenAI, dieselbe Form wie Ollama. Dabei mitzunehmen, was aus dem
 Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch

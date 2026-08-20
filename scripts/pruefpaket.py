@@ -104,11 +104,21 @@ PORTIONEN: tuple[Portion, ...] = (
             "Liest ein Endpunkt Request-Daten als Identität? Gibt es einen Weg an "
             "current_session vorbei? Ist ein Endpunkt ohne Sitzungspflicht dabei, der "
             "nicht in der begründeten Ausnahmeliste steht? Ist X-Forwarded-For "
-            "irgendwo ungeprüft verwendet?"
+            "irgendwo ungeprüft verwendet? "
+            "Neu in dieser Runde die Lauf- und Bestätigungsrouten und damit die zweite "
+            "Frage der Schicht: Die Sitzung sagt, WER fragt — prüft jeder Endpunkt mit "
+            "fremder Kennung auch, ob ihm das Objekt GEHOERT? Gibt es einen Ladeweg an "
+            "_eigener_lauf/_eigene_aktion vorbei? Unterscheiden sich die Antworten auf "
+            "ein fremdes und ein nicht existierendes Objekt irgendwo — im Status, im "
+            "Text, in der Laufzeit? Und: Kann der Aufrufer den Bestätigungskanal "
+            "beeinflussen?"
         ),
         dateien=(
             "apps/api/jarvis_api/deps.py",
             "apps/api/jarvis_api/routes/auth.py",
+            "apps/api/jarvis_api/routes/runs.py",
+            "apps/api/jarvis_api/routes/actions.py",
+            "apps/api/jarvis_api/tools.py",
             "apps/api/jarvis_api/main.py",
             "apps/api/jarvis_api/settings.py",
             "apps/api/jarvis_api/auth/webauthn_verifier.py",
@@ -132,6 +142,7 @@ PORTIONEN: tuple[Portion, ...] = (
             "apps/api/jarvis_api/db/invocation_store.py",
             "apps/api/jarvis_api/db/grant_store.py",
             "apps/api/jarvis_api/db/run_store.py",
+            "apps/api/jarvis_api/db/permission_store.py",
             "apps/api/jarvis_api/rate_limit_store.py",
         ),
     ),
@@ -249,6 +260,12 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B34 | Ein Lauf wird nur fortgeschrieben, wenn er noch im erwarteten Status steht. Zehn nebenläufige Übergänge ergeben genau einen. | `db/run_store.py:save` | 05 |
 | B35 | Der Rundlauf durch JSONB verliert nichts: `Decimal` kommt als `Decimal` zurück, nicht als Zeichenkette, und Zeitpunkte behalten ihre Zone. | `db/run_store.py` | 05 |
 | B36 | Die Kette vor jeder Außenwirkung ist lückenlos festgeschrieben: Lauf, dann Protokoll, dann Anspruch — jedes Glied committed, bevor das nächste es braucht, keines an der Transaktion des Requests. | `db/run_store.py`, `db/invocation_store.py`, `db/grant_store.py` | 05 |
+| B37 | `POST /runs` legt den Lauf für den angemeldeten Nutzer an. Eine `user_id` im Body wird nicht übernommen — geprüft wird die Zeile in der Datenbank, nicht die Antwort. | `routes/runs.py`, `tests/integration/test_http_runs.py` | 04 |
+| B38 | Ein fremder Lauf und ein nicht existierender sind über HTTP nicht unterscheidbar: gleicher Status, gleicher Text. | `routes/runs.py:_eigener_lauf` | 04 |
+| B39 | Jeder Endpunkt mit fremder Kennung ruft den Zugehörigkeitsprüfer auf, und keiner lädt daran vorbei. Beides am Quelltext erzwungen. | `tests/unit/test_http_boundary.py` | 04, 06 |
+| B40 | Der Bestätigungskanal ist kein Feld des Requests, sondern eine Eigenschaft der Route. Ein Aufrufer kann `allows_channel()` nicht durch eine Behauptung umgehen. | `routes/actions.py` | 04 |
+| B41 | Die Liste offener Bestätigungen gibt die Nonce nur für Bestätigungen der eigenen Sitzung heraus. | `routes/actions.py:list_actions` | 04 |
+| B42 | Der Werkzeugkatalog der Anwendung ist leer, und das steht im Anwendungscode statt nur im Testcode. Die Registry dort ist mit `PostgresGrantConsumer` verdrahtet, nicht mit dem Testdoppelgänger. | `tools.py` | 04 |
 
 ### Was seit dem letzten Paket geschah
 

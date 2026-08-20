@@ -615,6 +615,25 @@ INVARIANTS: tuple[Invariant, ...] = (
     ),
     # -- Schichtung -----------------------------------------------------
     Invariant(
+        id="resource-ownership-checked-once",
+        title="Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen",
+        statement=(
+            "Jeder Endpunkt, der eine Ressourcenkennung entgegennimmt, prüft die "
+            "Zugehörigkeit zum angemeldeten Nutzer über genau eine Funktion; ein fremdes "
+            "Objekt ist von einem nicht existierenden nicht unterscheidbar."
+        ),
+        why=(
+            "identity-derives-from-session sagt, wer fragt — nicht, ob das angefragte "
+            "Objekt dem Fragenden gehört. Das ist der nächste kurze Angriff nach 'user_id "
+            "im Body': eine gültige eigene Sitzung und eine fremde run_id. Die Prüfung an "
+            "genau einer Stelle zu halten ist dieselbe Entscheidung wie bei "
+            "current_session; ein zweiter Ladeweg hätte sie nicht. Die Antwort ist 404 "
+            "und nicht 403, weil 403 die Existenz bestätigt und damit aufzählbar macht."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.routes",
+    ),
+    Invariant(
         id="run-state-compare-and-set",
         title="Ein Lauf wird nur aus dem erwarteten Status fortgeschrieben",
         statement=(

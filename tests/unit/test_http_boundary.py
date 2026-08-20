@@ -195,6 +195,87 @@ def test_jeder_endpunkt_ist_geschuetzt_oder_ausdruecklich_oeffentlich(path: Path
     )
 
 
+RESSOURCEN_PARAMETER = {"run_id", "action_id"}
+"""Pfadparameter, die auf ein Objekt mit Eigentümer zeigen.
+
+Anders als die Identitätsfelder oben sind sie **erlaubt** — eine Ressource zu
+benennen ist der Sinn einer URL. Nur folgt daraus die nächste Pflicht: Wer
+etwas benennt, das jemandem gehört, muss prüfen, ob es dem Anfragenden
+gehört."""
+
+ZUGEHOERIGKEITSPRUEFER = {"_eigener_lauf", "_eigene_aktion"}
+"""Die einzigen Stellen, an denen ein fremdes Objekt geladen werden darf.
+
+Sie liefern entweder das Objekt des angemeldeten Nutzers oder 404. Dass es
+genau zwei benannte Funktionen sind, ist der Punkt: Die Prüfung an einer
+Stelle zu haben heißt, sie an einer Stelle lesen zu können."""
+
+
+@pytest.mark.invariant("resource-ownership-checked-once")
+@pytest.mark.parametrize("path", _route_files(), ids=lambda p: p.name)
+def test_endpunkt_mit_ressourcenkennung_prueft_die_zugehoerigkeit(path: Path) -> None:
+    """Wer eine fremde Kennung entgegennimmt, muss die Zugehörigkeit prüfen.
+
+    Die Sitzungsprüfung sagt nur, **wer** fragt. Sie sagt nichts darüber, ob
+    das angefragte Objekt dem Fragenden gehört — und genau dort liegt der
+    nächste kurze Angriff nach ``user_id`` im Body: eine gültige Sitzung, eine
+    fremde ``run_id``.
+
+    Ein Verhaltenstest deckt das für die heutigen Endpunkte ab. Dieser Test
+    deckt den ab, den in einem Jahr jemand ergänzt.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    ungeprueft: list[str] = []
+
+    for func in _endpoints(tree):
+        benannt = {a.arg for a in [*func.args.args, *func.args.kwonlyargs]} & RESSOURCEN_PARAMETER
+        if not benannt:
+            continue
+        aufgerufen = {
+            node.func.id
+            for node in ast.walk(func)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
+        if not aufgerufen & ZUGEHOERIGKEITSPRUEFER:
+            ungeprueft.append(f"{func.name}({', '.join(sorted(benannt))})")
+
+    assert not ungeprueft, (
+        f"{path.name}: Endpunkte nehmen eine fremde Kennung entgegen, ohne die "
+        f"Zugehörigkeit zu prüfen: {ungeprueft}. Eine gültige Sitzung ist keine "
+        f"Berechtigung an einem beliebigen Objekt — {sorted(ZUGEHOERIGKEITSPRUEFER)} benutzen."
+    )
+
+
+@pytest.mark.invariant("resource-ownership-checked-once")
+@pytest.mark.parametrize("path", _route_files(), ids=lambda p: p.name)
+def test_kein_endpunkt_laedt_am_zugehoerigkeitspruefer_vorbei(path: Path) -> None:
+    """Die Gegenrichtung: kein direktes ``load()`` im Endpunkt.
+
+    Der Test oben verlangt den Aufruf des Prüfers. Er allein genügte nicht —
+    ein Endpunkt könnte ihn aufrufen *und* daneben selbst laden. Der zweite
+    Zugriff hätte die Prüfung nicht, und im Diff sähe alles richtig aus.
+
+    Dieselbe Überlegung wie beim Router-Alias: Nicht der Aufruf ist das
+    Problem, sondern der zweite Weg zum selben Ziel.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    treffer: list[str] = []
+
+    for func in _endpoints(tree):
+        for node in ast.walk(func):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "load"
+            ):
+                treffer.append(f"{func.name}:{node.lineno}")
+
+    assert not treffer, (
+        f"{path.name}: Endpunkte laden direkt: {treffer}. Das Laden fremder Objekte "
+        f"gehört in {sorted(ZUGEHOERIGKEITSPRUEFER)} — dort steht die Prüfung."
+    )
+
+
 @pytest.mark.invariant("identity-derives-from-session")
 def test_die_sitzung_wird_an_genau_einer_stelle_gelesen() -> None:
     """``session_token_from`` ist der einzige Ort, an dem ein Token aus dem

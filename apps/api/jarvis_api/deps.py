@@ -18,31 +18,51 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.auth import WebAuthnVerifier
+from jarvis_api.db.approval_store import PostgresApprovalStore
+from jarvis_api.db.permission_store import PostgresPermissionStore
+from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.db.session import engine_for
 from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_api.db.webauthn_store import PostgresChallengeStore, PostgresCredentialStore
 from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
+from jarvis_api.tools import tool_catalog
 from jarvis_contracts import Session
 from jarvis_core.auth import PasskeyService, SessionManager
 from jarvis_core.limits import RateLimiter, RateLimitExceeded, RateLimitPolicy
+from jarvis_core.policy import ApprovalGateway, PolicyEngine
+from jarvis_core.tools import ToolRegistry
 
 __all__ = [
+    "Approvals",
     "CurrentSession",
     "DbConnection",
+    "DbEngine",
     "Limiter",
     "Passkeys",
+    "Permissions",
+    "Policy",
+    "Runs",
+    "SessionToken",
     "Sessions",
+    "Tools",
+    "approval_gateway",
     "client_identifier",
     "current_session",
+    "current_token",
     "db_connection",
+    "db_engine",
     "dispose_redis",
     "passkey_service",
+    "permission_store",
+    "policy_engine",
     "rate_limited",
+    "run_store",
     "session_manager",
+    "tool_registry",
 ]
 
 
@@ -60,6 +80,38 @@ async def db_connection(
 
 
 DbConnection = Annotated[AsyncConnection, Depends(db_connection)]
+
+
+def db_engine(settings: Annotated[Settings, Depends(get_settings)]) -> AsyncEngine:
+    """Die Engine selbst — für Speicher, die ihre eigene Transaktion brauchen.
+
+    Neben ``DbConnection`` und nicht an ihrer Stelle. Der Unterschied ist
+    bedeutungstragend und hat einen Befund als Ursache: Wer die Verbindung des
+    Requests bekommt, schreibt in dessen Transaktion und kann mit ihr
+    zurückgerollt werden. Für Lesevorgänge und für Zustand, der zum Request
+    gehört, ist das richtig. Für einen Anspruch, der **vor** einer Wirkung nach
+    außen gelten muss, ist es falsch — der vierte Replay-Pfad lag genau dort.
+
+    Lauf, Werkzeugprotokoll und Grant-Verbrauch nehmen deshalb die Engine.
+    """
+    return engine_for(settings.database_url)
+
+
+DbEngine = Annotated[AsyncEngine, Depends(db_engine)]
+
+
+def run_store(engine: DbEngine) -> PostgresRunStore:
+    return PostgresRunStore(engine)
+
+
+Runs = Annotated[PostgresRunStore, Depends(run_store)]
+
+
+def permission_store(engine: DbEngine) -> PostgresPermissionStore:
+    return PostgresPermissionStore(engine)
+
+
+Permissions = Annotated[PostgresPermissionStore, Depends(permission_store)]
 
 
 def session_manager(conn: DbConnection) -> SessionManager:
@@ -129,6 +181,80 @@ async def current_session(
 
 
 CurrentSession = Annotated[Session, Depends(current_session)]
+
+
+async def current_token(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> str:
+    """Der rohe Sitzungstoken — für Aufrufe, die die Bindung selbst nachweisen.
+
+    Nur eine Stelle braucht das: ``ApprovalGateway.respond()`` prüft, ob der
+    vorgelegte Token zu genau dieser Sitzung dieses Nutzers gehört. Die
+    Sitzungs-ID allein wäre dort eine Behauptung des Aufrufers.
+
+    Kein zweiter Weg zur Identität: Die Quelle ist dieselbe Funktion, die auch
+    ``current_session`` benutzt. Wer diese Dependency nimmt, bekommt ein
+    Geheimnis und keine Identität — die entsteht weiterhin ausschließlich in
+    ``current_session``, und eine Route, die den Token nähme *ohne* die Sitzung
+    zu verlangen, fiele beim Strukturtest durch.
+
+    Der Wert gehört nirgends ins Protokoll.
+    """
+    return session_token_from(request, settings)
+
+
+SessionToken = Annotated[str, Depends(current_token)]
+
+
+def tool_registry(engine: DbEngine) -> ToolRegistry:
+    return tool_catalog(engine)
+
+
+Tools = Annotated[ToolRegistry, Depends(tool_registry)]
+
+
+def policy_engine(tools: Tools, permissions: Permissions) -> PolicyEngine:
+    return PolicyEngine(tools, permissions)
+
+
+Policy = Annotated[PolicyEngine, Depends(policy_engine)]
+
+
+def approval_store(conn: DbConnection) -> PostgresApprovalStore:
+    """Der Bestätigungsspeicher zum Lesen.
+
+    Getrennt vom Gateway, weil die HTTP-Schicht ihn für etwas braucht, das
+    keine Policy-Entscheidung ist: die Sichtbarkeit. Wem eine Bestätigung
+    gehört, entscheidet die Grenze; ob sie gilt, entscheidet weiterhin
+    ausschließlich das Gateway.
+    """
+    return PostgresApprovalStore(conn)
+
+
+ActionStore = Annotated[PostgresApprovalStore, Depends(approval_store)]
+
+
+def approval_gateway(conn: DbConnection, policy: Policy, sessions: Sessions) -> ApprovalGateway:
+    """Das Bestätigungs-Gate.
+
+    Der Bestätigungsspeicher nimmt die Verbindung des Requests und nicht die
+    Engine — anders als Lauf, Protokoll und Grant-Verbrauch, und der
+    Unterschied ist beabsichtigt: Eine Bestätigung *ist* die Arbeit dieses
+    Requests. Scheitert er, soll sie nicht bestehen bleiben.
+
+    Der Anspruch **aus** einer Bestätigung ist davon unberührt:
+    ``claim_execution()`` ist ein bedingtes UPDATE, und die Ausführung, die
+    daran hängt, liegt hinter dem Grant-Verbrauch — der committet für sich.
+
+    ``sessions`` ist ausdrücklich der echte ``SessionManager`` und nicht
+    ``UnverifiedSessions``. Letzteres heißt so, damit an der Aufrufstelle zu
+    sehen ist, wenn die Sitzungsbindung ausgeschaltet ist.
+    """
+    return ApprovalGateway(PostgresApprovalStore(conn), policy, sessions=sessions)
+
+
+Approvals = Annotated[ApprovalGateway, Depends(approval_gateway)]
 
 
 # --------------------------------------------------------------------------

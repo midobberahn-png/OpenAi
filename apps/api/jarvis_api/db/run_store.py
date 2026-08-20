@@ -67,6 +67,19 @@ protokolliert."""
 
 _SELECT = text(f"SELECT {_SPALTEN} FROM runs WHERE id = :id")
 
+_LISTE = text(
+    f"""
+    SELECT {_SPALTEN}
+      FROM runs
+     WHERE user_id = :user_id
+     ORDER BY started_at DESC
+     LIMIT :limit
+    """
+)
+"""``user_id`` steht in der Abfrage und nicht in einem Filter darüber: Die
+Einschränkung auf den Eigentümer soll nicht weglassbar sein. Der Index
+``ix_runs_user_started`` bedient genau diese Reihenfolge."""
+
 _UPDATE = text(
     """
     UPDATE runs
@@ -157,6 +170,13 @@ class PostgresRunStore:
         if zeile is None:
             return None
         return Run.model_validate(dict(zeile))
+
+    async def list_for_user(self, user_id: UUID, *, limit: int = 50) -> list[Run]:
+        async with self._engine.connect() as conn:
+            zeilen = (
+                (await conn.execute(_LISTE, {"user_id": user_id, "limit": limit})).mappings().all()
+            )
+        return [Run.model_validate(dict(z)) for z in zeilen]
 
     async def save(self, run: Run, *, erwarteter_status: RunStatus) -> None:
         async with self._engine.begin() as conn:

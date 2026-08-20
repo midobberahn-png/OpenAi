@@ -90,6 +90,16 @@ class RunStore(Protocol):
         """
         ...
 
+    async def list_for_user(self, user_id: UUID, *, limit: int = 50) -> list[Run]:
+        """Die Läufe eines Nutzers, neueste zuerst.
+
+        Der Nutzer ist Pflichtparameter und nicht Filter: Es gibt keine
+        Signatur, mit der sich *alle* Läufe abfragen ließen. Eine Übersicht,
+        die den Eigentümer optional führt, ist eine Zeile Code davon entfernt,
+        fremde Läufe zu zeigen.
+        """
+        ...
+
     async def save(self, run: Run, *, erwarteter_status: RunStatus) -> None:
         """Schreibt den Lauf fort, sofern er noch im erwarteten Status steht.
 

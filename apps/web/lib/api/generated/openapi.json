@@ -1,6 +1,89 @@
 {
   "components": {
     "schemas": {
+      "ActionView": {
+        "description": "Eine offene Bestätigung, wie die Oberfläche sie zeigt.\n\nOhne ``invocation_id``: Sie ist der Anker des Grant-Verbrauchs und hat in\neiner Antwort nichts zu suchen — ein Strukturtest führt sie deshalb unter\nden Identitätsfeldern. Ohne ``user_id`` und ``session_id`` aus demselben\nGrund; wer fragt, steht fest.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "nonce": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nonce"
+          },
+          "preview_fields": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewFieldView"
+            },
+            "title": "Preview Fields",
+            "type": "array"
+          },
+          "preview_title": {
+            "title": "Preview Title",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "requested_channel": {
+            "title": "Requested Channel",
+            "type": "string"
+          },
+          "reversible": {
+            "title": "Reversible",
+            "type": "boolean"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "tool_name",
+          "risk",
+          "reason",
+          "requested_channel",
+          "preview_title",
+          "preview_fields",
+          "reversible",
+          "warnings",
+          "expires_at",
+          "nonce"
+        ],
+        "title": "ActionView",
+        "type": "object"
+      },
       "AuthenticationRequest": {
         "properties": {
           "challenge": {
@@ -76,6 +159,35 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "PreviewFieldView": {
+        "description": "Ein Feld der Vorschau, so wie es angezeigt und bestätigt wird.",
+        "properties": {
+          "emphasis": {
+            "title": "Emphasis",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value",
+          "emphasis",
+          "truncated"
+        ],
+        "title": "PreviewFieldView",
+        "type": "object"
+      },
       "RegistrationRequest": {
         "properties": {
           "challenge": {
@@ -105,6 +217,145 @@
           "challenge"
         ],
         "title": "RegistrationRequest",
+        "type": "object"
+      },
+      "RespondRequest": {
+        "description": "Die Antwort des Menschen. Führt weder Nutzer noch Sitzung noch Kanal.",
+        "properties": {
+          "approve": {
+            "title": "Approve",
+            "type": "boolean"
+          },
+          "nonce": {
+            "maxLength": 128,
+            "minLength": 32,
+            "title": "Nonce",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nonce",
+          "approve"
+        ],
+        "title": "RespondRequest",
+        "type": "object"
+      },
+      "RespondResult": {
+        "properties": {
+          "approved": {
+            "title": "Approved",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "approved",
+          "reason"
+        ],
+        "title": "RespondResult",
+        "type": "object"
+      },
+      "RunRequest": {
+        "description": "Ein neuer Lauf. Führt bewusst keine ``user_id``.",
+        "properties": {
+          "channel": {
+            "default": "text",
+            "enum": [
+              "text",
+              "voice"
+            ],
+            "title": "Channel",
+            "type": "string"
+          },
+          "input": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Input",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "title": "RunRequest",
+        "type": "object"
+      },
+      "RunView": {
+        "description": "Sicht auf einen Lauf.\n\nBewusst nicht das Vertragsmodell selbst: ``Run`` führt ``user_id``, und ein\nAntwortmodell, das eine Identität trägt, ist ein Antwortmodell, das morgen\njemand als Request-Modell wiederverwendet. Der Nutzer steht ohnehin fest —\ner hat gefragt.",
+        "properties": {
+          "data_class": {
+            "title": "Data Class",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Intent"
+          },
+          "is_multi_step": {
+            "title": "Is Multi Step",
+            "type": "boolean"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "taint_level": {
+            "title": "Taint Level",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "trigger",
+          "taint_level",
+          "data_class",
+          "intent",
+          "is_multi_step",
+          "trace_id",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "RunView",
         "type": "object"
       },
       "SessionView": {
@@ -201,6 +452,86 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/actions": {
+      "get": {
+        "description": "Offene Bestätigungen des angemeldeten Nutzers.",
+        "operationId": "list_actions_actions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ActionView"
+                  },
+                  "title": "Response List Actions Actions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Actions",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/actions/{action_id}/respond": {
+      "post": {
+        "description": "Erteilt oder verweigert eine Bestätigung — genau einmal.\n\nDie Einmaligkeit trägt die Datenbank (``burn()`` als bedingtes UPDATE),\nnicht diese Route. Zwei gleichzeitige „Ja\" ergeben eine Bestätigung und\neine Abweisung.\n\nEine Ablehnung ist kein Fehler: Sie ist eine gültige Antwort und endet mit\n200 und ``approved=false``. Ein 4xx hier würde die Entscheidung des\nMenschen als Störung führen.\n\nWas die Antwort **nicht** enthält, ist der sanierte Payload. Er entsteht\nim Gateway und ist die Eingabe der Ausführung, nicht Auskunft an den\nClient — der hat den Inhalt in der Vorschau bereits gesehen und\nbestätigt.",
+        "operationId": "respond_action_actions__action_id__respond_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "action_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Action Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RespondRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RespondResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Respond Action",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
     "/auth/bootstrap": {
       "post": {
         "description": "Legt den **ersten** Nutzer an und startet dessen Passkey-Registrierung.\n\nOhne diesen Weg wäre das System nicht in Betrieb zu nehmen: Registrieren\ndarf sonst nur, wer bereits angemeldet ist.\n\nDie Einmaligkeit trägt die Datenbank, nicht eine Prüfung davor. Der\n``INSERT`` läuft mit ``WHERE NOT EXISTS (SELECT 1 FROM users)`` — bei zwei\ngleichzeitigen Anfragen gewinnt genau eine. Ein vorgelagertes\n``SELECT count(*)`` wäre bei Nebenläufigkeit wertlos, und das Zeitfenster\ndieser Prüfung ist der Moment, in dem das System noch niemandem gehört.",
@@ -528,6 +859,116 @@
         "summary": "Health",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/runs": {
+      "get": {
+        "description": "Die eigenen Läufe, neueste zuerst.\n\nOhne Zugehörigkeitsprüfer, weil es hier nichts zu prüfen gibt: Die Abfrage\nkennt nur den Nutzer aus der Sitzung und hat keinen Parameter, über den ein\nanderer benannt werden könnte.",
+        "operationId": "list_runs_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunView"
+                  },
+                  "title": "Response List Runs Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "runs"
+        ]
+      },
+      "post": {
+        "description": "Legt einen Lauf an — für den angemeldeten Nutzer.\n\nDie Einstufung geschieht sofort und deterministisch. Sie bestimmt die\nDatenklasse des Laufs, und die ist die Obergrenze für alles, was später in\nihm geschieht: Sie nachträglich zu setzen hieße, sie nachträglich zu\nbehaupten.\n\nDer Lauf bleibt ``queued``. Ausgeführt wird er nicht — es gibt noch keine\nWerkzeuge und keinen Arbeiter, der ihn aufnähme.",
+        "operationId": "create_run_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}": {
+      "get": {
+        "description": "Ein einzelner eigener Lauf.",
+        "operationId": "read_run_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Run",
+        "tags": [
+          "runs"
         ]
       }
     }
