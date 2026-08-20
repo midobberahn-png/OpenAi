@@ -17,9 +17,17 @@ jeder Modellanbindung gebaut.
 Kommunikationssprache mit dem Nutzer: **Deutsch**. Auch Code-Kommentare,
 Docstrings, Commit-Nachrichten und Testnamen sind deutsch.
 
-Das Repository liegt auf GitHub: `git@github.com:midobberahn-png/OpenAi.git`
-(Branch `main`). Der Name des Repositories passt nicht zum Projekt — eine
-Umbenennung steht aus.
+Das Repository liegt auf GitHub: `git@github.com:midobberahn-png/OpenAi.git`.
+Der Name passt nicht zum Projekt — eine Umbenennung steht aus.
+
+**Zum Branch, weil das bei externen Prüfungen schon zu Verwirrung geführt hat:**
+Die Arbeit läuft auf Themenbranches und wird nach `main` gemergt. Wer einen
+Checkout zur Begutachtung bekommt, sollte `git log --oneline -1` mit dem Stand
+vergleichen, der in einem Bericht behauptet wird — ein Bündel oder Archiv ist
+in einer Woche veraltet, und zwei der bisherigen Rückmeldungen bewerteten einen
+Stand, der zum Zeitpunkt des Berichts mehrere Blöcke alt war. Das ist kein
+Vorwurf an die Prüfer: Es ist eine Bringschuld dessen, der das Paket schnürt.
+Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 ---
 

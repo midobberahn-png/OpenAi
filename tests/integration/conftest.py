@@ -9,7 +9,9 @@ worum es geht.
 from __future__ import annotations
 
 import os
+import socket
 from collections.abc import AsyncIterator
+from urllib.parse import urlparse
 from uuid import UUID
 
 import pytest
@@ -51,6 +53,67 @@ def _fehlt(dienst: str, exc: Exception) -> None:
             "übersprungener Integrationstest ist kein bestandener."
         )
     pytest.skip(hinweis)
+
+
+def _erreichbar(url: str, standard_port: int) -> str | None:
+    """TCP-Erreichbarkeit. ``None`` heißt erreichbar, sonst die Begründung."""
+    zerlegt = urlparse(url)
+    host = zerlegt.hostname or "localhost"
+    port = zerlegt.port or standard_port
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            return None
+    except OSError as fehler:
+        return f"{host}:{port} — {fehler.strerror or fehler}"
+
+
+def pytest_collection_modifyitems(
+    session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Ein Preflight statt hundert Einzelfehler.
+
+    Ohne das meldet ein Lauf mit ``JARVIS_REQUIRE_SERVICES=1`` und ohne Dienste
+    für **jede** Fixture einen eigenen Fehlschlag. Das Ergebnis ist formal
+    richtig und praktisch unbrauchbar: Seitenweise identische Ausgabe, in der
+    die eine Ursache — „Postgres läuft nicht" — untergeht. Ein externer Prüfer
+    hat genau das dreimal erlebt und es zu Recht angemerkt.
+
+    Geprüft wird die TCP-Erreichbarkeit und ausdrücklich nicht mehr. Ob die
+    Anmeldedaten stimmen und das Schema aktuell ist, beantworten weiterhin die
+    Tests selbst — ein Preflight, der alles prüft, ist der erste Test und
+    scheitert irgendwann aus einem anderen Grund als dem, für den er da ist.
+
+    Nur bei gesetztem Schalter: Ohne ihn ist Überspringen der gewollte Ausgang
+    auf einer Entwicklungsmaschine ohne Docker.
+    """
+    # Nur die Tests dieses Verzeichnisses zählen: Der Hook bekommt alle
+    # gesammelten Items, und eine Zahl, die auch Unit-Tests enthielte, wäre in
+    # einer Abbruchmeldung schlicht falsch.
+    betroffen = sum(1 for item in items if "tests/integration/" in str(item.path))
+    if not REQUIRE_SERVICES or not betroffen:
+        return
+
+    fehlend = [
+        f"  · {name}: {grund}"
+        for name, grund in (
+            ("PostgreSQL", _erreichbar(_url(), 5432)),
+            ("Redis", _erreichbar(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), 6379)),
+        )
+        if grund is not None
+    ]
+    if not fehlend:
+        return
+
+    pytest.exit(
+        "JARVIS_REQUIRE_SERVICES=1, aber die Dienste sind nicht erreichbar:\n"
+        + "\n".join(fehlend)
+        + "\n\n  make up      # Postgres und Redis starten\n"
+        "  make migrate # Schema anlegen\n\n"
+        f"Abgebrochen vor {betroffen} Integrationstests — ein übersprungener "
+        "Integrationstest ist kein bestandener, und hundert gleiche Fehlermeldungen "
+        "sind keine Diagnose.",
+        returncode=pytest.ExitCode.USAGE_ERROR,
+    )
 
 
 @pytest_asyncio.fixture

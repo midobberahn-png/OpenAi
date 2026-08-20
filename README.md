@@ -2,8 +2,15 @@
 
 Persönliches, selbst gehostetes KI-Assistenzsystem: Sprache, Text, Vision, Gedächtnis, Werkzeuge und Agenten — mit einem Berechtigungssystem, das jede Aktion mit Außenwirkung kontrolliert.
 
-> **Status: Phase 1 in Arbeit.** Sicherheitssockel steht (Policy Engine, Taint-Gate,
-> Approval Gateway, Audit-Kette). Als Nächstes: Orchestrator-Skelett.
+> **Status: Phase 1 in Arbeit.** Sicherheitssockel, Orchestrator, Agentenketten,
+> Anmeldung mit Passkeys, HTTP-Grenze, Sprachmodell-Anbindung (Ollama) und das
+> erste echte Werkzeug (`files.read`) stehen. Ein Lauf lässt sich über HTTP
+> anlegen und eine Bestätigung erteilen; **ausgeführt** wird über HTTP noch
+> nicht.
+>
+> Diese Zeile ist schon einmal ein Jahr zu alt gewesen — ein externer Prüfer
+> hat das README zu Recht als Statusquelle verworfen. Der belastbare Stand
+> steht deshalb an genau einer Stelle:
 >
 > **Neue Sitzung startet hier: [HANDOFF.md](HANDOFF.md)**
 
@@ -31,7 +38,10 @@ Einstieg: **[docs/00-uebersicht.md](docs/00-uebersicht.md)** — Zielbild, Risik
 | [13 Deployment](docs/13-deployment.md) | Topologie, Observability, Backup, Kosten |
 | [14 Roadmap](docs/14-roadmap.md) | Phasen 1–8 mit Abnahmekriterien und Aufwand |
 | [15 Testing](docs/15-testing.md) | Tests, Contract-Tests, Evals, CI |
+| [16 V1.1-Review](docs/16-v1.1-review.md) | Bewertung externer Reviews — **einschließlich der abgelehnten Vorschläge mit Begründung** |
+| [17 Identity & Ziele](docs/17-identity-goals.md) | Identity, Ziele, Entitäten |
 | [18 Angriffskette](docs/18-angriffskette.md) | Jeder Übergang von HTTP bis zur Ausführung: wodurch gesichert, wo noch ungeprüft |
+| [generiert](docs/generated/) | Scope-Katalog und Invariantentabelle — **erzeugt, nicht bearbeiten** |
 
 ---
 
@@ -54,9 +64,33 @@ Phasen 5–8 (≈17 Wochen) sind additiv — UI-Ausbau, Vision, Agenten, Plugins
 
 ## Nächster Schritt
 
-**Punkt 9 — Orchestrator-Skelett.** Der Sicherheitssockel steht; der Orchestrator
-führt ihn zusammen und muss dabei drei noch offene Invarianten belegen
-(`orchestrator-consumes-decisions`, `agent-chain-preserves-capability-binding`,
-`agent-chain-propagates-taint`).
+**Der Werkzeugschritt über HTTP.** Ein Lauf entsteht über `POST /runs`, eine
+Bestätigung wird über `POST /actions/{id}/respond` erteilt — aber ausgeführt
+wird noch nicht über die HTTP-Grenze. Damit sind die Glieder ⑤ und ⑦ der
+Angriffskette weiterhin nur im Kern geprüft
+(**[docs/18-angriffskette.md](docs/18-angriffskette.md)**).
+
+Seit `files.read` ist das nicht mehr durch fehlende Werkzeuge blockiert.
 
 Vollständiger Stand, Umgebung und Fallstricke: **[HANDOFF.md](HANDOFF.md)**
+
+---
+
+## Prüfen
+
+```bash
+make up                      # Postgres und Redis
+make migrate
+make gate                    # Lint, Typen, Vertragsdrift, alle Tests, Kennzahl
+```
+
+`make gate` erzwingt die Integrationstests (`JARVIS_REQUIRE_SERVICES=1`).
+**Ein übersprungener Integrationstest ist kein bestandener** — ohne diesen
+Schalter meldet die Suite ein sattes Grün, auch wenn kein einziger Test gegen
+die Datenbank gelaufen ist. Genau das ist externen Prüfern mehrfach passiert.
+Fehlen die Dienste, bricht der Lauf mit **einer** Meldung ab statt mit einer
+pro Fixture.
+
+Für externe Begutachtung erzeugt `uv run python scripts/pruefpaket.py` den
+sicherheitskritischen Quelltext in Portionen samt Prüfaufträgen und einer Liste
+falsifizierbarer Behauptungen.
