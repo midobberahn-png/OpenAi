@@ -1,6 +1,7 @@
 """Protokolle. Enthält keine Implementierungen."""
 
 from .approval import ApprovalStore, BurnResult
+from .calendar import CalendarEvent, CalendarStore, CalendarWriteFailed
 from .invocations import InvocationStore
 from .llm import LLMProvider
 from .permissions import PermissionStore, RateLimiter, ToolLookup
@@ -12,6 +13,9 @@ __all__ = [
     "ApprovalStore",
     "AttestationVerifier",
     "BurnResult",
+    "CalendarEvent",
+    "CalendarStore",
+    "CalendarWriteFailed",
     "ChallengeStore",
     "CredentialStore",
     "InvocationStore",

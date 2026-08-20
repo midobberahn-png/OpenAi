@@ -25,15 +25,27 @@ seinem Kanal zu fragen.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from jarvis_api.db.approval_store import PostgresApprovalStore
-from jarvis_api.deps import ActionStore, Approvals, CurrentSession, SessionToken
+from jarvis_api.deps import (
+    ActionStore,
+    Approvals,
+    CurrentSession,
+    Invocations,
+    Policy,
+    Runs,
+    SessionToken,
+    Tools,
+)
 from jarvis_contracts import ApprovalChannel, PendingAction, Session
-from jarvis_core.orchestrator import utc_now
+from jarvis_core.orchestrator import BudgetTracker, StepExecution, ToolExecutor, utc_now
+from jarvis_core.policy import ApprovalOutcome
+from jarvis_core.ports.runs import RunStateConflict
 
 __all__ = ["router"]
 
@@ -107,6 +119,26 @@ class RespondResult(BaseModel):
     approved: bool
     reason: str
 
+    executed: bool = False
+    """Ob die bestätigte Aktion auch ausgeführt wurde.
+
+    Getrennt von ``approved``, weil beides auseinanderfallen kann: Zwischen
+    Zustimmung und Ausführung liegt das Gate, das erneut prüft — eine
+    Berechtigung kann in der Zwischenzeit entzogen worden sein. „Bestätigt und
+    trotzdem nicht ausgeführt" ist ein zulässiger Ausgang und muss sichtbar
+    sein."""
+
+    step_status: str | None = None
+    display: str = ""
+    data: dict[str, Any] | None = None
+    run_id: str | None = None
+    """Bei einem sanierten Lauf ein **anderer** als der ursprüngliche.
+
+    Die Sanierung erzeugt einen neuen, sauberen Lauf ohne Zugriff auf den
+    Herkunftslauf; die Verknüpfung dient allein der Nachvollziehbarkeit
+    (docs/16-v1.1-review.md §1). Wer weiterarbeiten will, arbeitet ab hier mit
+    dieser Kennung."""
+
 
 def _view(aktion: PendingAction, *, eigene_sitzung: bool) -> ActionView:
     return ActionView(
@@ -152,6 +184,72 @@ async def _eigene_aktion(
     return aktion
 
 
+async def _ausfuehren_nach_bestaetigung(
+    aktion: PendingAction,
+    ergebnis: ApprovalOutcome,
+    *,
+    runs: Runs,
+    executor: ToolExecutor,
+) -> StepExecution | None:
+    """Führt aus, was der Mensch soeben bestätigt hat.
+
+    **Warum das hier steht und nicht im Kern.** Zwischen den Kernschritten
+    liegt ein Schreibvorgang: Ein sanierter Lauf ist ein *neuer* Lauf und muss
+    committed sein, bevor das Werkzeugprotokoll ihn als Fremdschlüssel braucht.
+    Der Executor kennt keinen ``RunStore`` — er entscheidet, er persistiert
+    nicht. Also sequenziert der Aufrufer.
+
+    Entschieden wird hier trotzdem nichts: ``sanitized_run()``,
+    ``start()`` und ``resume_after_approval()`` sind Kernaufrufe, und die
+    erneute Policy-Prüfung samt Grant liegt im Gate.
+
+    **Zwei Wege, und der Unterschied ist die Kontamination.**
+
+    * Sauberer Lauf: Er wartet bereits (``awaiting_confirmation``) und wird
+      fortgesetzt.
+    * Kontaminierter Lauf: Er wird **nicht** fortgesetzt. Stattdessen entsteht
+      ein neuer, sauberer Lauf, der genau diesen einen bestätigten Aufruf
+      ausführt und keinen Zugriff auf den Herkunftslauf hat. Das ist das
+      Taint-Sanitization-Gate — die Auflösung des Widerspruchs aus V1.0, nicht
+      seine Umgehung.
+    """
+    if not ergebnis.approved or ergebnis.sanitized is None:
+        return None
+
+    lauf = await runs.load(aktion.run_id)
+    if lauf is None:  # pragma: no cover - der Lauf hing am Fremdschlüssel
+        return None
+
+    tracker = BudgetTracker(lauf.budget, usage=lauf.usage)
+
+    if lauf.taint_level.is_tainted:
+        lauf = executor.sanitized_run(lauf, ergebnis.sanitized)
+        # Vor der Ausführung committed: Das Werkzeugprotokoll schreibt in einer
+        # eigenen Transaktion und braucht die Zeile als Fremdschlüssel.
+        await runs.create(lauf)
+        erwartet = lauf.status
+        lauf = executor.start(lauf, tracker)
+        lauf = lauf.model_copy(
+            update={"state": lauf.state.model_copy(update={"awaiting_action_id": aktion.id})}
+        )
+    else:
+        erwartet = lauf.status
+
+    schritt = await executor.resume_after_approval(
+        lauf,
+        tracker,
+        action_id=aktion.id,
+        arguments=ergebnis.sanitized.arguments,
+        tool_name=aktion.tool_name,
+        seq=len(lauf.state.completed_steps) + 1,
+    )
+    try:
+        await runs.save(schritt.run, erwarteter_status=erwartet)
+    except RunStateConflict:  # pragma: no cover - zweiter Schreiber am selben Lauf
+        return schritt
+    return schritt
+
+
 # --------------------------------------------------------------------------
 # Endpunkte
 # --------------------------------------------------------------------------
@@ -172,6 +270,10 @@ async def respond_action(
     token: SessionToken,
     actions: ActionStore,
     approvals: Approvals,
+    runs: Runs,
+    tools: Tools,
+    policy: Policy,
+    invocations: Invocations,
 ) -> RespondResult:
     """Erteilt oder verweigert eine Bestätigung — genau einmal.
 
@@ -188,7 +290,7 @@ async def respond_action(
     Client — der hat den Inhalt in der Vorschau bereits gesehen und
     bestätigt.
     """
-    await _eigene_aktion(action_id, session, actions)
+    aktion = await _eigene_aktion(action_id, session, actions)
     ergebnis = await approvals.respond(
         action_id=action_id,
         nonce=payload.nonce,
@@ -199,4 +301,24 @@ async def respond_action(
         channel=KANAL,
         now=utc_now(),
     )
-    return RespondResult(approved=ergebnis.approved, reason=ergebnis.reason)
+    schritt = await _ausfuehren_nach_bestaetigung(
+        aktion,
+        ergebnis,
+        runs=runs,
+        executor=ToolExecutor(
+            registry=tools, policy=policy, gateway=approvals, invocations=invocations
+        ),
+    )
+    if schritt is None:
+        return RespondResult(approved=ergebnis.approved, reason=ergebnis.reason)
+
+    werkzeug = schritt.result
+    return RespondResult(
+        approved=ergebnis.approved,
+        reason=ergebnis.reason,
+        executed=schritt.executed,
+        step_status=schritt.status,
+        display=werkzeug.display if werkzeug else schritt.reason,
+        data=werkzeug.data if werkzeug else None,
+        run_id=str(schritt.run.id),
+    )

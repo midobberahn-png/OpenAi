@@ -30,14 +30,22 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.db.grant_store import PostgresGrantConsumer
 from jarvis_api.settings import Settings
+from jarvis_core.ports.calendar import CalendarStore
 from jarvis_core.ports.files import FileReader
 from jarvis_core.tools import ToolRegistry
-from jarvis_core.tools.builtin import FILES_READ, files_read_handler
+from jarvis_core.tools.builtin import (
+    CALENDAR_CREATE,
+    FILES_READ,
+    calendar_create_handler,
+    files_read_handler,
+)
 
 __all__ = ["tool_catalog"]
 
 
-def tool_catalog(engine: AsyncEngine, *, files: FileReader) -> ToolRegistry:
+def tool_catalog(
+    engine: AsyncEngine, *, files: FileReader, calendar: CalendarStore
+) -> ToolRegistry:
     """Die Registry der Anwendung — mit persistentem Grant-Verbrauch.
 
     Die Außenanbindung kommt als Port herein und wird hier nicht gebaut: So
@@ -46,6 +54,7 @@ def tool_catalog(engine: AsyncEngine, *, files: FileReader) -> ToolRegistry:
     """
     registry = ToolRegistry(grants=PostgresGrantConsumer(engine))
     registry.register(FILES_READ, files_read_handler(files))
+    registry.register(CALENDAR_CREATE, calendar_create_handler(calendar))
     return registry
 
 

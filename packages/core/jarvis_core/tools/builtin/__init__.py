@@ -12,6 +12,12 @@ einem Anbieter; ein Strukturtest hält das fest
 (``test_layering.py::test_core_kennt_keine_konkreten_provider``).
 """
 
+from .calendar import CALENDAR_CREATE, calendar_create_handler
 from .files import FILES_READ, files_read_handler
 
-__all__ = ["FILES_READ", "files_read_handler"]
+__all__ = [
+    "CALENDAR_CREATE",
+    "FILES_READ",
+    "calendar_create_handler",
+    "files_read_handler",
+]

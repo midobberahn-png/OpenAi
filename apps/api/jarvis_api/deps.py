@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.auth import WebAuthnVerifier
 from jarvis_api.db.approval_store import PostgresApprovalStore
+from jarvis_api.db.calendar_store import PostgresCalendarStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.db.permission_store import PostgresPermissionStore
 from jarvis_api.db.run_store import PostgresRunStore
@@ -224,9 +225,28 @@ SessionToken = Annotated[str, Depends(current_token)]
 
 
 def tool_registry(
-    engine: DbEngine, settings: Annotated[Settings, Depends(get_settings)]
+    engine: DbEngine,
+    settings: Annotated[Settings, Depends(get_settings)],
+    session: CurrentSession,
 ) -> ToolRegistry:
-    return tool_catalog(engine, files=file_reader_for(settings))
+    """Der Werkzeugkatalog — an den angemeldeten Nutzer gebunden.
+
+    ``session`` steht hier, weil schreibende Werkzeuge einen Eigentümer
+    brauchen und ihn **nicht als Argument** bekommen dürfen. Ein Handler sieht
+    ausschließlich die Argumente seines Aufrufs; ein Feld ``user_id`` darin
+    wäre dieselbe Lücke wie ``user_id`` in einem Request-Body, nur eine Schicht
+    tiefer. Der Kalender wird deshalb hier gebunden — der Handler kann gar
+    nicht in einen fremden schreiben, weil er den Adressaten nicht benennen
+    kann.
+
+    Die Folge: Der Katalog verlangt eine Sitzung. Das ist richtig so — ein
+    Werkzeugangebot ohne Nutzer wäre eines, das niemandem gehört.
+    """
+    return tool_catalog(
+        engine,
+        files=file_reader_for(settings),
+        calendar=PostgresCalendarStore(engine, user_id=session.user_id),
+    )
 
 
 Tools = Annotated[ToolRegistry, Depends(tool_registry)]
