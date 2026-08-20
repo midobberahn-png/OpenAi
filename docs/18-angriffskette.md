@@ -42,15 +42,15 @@ untrusted HTTP → Auth → Session → Identity → Run → Policy → Approval
 | ② | Auth → Session | Token nur einmal ausgegeben, in der DB nur als Hash; Doppelfrist (absolut + Leerlauf); Widerruf wirkt sofort | `test_sessions.py` (unit + integration) | **ja** |
 | ③ | Session → Identity | `current_session` ist die einzige Quelle; kein Request-Modell führt `user_id`; jeder Endpunkt ist geschützt oder begründet öffentlich | `test_http_boundary.py` (AST), `test_http_auth.py` | **ja** |
 | ④ | Identity → Run | `Run.user_id` stammt aus der Sitzung; ein fremder Lauf ist von einem nicht existierenden nicht unterscheidbar (404) | `test_http_runs.py` (Body mit fremder `user_id`, fremde `run_id`), `test_http_boundary.py` (AST), `test_e2e_identity_to_execution.py` | **ja** |
-| ⑤ | Run → Policy | `PolicyRequest` entsteht an genau einer Stelle; `trigger` und `allowed_data_class` aus dem persistierten Run | `test_executor.py` (AST + Verhalten) | **nein** |
-| ⑥ | Policy → Approval | Payload-Hash eingefroren; Nonce einmalig; Sitzungs-, Nutzer- und Kanalbindung; Sitzung wird verifiziert; der Kanal ist kein Feld des Requests | `test_approval_gateway.py`, `test_sessions.py`, `test_http_runs.py` (Antwort) | **halb** — die Antwort ja, die Anfrage nicht |
-| ⑦ | Approval → Execution | **Herkunft nominal geprüft** (`type(auth) is ExecutionGrant`); an Lauf und Nutzer gebunden; Hash dreifach geprüft; erneute Policy-Prüfung im Gate; **Verbrauch als letzter Schritt vor dem Handler, in eigener Transaktion committed** | `test_tool_registry.py` (Herkunft), `test_grant_replay.py` (Verbrauch, Kopien, Nebenläufigkeit), `test_grant_consumption.py` (Verbindungsgrenzen, Absturz vor dem Commit), `test_layering.py` (AST), `test_e2e_identity_to_execution.py` | **nein** |
+| ⑤ | Run → Policy | `PolicyRequest` entsteht an genau einer Stelle; `trigger` und `allowed_data_class` aus dem persistierten Run | `test_executor.py` (AST + Verhalten), `test_http_runs.py` (Schritt-Endpunkt) | **ja** |
+| ⑥ | Policy → Approval | Payload-Hash eingefroren; Nonce einmalig; Sitzungs-, Nutzer- und Kanalbindung; Sitzung wird verifiziert; der Kanal ist kein Feld des Requests | `test_approval_gateway.py`, `test_sessions.py`, `test_http_runs.py` | **ja** |
+| ⑦ | Approval → Execution | **Herkunft nominal geprüft** (`type(auth) is ExecutionGrant`); an Lauf und Nutzer gebunden; Hash dreifach geprüft; erneute Policy-Prüfung im Gate; **Verbrauch als letzter Schritt vor dem Handler, in eigener Transaktion committed** | `test_tool_registry.py` (Herkunft), `test_grant_replay.py` (Verbrauch, Kopien, Nebenläufigkeit), `test_grant_consumption.py` (Verbindungsgrenzen, Absturz vor dem Commit), `test_layering.py` (AST), `test_werkzeug_files_read.py` (echtes Werkzeug), `test_http_runs.py` (über HTTP) | **ja** |
 
 ---
 
 ## 2. Wo die Kette über HTTP abbricht — und warum
 
-**Geprüft über HTTP: ① bis ④, und ⑥ zur Hälfte.** Ein Angreifer, der von außen
+**Geprüft über HTTP: ① bis ⑦ — die Kette ist geschlossen.** Ein Angreifer, der von außen
 kommt, scheitert belegbar an der Anmeldung, an der Sitzung, an der
 Identitätsgrenze — und seit `POST /runs` auch daran, einen Lauf für ein fremdes
 Konto anzulegen oder einen fremden zu lesen.
@@ -73,15 +73,34 @@ müssen sich bis auf nichts decken.
 fremde Bestätigung, falsche Nonce. Die *Anfrage* entsteht weiterhin nur im
 Kern, weil sie aus einem Werkzeugschritt hervorgeht.
 
-**Nur im Kern geprüft: ⑤ und ⑦** — aber der Grund hat sich verschoben. Bis vor
-Kurzem lautete er: Es gibt keine einzige Werkzeug-Implementierung, ein
-Ausführungsendpunkt hätte nichts auszuführen. Mit `files.read` gibt es jetzt
-eines, und die Kette Policy → Gate → Registry → Handler ist damit erstmals mit
-einem echten Werkzeug belegt (`test_werkzeug_files_read.py`). Was fehlt, ist
-nur noch der Schritt-Endpunkt.
+**Die Kette ist über HTTP geschlossen.** `POST /runs/{run_id}/steps` führt
+einen Werkzeugschritt aus, und `test_http_runs.py` geht den ganzen Weg: Passkey
+anmelden → Lauf anlegen → Schritt ausführen → Dateiinhalt in der Antwort, mit
+`taint_level=tainted`. Kein Testcode steuert dabei den Orchestrator an; alles
+läuft über die HTTP-Grenze.
 
-**Und `files.read` hat eine eigene Grenze mitgebracht, die es vorher nicht
-gab.** Sie ist deshalb bemerkenswert, weil sie zeigt, wo die Kette *nicht*
+Damit ist die Eingangsfrage dieses Dokuments zum ersten Mal vollständig
+beantwortbar: Von außen führt kein Weg von einer falschen Identität zu einem
+`ExecutionGrant`, und jeder Übergang dazwischen ist auf dem Weg geprüft, den
+ein Angreifer tatsächlich nimmt.
+
+**Was der Durchstich zutage gefördert hat**, und das ist sein eigentlicher
+Wert — drei Dinge, die einzeln geprüft nicht auffielen:
+
+1. **Ohne Routing bleibt die Werkzeugschicht lahmgelegt.** `_ceiling(run)`
+   nimmt ohne Routing die Datenklasse des Laufs — die engere Annahme. Ein als
+   P1 eingestufter Lauf darf damit kein Werkzeug ausführen, das P2 liefert. Der
+   fehlende Schritt war nicht die Prüfung, sondern das Routing davor; es gab
+   nirgends einen Modellkatalog (`jarvis_api.models` schließt das).
+2. **`UnknownTool` entkam als Serverfehler.** Ein halluzinierter Werkzeugname
+   ist Modellalltag; die Registry unterscheidet ihn ausdrücklich von einer
+   gefälschten Autorisierung. Über HTTP war er ein 500 — jetzt ein 404.
+3. **Listenfelder aus der Umgebung waren nicht lesbar.** pydantic-settings
+   versucht `json.loads`, bevor der Validator läuft. Der Fehler betraf auch
+   `WEBAUTHN_ORIGINS` und `TRUSTED_PROXIES` und war nur deshalb latent, weil
+   sie niemand über die Umgebung gesetzt hatte.
+
+**`files.read` hat eine eigene Grenze mitgebracht, die es vorher nicht gab.** Sie ist deshalb bemerkenswert, weil sie zeigt, wo die Kette *nicht*
 endet: Die Policy prüft den Pfad als Zeichenkette, der Adapter löst ihn auf.
 Ein Symlink in einem freigegebenen Ordner besteht die erste Prüfung
 einwandfrei — sie hat kein Dateisystem und kann ihn nicht sehen. Erst die
@@ -89,13 +108,12 @@ zweite weist ab. Beim Bau fiel dabei ein Loch in der ersten auf: Sie ließ
 `..` durch (`relative_to()` normalisiert nicht). Beides ist als
 `file-access-confined-to-roots` geführt.
 
-**Die ehrliche Einordnung:** Für ⑦ ist die Absicherung selbst vollständig und
-adversarial geprüft — Payload-Mutation, TOCTOU, Replay, Cross-Run-Grant,
-fremde Sitzung, Absturz vor dem Commit. Was fehlt, ist der Nachweis, dass eine
-HTTP-Schicht diese Prüfungen auch tatsächlich *aufruft*, statt an ihnen vorbei
-zu arbeiten. Genau dieser Fehler ist bei ③ schon einmal vorgekommen und wurde
-dort durch einen Strukturtest geschlossen. Für ④ und ⑥ steht dieser Test jetzt;
-für ⑦ steht er aus, solange es nichts auszuführen gibt.
+**Die ehrliche Einordnung:** Geschlossen heißt nicht fertig. Geprüft ist der
+Weg mit **einem** Werkzeug, und zwar einem lesenden. Die interessanteste Hälfte
+von ⑥ — eine Bestätigung, die einen kontaminierten Lauf saniert und danach ein
+schreibendes Werkzeug freigibt — ist weiterhin nur im Kern belegt, weil es kein
+schreibendes Werkzeug gibt. Der Alltagsfall aus `docs/16-v1.1-review.md §1`
+(Mails lesen → Termin anlegen) endet über HTTP heute nach dem ersten Schritt.
 
 ---
 
@@ -104,7 +122,7 @@ für ⑦ steht er aus, solange es nichts auszuführen gibt.
 | Fläche | Bewertung | Stand |
 |---|---|---|
 | **Sitzungstoken ohne Rotation** | Ein entwendeter Token bleibt bis Ablauf oder Widerruf gültig, auch wenn der rechtmäßige Nutzer weiterarbeitet. Das Replay-Fenster ist die volle Sitzungsdauer. | `session-token-rotation` als PLANNED geführt. Race-Semantik ist zu spezifizieren, bevor implementiert wird. |
-| **HTTP-Grenze für ⑤/⑦** | Kein bekannter Fehler, aber ein ungeprüfter Übergang. ④ und die Antwortseite von ⑥ sind seit `POST /runs` und `POST /actions/{id}/respond` geschlossen. | Offen bis zum Schritt-Endpunkt. Seit `files.read` ist das nicht mehr durch fehlende Werkzeuge blockiert. |
+| **Sanierung eines kontaminierten Laufs über HTTP** | Der Fall, den die geschlossene Kette noch nicht abdeckt: Bestätigung → sanierter Lauf → schreibendes Werkzeug. Im Kern geprüft, über HTTP nicht — es gibt kein schreibendes Werkzeug. | Offen bis zum zweiten Werkzeug (`calendar.create`). |
 | **Globale Rate-Limit-Stufe** | Ist selbst ein Denial-of-Service-Werkzeug: Wer sie füllt, sperrt auch den rechtmäßigen Nutzer aus. | Bewusst in Kauf genommen; Grenze liegt weit über der Alltagsnutzung. Eine volle Challenge-Tabelle wäre schlimmer. |
 | **Audit-Sink fehlt** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Sicherheitsvorfälle (Klonverdacht, abgewiesene Grants) landen derzeit nur im Anwendungsprotokoll. | Offen. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ist ebenfalls noch nicht implementiert. |
 | **Keine Modellanbindung** | Die größte kommende Fläche: Prompt Injection, Tool-Call-Injection, unvertrauenswürdige Modellausgabe, P3-Abfluss. | Der Taint-Schutz ist dafür gebaut, aber noch nie gegen ein echtes Modell erprobt. |
@@ -115,9 +133,12 @@ für ⑦ steht er aus, solange es nichts auszuführen gibt.
 ## 4. Was dieses Dokument nicht behauptet
 
 Es behauptet nicht, dass das System sicher ist. Es behauptet, dass für die
-Übergänge ① bis ④ und für die Antwortseite von ⑥ ein Angriff von außen
-belegbar scheitert, und benennt für ⑤ und ⑦, dass die Absicherung geprüft ist,
-ihr Aufruf durch die HTTP-Schicht aber nicht.
+Übergänge ① bis ⑦ ein Angriff von außen belegbar scheitert — auf dem Weg, den
+ein Angreifer tatsächlich nimmt, mit einem echten Werkzeug am Ende.
+
+Es behauptet **nicht**, dass damit alle Abläufe abgedeckt sind. Geprüft ist ein
+lesender Schritt. Sanierung, schreibende Werkzeuge und Mehrschrittpläne über
+HTTP stehen aus.
 
 Der Unterschied ist der Punkt. Eine Kennzahl von 44/45 sagt, wie viele
 Eigenschaften erzwungen werden — nicht, ob sie auf dem Weg liegen, den ein

@@ -19,6 +19,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.main import create_app
+from jarvis_api.settings import get_settings
 from jarvis_contracts import ActionPreview, PendingAction, PreviewField, RiskLevel
 from tests.authenticator import SoftwareAuthenticator
 
@@ -56,6 +58,7 @@ async def client(engine: AsyncEngine, frische_grenzen: None) -> AsyncIterator[As
 
     await dispose()
     await dispose_redis()
+    get_settings.cache_clear()
 
     async with engine.begin() as conn:
         await conn.execute(text("DELETE FROM users WHERE email LIKE :p"), {"p": f"{MAIL_PRAEFIX}%"})
@@ -378,3 +381,137 @@ class TestBestaetigen:
         eintraege: list[dict[str, Any]] = antwort.json()
         assert eintraege, "Die offene Bestätigung fehlt in der Übersicht."
         assert all(e["nonce"] is None for e in eintraege), "Fremde Nonce herausgegeben."
+
+
+async def _mit_dateirecht(engine: AsyncEngine, *, user_id: uuid.UUID, wurzel: Path) -> None:
+    """Erteilt ``files.read`` für genau diesen Ordner — als echte Zeile."""
+    from jarvis_contracts import FilesConstraints
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO scopes (name, description, default_mode, risk_level) "
+                "VALUES ('files.read', 'Dateien lesen', 'allow', 'low') "
+                "ON CONFLICT (name) DO NOTHING"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO permissions (id, user_id, scope, mode, constraints, granted_at) "
+                "VALUES (:i, :u, 'files.read', 'allow', CAST(:c AS jsonb), now() - interval '1 day')"
+            ),
+            {
+                "i": uuid.uuid4(),
+                "u": user_id,
+                "c": FilesConstraints(allowed_roots=[str(wurzel)]).model_dump_json(),
+            },
+        )
+
+
+class TestWerkzeugschritt:
+    """Die Glieder ⑤ bis ⑦ der Angriffskette — erstmals über HTTP.
+
+    Bis hierher endete der Durchstich beim Anlegen des Laufs. Was fehlte, war
+    der Schritt, der tatsächlich etwas tut: Policy-Entscheidung, Protokoll,
+    Grant, Verbrauch, Handler — und das alles hinter der HTTP-Grenze, mit einer
+    Identität, die aus einer über HTTP erlangten Sitzung stammt.
+    """
+
+    async def test_der_volle_weg_von_der_anmeldung_bis_zur_datei(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Anmeldung → Lauf → Werkzeugschritt → Inhalt.
+
+        Der Ordner wird über die Prozessgrenze (``FILES_ALLOWED_ROOTS``) **und**
+        über die Berechtigung freigegeben. Beide müssen zustimmen; fehlt eine,
+        läuft nichts.
+        """
+        wurzel = tmp_path / "freigegeben"
+        wurzel.mkdir()
+        (wurzel / "plan.md").write_text("# Plan\nMittwoch: Fokuszeit", encoding="utf-8")
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        # ``get_settings`` ist gecacht — ohne dieses Leeren liest die App die
+        # Umgebung von vor dem Test.
+        get_settings.cache_clear()
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_dateirecht(engine, user_id=user_id, wurzel=wurzel)
+
+        lauf = await client.post("/runs", json={"input": "Lies mir den Plan vor"})
+        assert lauf.status_code == 201, lauf.text
+        run_id = lauf.json()["id"]
+
+        schritt = await client.post(
+            f"/runs/{run_id}/steps",
+            json={"tool": "files.read", "arguments": {"path": str(wurzel / "plan.md")}},
+        )
+        assert schritt.status_code == 200, schritt.text
+        koerper = schritt.json()
+
+        assert koerper["status"] == "executed", koerper
+        assert "Fokuszeit" in koerper["data"]["text"]
+        assert koerper["taint_level"] == "tainted", (
+            "Eine gelesene Datei ist Fremdinhalt — ohne Kontamination wäre der "
+            "Taint-Schutz über HTTP ausgeschaltet."
+        )
+        assert koerper["data_class"] == "P2"
+
+    @pytest.mark.invariant("resource-ownership-checked-once")
+    async def test_kein_schritt_in_einem_fremden_lauf(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Die Zugehörigkeitsprüfung gilt auch für den Schritt-Endpunkt.
+
+        Er nimmt eine ``run_id`` entgegen und muss sie deshalb prüfen — ein
+        Strukturtest erzwingt das, dieser hier misst es.
+        """
+        await _angemeldet(client, engine)
+        _, fremder_lauf = await _fremder_lauf(engine)
+
+        antwort = await client.post(
+            f"/runs/{fremder_lauf}/steps",
+            json={"tool": "files.read", "arguments": {"path": "/etc/passwd"}},
+        )
+        assert antwort.status_code == 404, antwort.text
+
+    async def test_ohne_berechtigung_wird_blockiert_nicht_ausgefuehrt(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Der Ordner ist im Prozess freigegeben, die Berechtigung fehlt.
+
+        Erwartet wird ``blocked`` mit 200 — die Policy hat entschieden, das ist
+        kein Transportfehler. Ein 4xx würde eine legitime Entscheidung als
+        Störung führen.
+        """
+        wurzel = tmp_path / "offen"
+        wurzel.mkdir()
+        (wurzel / "geheim.md").write_text("nicht ohne Recht", encoding="utf-8")
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        # ``get_settings`` ist gecacht — ohne dieses Leeren liest die App die
+        # Umgebung von vor dem Test.
+        get_settings.cache_clear()
+
+        await _angemeldet(client, engine)
+        lauf = await client.post("/runs", json={"input": "Lies das"})
+        run_id = lauf.json()["id"]
+
+        schritt = await client.post(
+            f"/runs/{run_id}/steps",
+            json={"tool": "files.read", "arguments": {"path": str(wurzel / "geheim.md")}},
+        )
+        assert schritt.status_code == 200, schritt.text
+        assert schritt.json()["status"] == "blocked", schritt.json()
+
+    async def test_unbekanntes_werkzeug_ist_kein_serverfehler(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Ein halluzinierter Werkzeugname ist Alltag, kein Absturz."""
+        await _angemeldet(client, engine)
+        lauf = await client.post("/runs", json={"input": "Mach was"})
+        run_id = lauf.json()["id"]
+
+        schritt = await client.post(
+            f"/runs/{run_id}/steps",
+            json={"tool": "mail.send", "arguments": {}},
+        )
+        assert schritt.status_code < 500, schritt.text

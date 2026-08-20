@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.auth import WebAuthnVerifier
 from jarvis_api.db.approval_store import PostgresApprovalStore
+from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.db.permission_store import PostgresPermissionStore
 from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.db.session import engine_for
@@ -41,6 +42,7 @@ __all__ = [
     "CurrentSession",
     "DbConnection",
     "DbEngine",
+    "Invocations",
     "Limiter",
     "Passkeys",
     "Permissions",
@@ -56,6 +58,7 @@ __all__ = [
     "db_connection",
     "db_engine",
     "dispose_redis",
+    "invocation_store",
     "passkey_service",
     "permission_store",
     "policy_engine",
@@ -105,6 +108,19 @@ def run_store(engine: DbEngine) -> PostgresRunStore:
 
 
 Runs = Annotated[PostgresRunStore, Depends(run_store)]
+
+
+def invocation_store(engine: DbEngine) -> PostgresInvocationStore:
+    """Das Werkzeugprotokoll — eigene Transaktion je Eintrag.
+
+    Die Engine und nicht die Request-Verbindung: Der Grant-Verbrauch hängt an
+    der protokollierten Zeile und committet seinerseits eigenständig. Läge das
+    Protokoll in der Request-Transaktion, fände er nichts.
+    """
+    return PostgresInvocationStore(engine)
+
+
+Invocations = Annotated[PostgresInvocationStore, Depends(invocation_store)]
 
 
 def permission_store(engine: DbEngine) -> PostgresPermissionStore:

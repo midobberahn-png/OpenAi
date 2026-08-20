@@ -402,6 +402,110 @@
         "title": "SessionView",
         "type": "object"
       },
+      "StepRequest": {
+        "description": "Ein Werkzeugschritt in einem Lauf.\n\nFührt weder Nutzer noch Sitzung noch Invokationskennung: Die Identität\nkommt aus der Sitzung, die Invokationskennung erzeugt der Executor. Ein\nFeld dafür wäre der kürzeste Weg, einen fremden Grant anzusprechen — ein\nStrukturtest hält das fest.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "tool": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool"
+        ],
+        "title": "StepRequest",
+        "type": "object"
+      },
+      "StepView": {
+        "description": "Ergebnis eines Werkzeugschritts.",
+        "properties": {
+          "action_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Id"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "data_class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Class"
+          },
+          "display": {
+            "title": "Display",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "run_status": {
+            "title": "Run Status",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "taint_level": {
+            "title": "Taint Level",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "run_status",
+          "taint_level",
+          "display",
+          "data",
+          "data_class",
+          "action_id",
+          "code"
+        ],
+        "title": "StepView",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -967,6 +1071,60 @@
           }
         },
         "summary": "Read Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/steps": {
+      "post": {
+        "description": "Führt einen Werkzeugschritt aus — Glieder ⑤ bis ⑦ über HTTP.\n\n**Was dieser Endpunkt nicht entscheidet: irgendetwas.** Er löst den Lauf\nauf, prüft dessen Zugehörigkeit und übergibt an den Executor. Ob das\nWerkzeug laufen darf, entscheidet die Policy Engine; ob eine Bestätigung\nnötig ist, ebenfalls; ob der Grant gilt, das Gate; ob er noch nicht\nverbraucht ist, die Datenbank. Eine Prüfung hier wäre eine zweite Wahrheit.\n\n**Der Werkzeugname kommt vom Aufrufer, die Erlaubnis nicht.** Das ist der\nPfad für einen ausdrücklichen Befehl („lies mir die Datei X\") und\nzugleich der, den die Modellschleife später intern nimmt. Beide landen bei\nderselben Policy-Entscheidung — ein Vorschlag eines Modells trägt keine\nBerechtigung mit sich.\n\n**Fortschreiben mit Statusvergleich.** Gespeichert wird gegen den Status,\nder beim Laden galt. Läuft parallel ein zweiter Schritt, gewinnt genau\neiner; der andere bekommt 409 statt eines überschriebenen Laufs.",
+        "operationId": "execute_step_runs__run_id__steps_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Execute Step",
         "tags": [
           "runs"
         ]

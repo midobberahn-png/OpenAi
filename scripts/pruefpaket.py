@@ -119,6 +119,7 @@ PORTIONEN: tuple[Portion, ...] = (
             "apps/api/jarvis_api/routes/runs.py",
             "apps/api/jarvis_api/routes/actions.py",
             "apps/api/jarvis_api/tools.py",
+            "apps/api/jarvis_api/models.py",
             "apps/api/jarvis_api/main.py",
             "apps/api/jarvis_api/settings.py",
             "apps/api/jarvis_api/auth/webauthn_verifier.py",
@@ -298,6 +299,10 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B46 | Der Lauf ist nach `files.read` kontaminiert. Eine Datei ist Fremdinhalt wie eine Mail; die sendenden Werkzeuge fallen danach aus dem Angebot. | `tools/builtin/files.py` | 09, 02 |
 | B47 | Eine Berechtigung, deren gespeicherte Einschränkungen sich nicht zum Scope auslegen lassen, gilt als **nicht erteilt** — kein Rückfall auf die Basisklasse, der die Pfadgrenzen verlöre. | `db/permission_store.py`, `contracts:constraints_for` | 09, 05 |
 | B48 | Die Pfadprüfung der Berechtigung lehnt `..` ab, statt es wegzurechnen, und akzeptiert nur absolute Pfade. | `contracts/permissions.py:FilesConstraints` | 09, 01 |
+| B49 | Der Werkzeugschritt über HTTP entscheidet nichts selbst: Er löst den Lauf auf, prüft die Zugehörigkeit und übergibt an den Executor. Policy, Gate, Grant und Verbrauch liegen unverändert im Kern. | `routes/runs.py:execute_step` | 04 |
+| B50 | Zwei parallele Schritte am selben Lauf ergeben einen Erfolg und einen Konflikt — das Fortschreiben läuft über den Statusvergleich. | `routes/runs.py:execute_step`, `db/run_store.py:save` | 04, 05 |
+| B51 | Zugangsdaten sind auch innerhalb freigegebener Ordner gesperrt, geprüft auf dem genannten **und** dem aufgelösten Pfad. Ein Symlink mit harmlosem Namen wird erkannt. | `contracts:is_sensitive_filename`, `integrations/localfs.py` | 09 |
+| B52 | Die Erkennung von Zugangsdaten im Inhalt **hebt** die Datenklasse und senkt sie nie. Ein Treffer bedeutet P3 und damit ausschließlich lokale Verarbeitung. | `core/policy/secrets.py` | 09, 01 |
 
 ### Was seit dem letzten Paket geschah
 

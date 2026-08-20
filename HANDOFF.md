@@ -35,10 +35,10 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 40, Remote auf GitHub |
-| Tests | **897** gesamt — 569 mit `-m security`, 146 mit `-m integration`, **0 übersprungen** |
+| Commits | 42, Remote auf GitHub |
+| Tests | **942** gesamt — 589 mit `-m security`, 151 mit `-m integration`, **0 übersprungen** |
 | **Security Invariant Coverage** | **45/46** |
-| mypy | `strict`, sauber über 96 Dateien |
+| mypy | `strict`, sauber über 98 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 32 Tabellen, 8 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis als Dienste |
@@ -196,6 +196,8 @@ Kalendereintrag mit Teilnehmern verschickt Einladungen und gilt damit als
 | Bestätigungs-Routen | `apps/api/jarvis_api/routes/actions.py` | `GET /actions`, `POST /actions/{id}/respond` — der Weg, auf „Ja" zu klicken |
 | Berechtigungen | `apps/api/jarvis_api/db/permission_store.py` | erst jetzt in der Anwendung; vorher nur als Kopie im Testcode |
 | Werkzeugkatalog | `apps/api/jarvis_api/tools.py` | ein Werkzeug, mit persistentem Grant-Verbrauch verdrahtet |
+| Modellkatalog | `apps/api/jarvis_api/models.py` | ein lokales Modell — ohne ihn bleibt die Werkzeugschicht per Entwurf gesperrt |
+| Werkzeugschritt | `api/routes/runs.py:execute_step` | Policy → Gate → Registry über HTTP, Fortschreiben mit Statusvergleich |
 | Werkzeug `files.read` | `core/tools/builtin/files.py` | Spec und Handler, Handler nimmt den Port |
 | Dateizugriff | `packages/integrations/jarvis_integrations/localfs.py` | Auflösung, Wurzelgrenze, `O_NOFOLLOW`, nur reguläre Dateien |
 
@@ -239,7 +241,7 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 |---|---|
 | **Werkzeuge — mehr als eines** | Es gibt jetzt genau **ein** echtes: `files.read`. Damit sichert der Sockel erstmals etwas Reales ab. Alles Weitere (`mail.*`, `calendar.*`, `web.fetch`) fehlt; der Scope-Katalog führt 34 Einträge, der Werkzeugkatalog einen. |
 | **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
-| **Ausführung über HTTP** | `POST /runs` legt einen Lauf an und stuft ihn ein, führt ihn aber nicht aus. Der Schritt-Endpunkt fehlt; Glieder ⑤ und ⑦ der Angriffskette bleiben „nur im Kern geprüft" (`docs/18-angriffskette.md`). **Seit `files.read` ist das nicht mehr durch fehlende Werkzeuge blockiert** — es ist die nächste Aufgabe. |
+| **Mehrschrittpläne über HTTP** | Ein Schritt geht (`POST /runs/{id}/steps`), ein Plan noch nicht: Niemand ruft `plan_turn()` auf und arbeitet die Schritte ab. Die Angriffskette ist damit geschlossen, der Alltagsfall aus `docs/16 §1` aber nicht. |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
 | **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
@@ -356,22 +358,7 @@ Kontamination" nicht hielt.
 
 Die Reihenfolge ist begründet, nicht beliebig.
 
-### 1. Ausführung über HTTP
-
-**Der Weg ist jetzt frei.** Mit `files.read` gibt es ein echtes Werkzeug; ein
-Schritt-Endpunkt am Lauf prüfte nicht mehr die Attrappe, sondern die Sache. Er
-schließt die Glieder ⑤ und ⑦ der Angriffskette.
-
-Was dabei zu beachten ist, steht bereits fest: **Strukturtest zuerst**, und die
-Zugehörigkeitsprüfung (`resource-ownership-checked-once`) gilt auch für den
-neuen Endpunkt — er nimmt eine `run_id` entgegen.
-
-Der interessante Testfall ist der Alltagsfall aus `docs/16-v1.1-review.md §1`,
-jetzt mit echten Bestandteilen: Datei lesen (kontaminiert den Lauf) → Termin
-anlegen (bestätigungspflichtig, weil kontaminiert). Solange das zweite Werkzeug
-fehlt, endet er nach dem ersten Schritt — auch das ist ein Ergebnis.
-
-### 2. Ein zweites Werkzeug, und zwar ein schreibendes
+### 1. Ein zweites Werkzeug, und zwar ein schreibendes
 
 `files.read` nimmt alle Schichten in Betrieb, aber es wirkt nicht nach außen.
 Erst ein schreibendes Werkzeug macht die Bestätigungskette real, die seit dem
@@ -383,6 +370,13 @@ zugleich der interessanteste: Ohne Teilnehmer ist er `structured` und nach
 Bestätigung sanierbar, mit Teilnehmern `freeform` und nie sanierbar
 (`ToolSpec.outbound_fields`). Diese Unterscheidung ist bislang nur an
 Attrappen geprüft.
+
+**Und es ist jetzt der Punkt, an dem die Angriffskette weiterkommt.** Sie ist
+über HTTP geschlossen (① bis ⑦), aber nur für einen *lesenden* Schritt. Der
+Alltagsfall aus `docs/16-v1.1-review.md §1` — Datei lesen, dadurch
+kontaminiert, dann Termin anlegen mit Bestätigung und Sanierung — endet über
+HTTP heute nach dem ersten Schritt. Genau dieser zweite Schritt ist die
+Zusicherung, die das Projekt seit V1.1 trägt, und über HTTP ist sie unbelegt.
 
 Beim Bauen gilt, was bei den Auth- und Lauf-Routen galt: **Strukturtest
 zuerst**, sonst schreibt man ihn passend zum Code. Für diesen Block sind daraus
@@ -459,12 +453,12 @@ Belegt ist der Zusammenhang in
 Ohne den Commit im Store fällt genau dieser Test mit `GrantAlreadyUsed` — dem
 Fehlerbild, das sonst der erste verdrahtete Endpunkt gezeigt hätte.
 
-### 3. Web-UI, Grundfassung
+### 2. Web-UI, Grundfassung
 
 Chat, Statusleiste, Bestätigungsdialog, Permission Center. Ohne sie ist das
 System nicht bedienbar.
 
-### 4. Weitere Provider
+### 3. Weitere Provider
 
 Anthropic und OpenAI, dieselbe Form wie Ollama. Dabei mitzunehmen, was aus dem
 Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch

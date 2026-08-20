@@ -30,20 +30,44 @@ behauptet wird.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from jarvis_api.db.run_store import PostgresRunStore
-from jarvis_api.deps import CurrentSession, Runs
-from jarvis_contracts import BUDGET_PRESETS, Run, RunStatus, RunTrigger, Session
-from jarvis_core.orchestrator import classify, utc_now
+from jarvis_api.deps import Approvals, CurrentSession, Invocations, Policy, Runs, Tools
+from jarvis_api.models import model_catalog
+from jarvis_api.settings import Settings, get_settings
+from jarvis_contracts import (
+    BUDGET_PRESETS,
+    ApprovalChannel,
+    Run,
+    RunStatus,
+    RunTrigger,
+    Session,
+)
+from jarvis_core.orchestrator import (
+    BudgetTracker,
+    NoEligibleModel,
+    ToolExecutor,
+    classify,
+    route,
+    utc_now,
+)
+from jarvis_core.ports.runs import RunStateConflict
 
 __all__ = ["router"]
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+
+KANAL: ApprovalChannel = "ui"
+"""Der Kanal dieses Transportwegs — kein Feld des Requests.
+
+Dieselbe Überlegung wie bei den Bestätigungen: Der Kanal entscheidet mit, ob
+eine Aktion überhaupt bestätigt werden darf. Als Angabe des Aufrufers wäre er
+eine Behauptung."""
 
 
 # --------------------------------------------------------------------------
@@ -117,7 +141,12 @@ async def _eigener_lauf(run_id: UUID, session: Session, runs: PostgresRunStore) 
 
 
 @router.post("", response_model=RunView, status_code=status.HTTP_201_CREATED)
-async def create_run(payload: RunRequest, session: CurrentSession, runs: Runs) -> RunView:
+async def create_run(
+    payload: RunRequest,
+    session: CurrentSession,
+    runs: Runs,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> RunView:
     """Legt einen Lauf an — für den angemeldeten Nutzer.
 
     Die Einstufung geschieht sofort und deterministisch. Sie bestimmt die
@@ -129,6 +158,24 @@ async def create_run(payload: RunRequest, session: CurrentSession, runs: Runs) -
     Werkzeuge und keinen Arbeiter, der ihn aufnähme.
     """
     einstufung = classify(payload.input, channel=payload.channel)
+
+    # Routing gehört hierher und nicht in den ersten Werkzeugschritt.
+    #
+    # Ohne Routing gilt als Obergrenze eines Laufs seine eigene Datenklasse
+    # (``executor._ceiling``) — eine Vorsichtsannahme für den Zustand „noch
+    # nicht geroutet". Ein als P1 eingestufter Lauf könnte damit kein Werkzeug
+    # ausführen, das P2 liefert. Erst die Routing-Entscheidung sagt, was das
+    # tatsächlich gewählte Modell verarbeiten darf.
+    try:
+        routing = route(einstufung, model_catalog(settings))
+    except NoEligibleModel as keines:
+        # Kein zugelassenes Modell ist eine Konfigurationslage, kein
+        # Serverfehler: Der Katalog passt nicht zur Anfrage — etwa P3-Daten
+        # ohne lokales Modell.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(keines)
+        ) from keines
+
     jetzt = utc_now()
     lauf = Run(
         id=uuid4(),
@@ -136,6 +183,7 @@ async def create_run(payload: RunRequest, session: CurrentSession, runs: Runs) -
         trigger=RunTrigger.USER,
         status=RunStatus.QUEUED,
         classification=einstufung,
+        routing=routing,
         data_class=einstufung.data_class,
         budget=BUDGET_PRESETS["voice" if payload.channel == "voice" else "text"],
         trace_id=uuid4().hex,
@@ -160,3 +208,155 @@ async def list_runs(session: CurrentSession, runs: Runs) -> list[RunView]:
 async def read_run(run_id: UUID, session: CurrentSession, runs: Runs) -> RunView:
     """Ein einzelner eigener Lauf."""
     return _view(await _eigener_lauf(run_id, session, runs))
+
+
+# --------------------------------------------------------------------------
+# Werkzeugschritt
+# --------------------------------------------------------------------------
+
+
+class StepRequest(BaseModel):
+    """Ein Werkzeugschritt in einem Lauf.
+
+    Führt weder Nutzer noch Sitzung noch Invokationskennung: Die Identität
+    kommt aus der Sitzung, die Invokationskennung erzeugt der Executor. Ein
+    Feld dafür wäre der kürzeste Weg, einen fremden Grant anzusprechen — ein
+    Strukturtest hält das fest.
+    """
+
+    tool: str = Field(min_length=1, max_length=80)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class StepView(BaseModel):
+    """Ergebnis eines Werkzeugschritts."""
+
+    status: str
+    """``executed``, ``awaiting_confirmation``, ``blocked``, ``failed`` oder
+    ``budget_exceeded`` — der Ausgang, nicht der Laufzustand."""
+
+    reason: str
+    run_status: str
+    taint_level: str
+    """Nach dem Schritt. Ein Werkzeug, das Fremdinhalt gelesen hat, hinterlässt
+    hier ``tainted``, und die sendenden Werkzeuge fallen aus dem Angebot."""
+
+    display: str
+    data: dict[str, Any] | None
+    """Das Werkzeugergebnis.
+
+    Auch bei ``P3`` an den Aufrufer ausgeliefert, und das ist kein Widerspruch:
+    „P3 verlässt das Gerät nie" richtet sich gegen fremde **Modelle und
+    Anbieter**. Der angemeldete Nutzer ist der Eigentümer der Daten — ihm seine
+    eigene Datei vorzuenthalten, während das lokale Modell sie sehen darf, wäre
+    Sicherheitstheater.
+    """
+
+    data_class: str | None
+    """Einstufung des Ergebnisses. Die Oberfläche kennzeichnet danach."""
+
+    action_id: str | None
+    """Gesetzt bei ``awaiting_confirmation`` — hierauf antwortet
+    ``POST /actions/{id}/respond``."""
+
+    code: str | None
+
+
+@router.post("/{run_id}/steps", response_model=StepView)
+async def execute_step(
+    run_id: UUID,
+    payload: StepRequest,
+    session: CurrentSession,
+    runs: Runs,
+    tools: Tools,
+    policy: Policy,
+    approvals: Approvals,
+    invocations: Invocations,
+) -> StepView:
+    """Führt einen Werkzeugschritt aus — Glieder ⑤ bis ⑦ über HTTP.
+
+    **Was dieser Endpunkt nicht entscheidet: irgendetwas.** Er löst den Lauf
+    auf, prüft dessen Zugehörigkeit und übergibt an den Executor. Ob das
+    Werkzeug laufen darf, entscheidet die Policy Engine; ob eine Bestätigung
+    nötig ist, ebenfalls; ob der Grant gilt, das Gate; ob er noch nicht
+    verbraucht ist, die Datenbank. Eine Prüfung hier wäre eine zweite Wahrheit.
+
+    **Der Werkzeugname kommt vom Aufrufer, die Erlaubnis nicht.** Das ist der
+    Pfad für einen ausdrücklichen Befehl („lies mir die Datei X") und
+    zugleich der, den die Modellschleife später intern nimmt. Beide landen bei
+    derselben Policy-Entscheidung — ein Vorschlag eines Modells trägt keine
+    Berechtigung mit sich.
+
+    **Fortschreiben mit Statusvergleich.** Gespeichert wird gegen den Status,
+    der beim Laden galt. Läuft parallel ein zweiter Schritt, gewinnt genau
+    einer; der andere bekommt 409 statt eines überschriebenen Laufs.
+    """
+    lauf = await _eigener_lauf(run_id, session, runs)
+    status_vorher = lauf.status
+
+    if lauf.status is RunStatus.AWAITING_CONFIRMATION:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Der Lauf wartet auf eine Bestätigung. Erst darauf antworten.",
+        )
+    if lauf.status.is_terminal:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Der Lauf ist abgeschlossen ({lauf.status}).",
+        )
+
+    executor = ToolExecutor(
+        registry=tools,
+        policy=policy,
+        gateway=approvals,
+        invocations=invocations,
+    )
+    tracker = BudgetTracker(lauf.budget, usage=lauf.usage)
+
+    # ``queued → planning → executing``: Der Zustandsautomat kennt keinen
+    # direkten Weg, und das ist Absicht — ein zusätzlicher Übergang machte die
+    # Planungsstufe für alle Läufe optional.
+    if lauf.status is RunStatus.QUEUED:
+        lauf = executor.start(lauf, tracker)
+
+    # Ein halluzinierter Werkzeugname ist Modellalltag und kein Serverfehler —
+    # die Registry unterscheidet ``UnknownTool`` deshalb ausdrücklich von einer
+    # nicht passenden Autorisierung. Über HTTP ist die ehrliche Antwort 404:
+    # Diese Ressource gibt es nicht. Der Katalog ist kein Geheimnis, das Modell
+    # bekommt ihn ohnehin als Schema.
+    if tools.get(payload.tool) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unbekanntes Werkzeug: {payload.tool!r}",
+        )
+
+    schritt = await executor.execute_tool(
+        lauf,
+        tracker,
+        tool_name=payload.tool,
+        arguments=payload.arguments,
+        seq=len(lauf.state.completed_steps) + 1,
+        session_id=session.id,
+        channel=KANAL,
+    )
+
+    try:
+        await runs.save(schritt.run, erwarteter_status=status_vorher)
+    except RunStateConflict as konflikt:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Der Lauf wurde parallel verändert. Neu laden und wiederholen.",
+        ) from konflikt
+
+    ergebnis = schritt.result
+    return StepView(
+        status=schritt.status,
+        reason=schritt.reason,
+        run_status=str(schritt.run.status),
+        taint_level=str(schritt.run.taint_level),
+        display=ergebnis.display if ergebnis else "",
+        data=ergebnis.data if ergebnis else None,
+        data_class=str(ergebnis.produced_data_class) if ergebnis else None,
+        action_id=str(schritt.pending.id) if schritt.pending else None,
+        code=schritt.code,
+    )

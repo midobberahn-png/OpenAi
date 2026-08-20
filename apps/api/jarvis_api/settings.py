@@ -10,9 +10,10 @@ Aufhebung genau dieser Eigenschaft — deshalb ist er Konfiguration.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 __all__ = ["Settings", "get_settings"]
 
@@ -28,14 +29,24 @@ class Settings(BaseSettings):
 
     webauthn_rp_id: str = Field(default="localhost", alias="WEBAUTHN_RP_ID")
     webauthn_rp_name: str = Field(default="JARVIS", alias="WEBAUTHN_RP_NAME")
-    webauthn_origins: list[str] = Field(
+    webauthn_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173"], alias="WEBAUTHN_ORIGINS"
     )
 
     session_cookie_name: str = Field(default="jarvis_session", alias="SESSION_COOKIE_NAME")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
-    files_allowed_roots: list[str] = Field(default_factory=list, alias="FILES_ALLOWED_ROOTS")
+    ollama_model: str = Field(default="llama3.1:8b", alias="OLLAMA_MODEL")
+    """Das lokale Modell. Einziger Eintrag des Katalogs (``models.py``)."""
+
+    ollama_context_window: int = Field(default=128_000, alias="OLLAMA_CONTEXT_WINDOW")
+    ollama_p50_latency_ms: int = Field(default=250, alias="OLLAMA_P50_LATENCY_MS")
+    """Gehen als Gewichte in die Modellwahl ein. Geschätzte Werte sind
+    zulässig — das Routing ist deterministisch, nicht exakt."""
+
+    files_allowed_roots: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, alias="FILES_ALLOWED_ROOTS"
+    )
     """Ordner, aus denen ``files.read`` überhaupt lesen darf — die Grenze des
     **Prozesses**.
 
@@ -53,7 +64,9 @@ class Settings(BaseSettings):
     Voreinstellung.
     """
 
-    trusted_proxies: list[str] = Field(default_factory=list, alias="TRUSTED_PROXIES")
+    trusted_proxies: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, alias="TRUSTED_PROXIES"
+    )
     """Adressen, deren ``X-Forwarded-For`` geglaubt wird.
 
     Leer bedeutet: keinem. Das ist der sichere Standard — ohne
@@ -75,7 +88,16 @@ class Settings(BaseSettings):
     @field_validator("webauthn_origins", "trusted_proxies", "files_allowed_roots", mode="before")
     @classmethod
     def _split_origins(cls, value: object) -> object:
-        """Kommagetrennt aus der Umgebung, Liste im Code."""
+        """Kommagetrennt aus der Umgebung, Liste im Code.
+
+        ``NoDecode`` an den Feldern ist dafür notwendig und war es immer:
+        pydantic-settings versucht bei Listenfeldern zuerst ``json.loads`` auf
+        den Umgebungswert — **bevor** dieser Validator läuft — und wirft bei
+        ``a,b`` einen ``SettingsError``. Der Fehler war latent, weil bis zum
+        ersten Werkzeugschritt niemand eine dieser Listen tatsächlich über die
+        Umgebung gesetzt hat. ``NoDecode`` reicht den Rohwert durch, und erst
+        hier entscheidet sich, wie er zerlegt wird.
+        """
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
