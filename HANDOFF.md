@@ -223,6 +223,7 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 | Fehlt | Auswirkung |
 |---|---|
 | **HTTP-Endpunkte für Läufe** | Es gibt `/auth/*` und `/health`, sonst nichts. Die Kette Identity → Run → Policy → Approval → Execution ist nur im Kern geprüft, nicht über HTTP (`docs/18-angriffskette.md`). |
+| **Persistenz der Läufe (`RunStore`)** | Es gibt Tabelle und Vertrag, aber weder Port noch Implementierung: Ein `Run` lebt ausschließlich im Arbeitsspeicher des Orchestrators, die Integrationstests legen die Zeile per SQL an. Damit ist ein Lauf weder pausierbar noch wiederaufnehmbar — und `tool_invocations.run_id` hat nichts, worauf es zeigen könnte. Voraussetzung für `POST /runs`, nicht danach nachrüstbar. |
 | **Bestätigungs-Endpunkt** | `POST /actions/{id}/respond` fehlt. Der Mensch hat derzeit keinen Weg, auf „Ja" zu klicken. |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
@@ -343,7 +344,8 @@ Die Reihenfolge ist begründet, nicht beliebig.
 ### 1. HTTP-Endpunkte für Läufe und Bestätigungen
 
 `POST /runs`, `POST /actions/{id}/respond`, dazu die Sitzungs- und
-Laufübersicht. Zwei Gründe:
+Laufübersicht — und davor der `RunStore`, ohne den `POST /runs` nichts
+abzulegen hätte. Zwei Gründe:
 
 * Es gibt **keinen Weg, eine Bestätigung zu erteilen**. Jede Aktion mit
   Außenwirkung hängt daran.
@@ -359,13 +361,11 @@ Verdrahten der Endpunkte gehört dort `PostgresGrantConsumer` hin — nicht
 `InProcessGrants`, das ist der Testdoppelgänger und hält nur innerhalb eines
 Prozesses.
 
-**Und hier liegt die eine offene Aufgabe aus Bypass 4.** Der Verbraucher nimmt
-seit der Behebung eine `AsyncEngine` entgegen und committet den Anspruch in
-einer eigenen Transaktion. Das macht ihn absturzfest — und blind für alles,
-was der Request noch nicht committed hat. Der Executor protokolliert die
-Invokation aber über `PostgresInvocationStore` auf der **Request-Verbindung**
-(`deps.db_connection` hält `engine.begin()` über den ganzen Request). Wird
-naiv verdrahtet, gilt:
+**Die Folgeaufgabe aus Bypass 4 ist erledigt — bis auf eine Stelle.** Der
+Anspruch committet seit der Behebung in einer eigenen Transaktion. Das machte
+ihn absturzfest und zugleich blind für alles, was der Request noch nicht
+committed hat. Das Werkzeugprotokoll lag aber auf der Request-Verbindung; naiv
+verdrahtet hätte gegolten:
 
 ```
 _record()  → INSERT tool_invocations   (Request-Transaktion, nicht committed)
@@ -373,19 +373,35 @@ consume()  → UPDATE … WHERE id = …     (eigene Transaktion, sieht die Zeil
            → 0 Zeilen → GrantAlreadyUsed → nichts läuft
 ```
 
-Das schließt, statt zu öffnen — die Richtung stimmt, und der Fall ist als
-`test_noch_nicht_committete_invokation_schliesst` festgehalten. Brauchbar ist
-er trotzdem nicht: Es liefe gar nichts mehr. Beim Verdrahten muss die
-Invokationszeile deshalb **committed** sein, bevor ausgeführt wird — entweder
-protokolliert der Executor sie über eine eigene kurze Transaktion, oder der
-Endpunkt committet vor dem Ausführungsschritt. Das ist ohnehin die Zusage, die
-`invocation_store.py` selbst führt („auch wenn der Lauf abgestürzt ist") und
-die die Request-Transaktion heute nicht hält.
+`PostgresInvocationStore` nimmt deshalb jetzt ebenfalls eine `AsyncEngine` und
+committet jeden Eintrag für sich. Das war ohnehin überfällig: Der Modulkopf
+sagte seit jeher zu, der Eintrag sei da, „auch wenn der Lauf abgestürzt ist" —
+gehalten hat das die Request-Transaktion nie. Ein Protokolleintrag, der
+zurückrollen kann, ist keiner.
 
-Zweite Bedingung aus derselben Bauart: Die Request-Transaktion darf dieselbe
-Zeile vor dem Verbrauch nicht sperren, sonst wartet der Anspruch auf einen
-Commit, der erst nach seiner Rückkehr kommt. Im Executor liegt `mark()` nach
-der Ausführung — diese Reihenfolge ist Voraussetzung, keine Nebensächlichkeit.
+Zwei Nebenwirkungen, beide erwünscht:
+
+* **Die Sperrbedingung ist weg.** Die Request-Transaktion fasst
+  `tool_invocations` nicht mehr an, also kann der Anspruch nicht mehr auf eine
+  Zeilensperre warten, die erst nach seiner Rückkehr fällt. Was vorher eine
+  Reihenfolgeregel für jeden Aufrufer war, ist jetzt keine Frage mehr.
+* **Ein Neustart trifft die Zeile an.** `ON CONFLICT DO NOTHING` beim Insert
+  war vorher folgenlos — die Zeile verschwand mit der abgebrochenen
+  Transaktion. Jetzt greift es tatsächlich.
+
+**Was offen bleibt:** Der **Lauf** muss committed sein, bevor protokolliert
+wird — `tool_invocations.run_id` ist ein Fremdschlüssel auf `runs`. Das
+scheitert laut (`IntegrityError`) und nicht still, ist also keine Falle,
+sondern eine Reihenfolge. Nur: **Es gibt noch keinen `RunStore`.** Läufe
+werden nirgends persistiert; die Integrationstests legen sie per SQL an. Wer
+`POST /runs` baut, baut damit zwangsläufig auch die Persistenz des Laufs — und
+das ist die Stelle, an der der Commit hingehört, vor dem ersten Werkzeugschritt.
+
+Belegt ist der Zusammenhang in
+`test_das_protokoll_traegt_den_anspruch_ohne_zutun_des_tests`: Es protokolliert
+über den Store und löst den Grant daran ein, ohne die Zeile selbst zu setzen.
+Ohne den Commit im Store fällt genau dieser Test mit `GrantAlreadyUsed` — dem
+Fehlerbild, das sonst der erste verdrahtete Endpunkt gezeigt hätte.
 
 ### 2. Web-UI, Grundfassung
 
@@ -450,6 +466,8 @@ klären, indem der Fall ausgeführt wurde.
 | **Naive Ersetzungsskripte auf Testdateien** | Ein Regex über verschachtelte Klammern hat eine 900-Zeilen-Datei zerlegt. Zeilenweise arbeiten oder `git checkout` und neu ansetzen. |
 | **Ein Store, der die Verbindung des Aufrufers nimmt** | Das ist der Normalfall und für Lesen und Protokollieren richtig — für einen Einmaligkeitsanspruch nicht: Er erbt damit die Rücknehmbarkeit einer fremden Transaktion. Wo ein Anspruch *vor* einer Wirkung nach außen gelten muss, gehört ihm eine eigene Transaktion. Die Signatur soll das erzwingen (`AsyncEngine` statt `AsyncConnection`), sonst wird der unsichere Weg beim nächsten Verdrahten wieder gewählt. |
 | **Nebenläufigkeitstests belegen keine Dauerhaftigkeit** | Zehn parallele Verbindungen, eine gewinnt — und trotzdem war der Verbrauch flüchtig. Jeder dieser Tests verließ seinen `begin()`-Block regulär und committete damit. Wer Crash-Semantik zusagt, muss den ungeordneten Ausgang prüfen: `rollback()` nach dem Seiteneffekt, dann aus einer neuen Verbindung nachsehen. |
+| **Rollback-Isolation im Test verdeckt Transaktionsgrenzen** | Die `conn`-Fixture hält alles in einer Transaktion, die nie committet. Bequem, schnell, sauber — und blind für jeden Ablauf, der über Transaktionsgrenzen geht. Sie war der Grund, warum die E2E-Suite den Befund nicht sehen konnte. Wo eine Komponente aus gutem Grund selbst committet, muss der Test committen und danach aufräumen (`aufgeraeumte_nutzer`). |
+| **Aufräum-Fixture verklemmt gegen die offene Testtransaktion** | Das `DELETE` der Aufräum-Fixture wartete auf Zeilensperren der `conn`-Transaktion, die erst später zurückrollte: Die Suite blieb stehen, **ohne Fehlermeldung** — der unangenehmste Ausgang. Fixtures werden in umgekehrter Aufbaureihenfolge abgebaut; `conn` fordert deshalb `aufgeraeumte_nutzer` an, obwohl es sie nicht benutzt. Damit rollt es zuerst zurück. Diagnose lief über `pg_stat_activity` (`wait_event_type = 'Lock'`) — bei einer hängenden Suite die erste Adresse. |
 
 ---
 

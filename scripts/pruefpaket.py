@@ -241,6 +241,8 @@ sich am Code widerlegen lässt. Wo ich selbst Zweifel habe, steht es dabei.
 | B29 | Der persistente Verbrauch ist **committed, bevor der Handler beginnt** — er liegt in einer eigenen Transaktion und nicht in der des Aufrufers. Ein Absturz nach dem Seiteneffekt und vor dem Commit des Requests gibt den Grant nicht frei. | `db/grant_store.py:consume` | 05 |
 | B30 | Die Signatur erzwingt das: `PostgresGrantConsumer` nimmt eine `AsyncEngine`. Eine Request-`AsyncConnection` lässt sich nicht mehr übergeben — der Weg, der in den vierten Replay-Pfad führte, ist keine Frage der Sorgfalt mehr. | `db/grant_store.py:__init__` | 05 |
 | B31 | Sieht der Verbrauch die Invokationszeile nicht — weil sie noch in einer offenen fremden Transaktion steht —, wird abgewiesen und nicht durchgewunken. | `db/grant_store.py`, `tests/integration/test_grant_consumption.py` | 05 |
+| B32 | Das Werkzeugprotokoll committet jeden Eintrag für sich und übersteht damit den Rollback des Aufrufers. Es liegt nicht in der Transaktion dessen, worüber es Auskunft gibt. | `db/invocation_store.py` | 05 |
+| B33 | Protokoll und Anspruch passen ohne Zutun des Tests zusammen: `record()` schreibt die Zeile, `consume()` löst den Anspruch daran ein, beide in eigenen Transaktionen. | `tests/integration/test_grant_consumption.py` | 05 |
 
 ### Was seit dem letzten Paket geschah
 
@@ -391,11 +393,26 @@ gehört — und das prüft kein Nebenläufigkeitstest. Zur Frage „wo entsteht 
 Wirkung?" gehört deshalb: **„und wem gehört die Transaktion, in der der
 Anspruch steht?"**
 
-Der Prüfauftrag dieser Runde: Die Behebung öffnet eine Kehrseite. Ein
-Anspruch in eigener Transaktion sieht nichts, was der Aufrufer noch nicht
-committed hat. Belegt ist, dass dieser Fall **schließt** (B31) — zu prüfen
-ist, ob es Pfade gibt, auf denen er statt der Ausführung die Zusicherung
-kostet.
+**Die Kehrseite ist inzwischen mitbehoben.** Ein Anspruch in eigener
+Transaktion sieht nichts, was der Aufrufer noch nicht committed hat — und das
+Werkzeugprotokoll lag genau dort. Es committet jetzt ebenfalls für sich
+(B32), was die Zusage seines eigenen Modulkopfs erst einlöst: Ein
+Protokolleintrag, der mit der Transaktion des Aufrufers zurückrollt, fehlt
+genau dann, wenn man ihn liest. `test_das_protokoll_traegt_den_anspruch_ohne_zutun_des_tests`
+prüft beide Teile zusammen (B33).
+
+Zwei Nebenwirkungen, beide erwünscht: Die Request-Transaktion fasst
+`tool_invocations` nicht mehr an, womit die Verklemmungsgefahr zwischen
+Anspruch und Request entfällt. Und `ON CONFLICT DO NOTHING` beim Insert greift
+erstmals wirklich — vorher verschwand die Zeile mit der abgebrochenen
+Transaktion, sodass eine Wiederaufnahme sie nie antraf.
+
+Der Prüfauftrag dieser Runde: **Die Reihenfolge, die daraus folgt.** Der Lauf
+muss committed sein, bevor protokolliert wird (Fremdschlüssel auf `runs`), und
+protokolliert, bevor der Anspruch greift. Die ersten beiden Glieder scheitern
+laut statt still. Zu prüfen ist, ob diese Kette irgendwo anders herum
+gedreht werden kann — und ob ein Pfad existiert, auf dem sie statt der
+Ausführung die Zusicherung kostet.
 
 ### Neu seit der zweiten Runde: der Sprachmodell-Block (Portion 08)
 
