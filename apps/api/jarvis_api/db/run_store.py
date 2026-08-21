@@ -145,7 +145,17 @@ _UPDATE = text(
            classification = CAST(:classification AS jsonb),
            routing = CAST(:routing AS jsonb),
            plan = CAST(:plan AS jsonb),
-           state = CAST(:state AS jsonb),
+           state = CASE
+               WHEN CAST(:claim_id AS text) IS NULL
+               -- Wer sich auf keinen Anspruch beruft, darf ihn auch nicht
+               -- ändern: Die beiden Anspruchsfelder werden aus der Zeile
+               -- übernommen statt aus dem Arbeitsspeicher des Schreibers.
+               THEN CAST(:state AS jsonb) || jsonb_build_object(
+                        'current_step', state -> 'current_step',
+                        'claim_id', state -> 'claim_id'
+                    )
+               ELSE CAST(:state AS jsonb)
+           END,
            taint_level = :taint_level,
            data_class = :data_class,
            budget = CAST(:budget AS jsonb),
@@ -176,6 +186,17 @@ Warum das nötig ist, obwohl der Status schon verglichen wird: Ein abgelaufener
 und ein neuer Arbeiter sehen beide ``executing``. Ein Vergleich, der für beide
 gilt, unterscheidet sie nicht — und der Langsamere überschriebe das Ergebnis
 des Schnelleren.
+
+**Und der ``CASE`` um ``state`` herum ist die zweite Hälfte davon.** Die
+``WHERE``-Bedingung schützt nur den, der sich auf einen Anspruch *beruft*; wer
+ihn gar nicht erwähnt, ging daran vorbei — und schrieb ihn mit dem ganzen
+``state``-Dokument weg. Gemessen: Nach einem anspruchslosen ``save()`` war der
+Schritt wieder frei, obwohl sein Inhaber noch arbeitete. Damit stand derselbe
+doppelte Seiteneffekt wieder offen, nur über eine andere Tür.
+
+Ein Anspruch, der in einem Dokument liegt, das andere im Ganzen schreiben, ist
+kein Anspruch. Sauberer wären eigene Spalten — das bräuchte eine Migration und
+steht als Nachtrag im Dossier.
 
 Trefferzahl null heißt: Die Zeile steht woanders — oder es gibt sie nicht.
 Beides muss unterschieden werden, deshalb folgt im selben Transaktionsrahmen

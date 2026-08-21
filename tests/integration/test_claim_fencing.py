@@ -172,3 +172,82 @@ class TestNurDerInhaberSchreibt:
         geladen = await speicher.load(lauf.id)
         assert geladen is not None
         await speicher.save(geladen, erwarteter_status=RunStatus.EXECUTING)
+
+
+class TestEinFremderSchreiberLoeschtDenAnspruchNicht:
+    """**Selbst gefunden, beim Abwägen der nächsten Reihenfolge.**
+
+    Der Anspruch lag in ``RunState`` — und ``save()`` schreibt das **ganze**
+    ``state``-Dokument aus dem Arbeitsspeicher. Ein Aufrufer, der den Lauf vor
+    dem Anspruch geladen hat und ohne Anspruch speichert, überschrieb ihn
+    damit. Gemessen: nach einem anspruchslosen ``save()`` war Schritt 1 wieder
+    frei, obwohl der Inhaber noch arbeitete.
+
+    Das ist derselbe Race wie zuvor, nur über eine andere Tür:
+
+        A: /advance beansprucht Schritt 1, Modellaufruf läuft Sekunden
+        B: /steps führt irgendein Werkzeug aus und speichert → Anspruch weg
+        C: /advance beansprucht Schritt 1 erneut → führt aus
+        A: kommt zurück → führt ebenfalls aus
+        ⇒ zwei Wirkungen aus einem geplanten Schritt
+
+    **Die Lehre ist allgemeiner als der Fehler.** Ein Anspruch, der in einem
+    Dokument liegt, das andere im Ganzen schreiben, ist kein Anspruch. Die
+    Fencing-Bedingung im ``WHERE`` schützte nur den, der sich auf ihn *berief* —
+    wer ihn gar nicht erwähnte, ging daran vorbei.
+    """
+
+    @pytest.mark.invariant("plan-step-claim-is-fenced")
+    async def test_ein_save_ohne_anspruch_laesst_den_fremden_stehen(
+        self, engine: AsyncEngine
+    ) -> None:
+        speicher, lauf = await _lauf(engine)
+        anspruch = await speicher.claim_step(lauf.id, 1, erwarteter_status=RunStatus.EXECUTING)
+        assert anspruch is not None
+
+        # Der anspruchslose Pfad (``POST /runs/{id}/steps``) speichert einen
+        # Lauf, den er **vor** dem Anspruch geladen hat.
+        await speicher.save(lauf, erwarteter_status=RunStatus.EXECUTING)
+
+        geladen = await speicher.load(lauf.id)
+        assert geladen is not None
+        assert geladen.state.current_step == 1, (
+            "Ein Schreiber ohne Anspruch hat den fremden gelöscht — der Race von "
+            "vorhin ist damit über eine andere Tür wieder offen."
+        )
+        assert geladen.state.claim_id == anspruch
+
+    @pytest.mark.invariant("plan-step-claim-is-fenced")
+    async def test_der_schritt_bleibt_danach_belegt(self, engine: AsyncEngine) -> None:
+        """Die Wirkung, nicht nur das Feld: Ein zweiter Anwärter darf nicht
+        zum Zuge kommen."""
+        speicher, lauf = await _lauf(engine)
+        assert await speicher.claim_step(lauf.id, 1, erwarteter_status=RunStatus.EXECUTING)
+        await speicher.save(lauf, erwarteter_status=RunStatus.EXECUTING)
+        assert await speicher.claim_step(lauf.id, 1, erwarteter_status=RunStatus.EXECUTING) is None
+
+    async def test_der_inhaber_gibt_beim_speichern_weiterhin_frei(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Die Gegenprobe, und sie ist die wichtigere Hälfte.
+
+        Würde der Anspruch **immer** erhalten, gäbe ihn der Erfolgsweg nicht
+        mehr frei — und jeder Lauf bliebe nach seinem ersten Schritt stehen.
+        Wer sich ausweist, darf ihn ändern.
+        """
+        speicher, lauf = await _lauf(engine)
+        anspruch = await speicher.claim_step(lauf.id, 1, erwarteter_status=RunStatus.EXECUTING)
+        assert anspruch is not None
+
+        geladen = await speicher.load(lauf.id)
+        assert geladen is not None
+        freigegeben = geladen.model_copy(
+            update={
+                "state": geladen.state.model_copy(update={"current_step": None, "claim_id": None})
+            }
+        )
+        await speicher.save(freigegeben, erwarteter_status=RunStatus.EXECUTING, claim_id=anspruch)
+
+        danach = await speicher.load(lauf.id)
+        assert danach is not None and danach.state.current_step is None
+        assert await speicher.claim_step(lauf.id, 1, erwarteter_status=RunStatus.EXECUTING)
