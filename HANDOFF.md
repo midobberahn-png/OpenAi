@@ -1,8 +1,15 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> Stand: 20.08.2026, Branch `worktree-grant-crash-durability`. Dieses Dokument ist der Einstieg für
-> eine frische Claude-Code-Sitzung. Es ersetzt kein Architekturdokument,
-> sondern sagt, wo das Projekt steht und was als Nächstes zu tun ist.
+> **Stand: 21.08.2026, Commit `a6ba938` auf `main`.** Dieses Dokument ist der
+> Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
+> Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
+> zu tun ist.
+>
+> **Erstes, was zu tun ist:** `git log --oneline -1` und mit der Zeile oben
+> vergleichen. Zwei externe Prüfberichte bewerteten einen Stand, der zum
+> Zeitpunkt des Berichts mehrere Blöcke alt war — beide Male, weil `main`
+> hinterherhinkte. Wer hier weiterarbeitet, pusht nach `main`, nicht nur auf
+> einen Themenbranch.
 
 ---
 
@@ -92,6 +99,7 @@ durch mehr Tests derselben Art gefunden worden.
 ```bash
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 cd ~/jarvis
+git pull                          # der lokale Checkout hinkt oft hinterher
 
 colima start                      # Container-Runtime (Docker Desktop ist NICHT installiert)
 docker compose up -d              # Postgres 16 + pgvector, Redis 7
@@ -100,6 +108,13 @@ uv sync --all-packages --python 3.12
 export DATABASE_URL="postgresql+asyncpg://jarvis:jarvis_dev@localhost:5432/jarvis"
 (cd apps/api && uv run alembic upgrade head)
 uv run python scripts/seed.py     # 34 Scopes
+```
+
+Für ``files.read`` braucht es zusätzlich eine Ordnerfreigabe — ohne sie ist
+nichts lesbar, und das ist der richtige Vorgabewert:
+
+```bash
+export FILES_ALLOWED_ROOTS="$HOME/jarvis-testordner"
 ```
 
 **Wichtig:**
