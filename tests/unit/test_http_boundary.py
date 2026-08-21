@@ -420,3 +420,61 @@ def test_keine_route_am_dekorator_vorbei(path: Path) -> None:
         f"Route ohne Dekorator registriert: {treffer}. Für den Strukturtest ist sie "
         "unsichtbar — die Sitzungsprüfung muss dann anderswo nachgewiesen werden."
     )
+
+
+@pytest.mark.invariant("plan-step-claimed-before-effect")
+def test_die_route_orchestriert_den_planschritt_nicht_selbst() -> None:
+    """Der Ablauf eines Planschrittes gehört in den Kern, nicht in die Route.
+
+    **Der Test hat einen Anlass, und der ist kein Stilhinweis.** An der Grenze
+    zwischen HTTP-Schicht und Ablauf sind zwei Sicherheitslücken kurz
+    nacheinander entstanden, beide an derselben Reihenfolge:
+
+    * Der Anspruch auf den Schritt stand hinter der Wirkung statt davor.
+    * Nachdem er davor stand, gab ein ``except`` ihn nach der Wirkung frei.
+
+    Beide Male, weil *Anspruch → Wirkung → Festschreiben* über eine
+    Routenfunktion verteilt war und sich nicht an einer Stelle überblicken
+    ließ. Seit ``RunAdvancer`` steht die Reihenfolge an einer Stelle — und
+    dieser Test hält fest, dass sie dort bleibt.
+
+    Geprüft wird am Quelltext und nicht am Verhalten: Verhaltenstests zeigen,
+    dass die *heutigen* Pfade sauber sind; ein AST-Test schlägt auch dann fehl,
+    wenn in einem Jahr jemand „nur schnell" wieder ein ``execute_tool`` in die
+    Route schreibt.
+    """
+    baum = ast.parse((ROUTES / "runs.py").read_text(encoding="utf-8"))
+
+    # Der **Planschritt** ist gemeint, nicht jede Route der Datei.
+    #
+    # ``POST /runs/{id}/steps`` ruft weiterhin selbst den Executor: Dort nennt
+    # der Aufrufer das Werkzeug, es gibt keinen Plan, keinen Anspruch und keine
+    # Phasen — der Ablauf ist ein Aufruf und ein Speichern. Ihn mitzuverbieten
+    # hieße, eine Grenze zu ziehen, die es nicht gibt.
+    #
+    # ``_planschritte`` liest ``ready_steps`` für die Anzeige. Lesen ist keine
+    # Orchestrierung.
+    (funktion,) = [
+        k for k in ast.walk(baum) if isinstance(k, ast.AsyncFunctionDef) and k.name == "advance_run"
+    ]
+
+    aufrufe = {
+        k.func.attr
+        for k in ast.walk(funktion)
+        if isinstance(k, ast.Call) and isinstance(k.func, ast.Attribute)
+    }
+    verboten = {
+        "execute_tool",  # die Wirkung selbst
+        "claim_step",  # der Anspruch …
+        "release_step",  # … und seine Freigabe: die Stelle beider Befunde
+        "for_step",  # der Modellaufruf
+        "finish",  # der Abschluss des Laufs
+        "ready_steps",  # die Auswahl des fälligen Schrittes
+        "save",  # das Festschreiben
+    }
+    gefunden = aufrufe & verboten
+    assert not gefunden, (
+        f"advance_run orchestriert wieder selbst: {sorted(gefunden)}. Der Ablauf "
+        "gehört in jarvis_core.orchestrator.advance — dort ist die Reihenfolge "
+        "Anspruch → Wirkung → Festschreiben an einer Stelle sichtbar."
+    )

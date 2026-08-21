@@ -20,7 +20,21 @@ CONTRACTS = REPO / "packages" / "contracts" / "jarvis_contracts"
 CORE = REPO / "packages" / "core" / "jarvis_core"
 
 FORBIDDEN_IN_CONTRACTS = {"jarvis_core", "jarvis_api", "jarvis_providers", "jarvis_integrations"}
-FORBIDDEN_IN_CORE = {"jarvis_api", "jarvis_providers", "jarvis_integrations"}
+FORBIDDEN_IN_CORE = {
+    "jarvis_api",
+    "jarvis_providers",
+    "jarvis_integrations",
+    # Kein Webframework im Kern.
+    #
+    # Ergänzt, als die Ablaufsteuerung eines Planschrittes aus der Routendatei
+    # in den Kern zog. Der bequeme Weg wäre gewesen, die ``HTTPException``
+    # mitzunehmen — und damit die Entscheidung „welcher Statuscode?" in eine
+    # Schicht zu legen, die von HTTP nichts wissen soll. Ein Kern, der 409
+    # kennt, ist ein Kern, der nur noch über HTTP benutzbar ist; ein Worker,
+    # der Läufe fortsetzt, spricht kein HTTP.
+    "fastapi",
+    "starlette",
+}
 
 
 def _imported_roots(path: Path) -> set[str]:
