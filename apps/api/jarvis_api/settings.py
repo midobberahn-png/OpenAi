@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     session_cookie_name: str = Field(default="jarvis_session", alias="SESSION_COOKIE_NAME")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
+    ollama_url: str = Field(default="http://localhost:11434", alias="OLLAMA_URL")
+    """Wo Ollama läuft.
+
+    Vorgabe ist der lokale Dienst, und das ist die einzige Adresse, die zur
+    Zusage passt: ``models.py`` führt das Modell mit ``is_local=True``, und
+    daran macht das Model Gateway fest, dass P3 das Gerät nicht verlässt. Wer
+    hier einen fremden Rechner einträgt, hebelt diese Zusage aus, ohne dass
+    eine Prüfung anschlägt — der Katalog beschreibt das Deployment, er misst
+    es nicht.
+    """
+
     ollama_model: str = Field(default="llama3.1:8b", alias="OLLAMA_MODEL")
     """Das lokale Modell. Einziger Eintrag des Katalogs (``models.py``)."""
 

@@ -37,7 +37,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from jarvis_api.db.run_store import PostgresRunStore
-from jarvis_api.deps import Approvals, CurrentSession, Invocations, Policy, Runs, Tools
+from jarvis_api.deps import (
+    Approvals,
+    CurrentSession,
+    Invocations,
+    ModelArguments,
+    Policy,
+    Runs,
+    Tools,
+)
 from jarvis_api.models import model_catalog
 from jarvis_api.settings import Settings, get_settings
 from jarvis_contracts import (
@@ -47,8 +55,10 @@ from jarvis_contracts import (
     RunStatus,
     RunTrigger,
     Session,
+    TaintLevel,
 )
 from jarvis_core.orchestrator import (
+    ArgumentsUnavailable,
     BudgetTracker,
     NoEligibleModel,
     ToolExecutor,
@@ -478,19 +488,32 @@ async def execute_step(
 
 
 class AdvanceRequest(BaseModel):
-    """Argumente für den **nächsten geplanten** Schritt.
+    """Argumente für den **nächsten geplanten** Schritt — oder keine.
 
     Kein Werkzeugname — und das ist der ganze Unterschied zu
     ``POST /runs/{id}/steps``. Welches Werkzeug an der Reihe ist, bestimmt der
-    Plan; der Aufrufer liefert nur, womit es aufgerufen wird.
+    Plan; der Aufrufer liefert höchstens, womit es aufgerufen wird.
 
-    Dass die Argumente von außen kommen, ist keine Designentscheidung, sondern
-    der heutige Stand: Ein ``PlanStep`` führt Werkzeug und Reihenfolge, aber
-    keine Argumente — die stammen im fertigen System vom Modell. Solange die
-    Modellschleife nicht angeschlossen ist, liefert sie der Aufrufer.
+    **Zwei Modi, und der Unterschied ist genau ein Feld.**
+
+    ``arguments`` gesetzt (auch leer: ``{}``)
+        Der Aufrufer formuliert. Der Weg, den es bisher allein gab.
+
+    ``arguments`` weggelassen (``null``)
+        Ein Modell formuliert. Es bekommt Ziel, Schrittbeschreibung, den
+        bisherigen Verlauf und **ein** Werkzeugschema — das des geplanten
+        Schrittes. Was danach geschieht, ist in beiden Modi dasselbe:
+        Schemaprüfung, Policy, Taint-Gate, gegebenenfalls Bestätigung, Grant,
+        Verbrauch.
+
+    Die Unterscheidung liegt bewusst zwischen „gesetzt" und „nicht gesetzt"
+    und nicht in einem Schalter ``use_model``. Ein Schalter neben einem
+    Argumentfeld ließe beides gleichzeitig zu, und dann gäbe es eine Frage zu
+    beantworten, die niemand stellen sollte: Was gilt, wenn der Aufrufer
+    Argumente schickt *und* das Modell welche liefert?
     """
 
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: dict[str, Any] | None = None
 
 
 @router.post("/{run_id}/advance", response_model=StepView)
@@ -503,6 +526,7 @@ async def advance_run(
     policy: Policy,
     approvals: Approvals,
     invocations: Invocations,
+    modell: ModelArguments,
 ) -> StepView:
     """Führt den nächsten fälligen Schritt des Plans aus.
 
@@ -513,6 +537,26 @@ async def advance_run(
 
     Beide Wege enden bei derselben Policy-Entscheidung. Der Plan ersetzt keine
     Prüfung; er verengt nur, was überhaupt zur Prüfung kommt.
+
+    **Die Argumente kommen aus einer von zwei Quellen** — aus dem Request oder
+    aus einem Modell (``arguments`` weggelassen). Danach ist der Weg identisch,
+    und das ist die tragende Eigenschaft: Ein Werkzeugvorschlag eines Modells
+    trägt keine Berechtigung mit sich. Er geht durch dieselbe Schemaprüfung,
+    dieselbe Policy Engine, dasselbe Taint-Gate und denselben Grant-Verbrauch
+    wie eine Absicht, die der Nutzer selbst getippt hat.
+
+    **Was sich mit dem Modell ändert, ist der Rang des Payload-Hashes.**
+    Solange ein Mensch die Argumente tippte, war er eine Formalie: Angezeigt
+    wurde, was derselbe Mensch kurz vorher geschrieben hatte. Jetzt hat sie ein
+    Modell formuliert, das eine kontaminierte Datei gelesen haben kann — und
+    der Hash ist die Stelle, an der Bestätigtes und Ausgeführtes
+    übereinstimmen.
+
+    **Und die Kontamination wird vor dem Schritt fortgeschrieben.** Eine
+    Modellantwort erbt den Taint ihres Kontextes. Käme sie erst nach der
+    Ausführung in den Lauf, träfe das Werkzeug einen Lauf an, der sauberer
+    aussieht, als er ist — und ein Termin mit Teilnehmern liefe durch, den das
+    Taint-Gate hätte sperren müssen.
 
     **Warum ein Schritt scheitern kann, obwohl er im Plan steht:** Der Plan
     entstand aus dem Angebot eines sauberen Laufs. Kontaminiert ein früherer
@@ -537,9 +581,13 @@ async def advance_run(
             status_code=status.HTTP_409_CONFLICT,
             detail="Für diesen Lauf gibt es keinen Plan.",
         )
+    # Festgehalten, weil ``lauf`` weiter unten fortgeschrieben wird — der Plan
+    # bleibt dabei derselbe, und die Zusicherung „nicht None" soll das
+    # überleben.
+    plan = lauf.plan
 
     erledigt = {schritt.seq for schritt in lauf.state.completed_steps}
-    faellig = sorted(lauf.plan.ready_steps(erledigt), key=lambda s: s.seq)
+    faellig = sorted(plan.ready_steps(erledigt), key=lambda s: s.seq)
     if not faellig:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -552,8 +600,9 @@ async def advance_run(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Schritt {schritt_plan.seq} ist vom Typ {schritt_plan.kind!r} und braucht "
-                "ein Sprachmodell. Die Modellschleife ist noch nicht angeschlossen."
+                f"Schritt {schritt_plan.seq} ist vom Typ {schritt_plan.kind!r}. Ein Modell "
+                "füllt hier die Argumente eines Werkzeugschrittes; Schritte, die selbst "
+                "aus einem Modell bestehen, führt dieser Endpunkt nicht aus."
             ),
         )
 
@@ -575,11 +624,54 @@ async def advance_run(
     if lauf.status is RunStatus.QUEUED:
         lauf = executor.start(lauf, tracker)
 
+    # Die Argumente — aus dem Request oder aus dem Modell.
+    argumente = payload.arguments
+    if argumente is None:
+        spec = tools.require(schritt_plan.target)
+        try:
+            formuliert = await modell.for_step(
+                spec=spec,
+                step=schritt_plan,
+                run=lauf,
+                goal=plan.goal,
+                # Das geroutete Modell des Laufs, nicht eines aus dem Request.
+                # Die Wahl steht seit ``create_run`` fest und hat dort die
+                # Datenklasse berücksichtigt; sie hier neu treffen zu lassen
+                # hieße, die Obergrenze nachträglich zu verschieben.
+                model=lauf.routing.model if lauf.routing else "",
+            )
+        except ArgumentsUnavailable as ohne:
+            # Kein Serverfehler: Das Modell hat nicht geliefert oder durfte
+            # nicht gefragt werden. Beides ist eine Lage, in der der Nutzer
+            # etwas tun kann — die Argumente selbst angeben.
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ohne)) from ohne
+
+        argumente = formuliert.arguments
+
+        # Der Aufruf hat Tokens gekostet und wird gebucht. Ein Modellaufruf,
+        # den niemand zählt, macht aus der Budgetgrenze eine Empfehlung — und
+        # dies ist der erste Aufruf im System, der ohne ausdrücklichen Wunsch
+        # des Nutzers geschieht.
+        tracker.record_model_call(
+            tokens_in=formuliert.usage.tokens_in,
+            tokens_out=formuliert.usage.tokens_out,
+            cost_eur=formuliert.usage.cost_eur,
+        )
+
+        # Die Kontamination der Antwort **vor** der Ausführung fortschreiben.
+        #
+        # Ein Modell, das den Verlauf eines kontaminierten Laufs gelesen hat,
+        # liefert Argumente, die als Fremdinhalt gelten. Käme das erst danach
+        # in den Lauf, entschiede das Taint-Gate über einen Zustand von vorhin.
+        # ``with_taint`` kann nur erhöhen — die Monotonie liegt im Vertrag.
+        if formuliert.taints:
+            lauf = lauf.with_taint(TaintLevel.TAINTED)
+
     ausgefuehrt = await executor.execute_tool(
         lauf,
         tracker,
         tool_name=schritt_plan.target,
-        arguments=payload.arguments,
+        arguments=argumente,
         # Die Schrittnummer stammt aus dem Plan, nicht aus einem Zähler: Nur so
         # lässt sich später sagen, welcher *geplante* Schritt gelaufen ist.
         seq=schritt_plan.seq,

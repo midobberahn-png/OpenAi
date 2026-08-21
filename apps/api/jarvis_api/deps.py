@@ -29,12 +29,14 @@ from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.db.session import engine_for
 from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_api.db.webauthn_store import PostgresChallengeStore, PostgresCredentialStore
+from jarvis_api.providers import model_gateway
 from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
 from jarvis_api.tools import file_reader_for, tool_catalog
 from jarvis_contracts import Session
 from jarvis_core.auth import PasskeyService, SessionManager
 from jarvis_core.limits import RateLimiter, RateLimitExceeded, RateLimitPolicy
+from jarvis_core.orchestrator import PlanArgumentSource
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
 from jarvis_core.tools import ToolRegistry
 
@@ -45,6 +47,7 @@ __all__ = [
     "DbEngine",
     "Invocations",
     "Limiter",
+    "ModelArguments",
     "Passkeys",
     "Permissions",
     "Policy",
@@ -62,6 +65,7 @@ __all__ = [
     "invocation_store",
     "passkey_service",
     "permission_store",
+    "plan_argument_source",
     "policy_engine",
     "rate_limited",
     "run_store",
@@ -250,6 +254,21 @@ def tool_registry(
 
 
 Tools = Annotated[ToolRegistry, Depends(tool_registry)]
+
+
+def plan_argument_source(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> PlanArgumentSource:
+    """Die Quelle der Werkzeugargumente, wenn sie nicht der Aufrufer liefert.
+
+    Hängt am Model Gateway und an nichts sonst — insbesondere nicht an der
+    Registry und nicht am Executor. Sie liefert Datenmaterial; ausgeführt wird
+    darüber nichts. Ein AST-Test hält das im Kern fest.
+    """
+    return PlanArgumentSource(gateway=model_gateway(settings))
+
+
+ModelArguments = Annotated[PlanArgumentSource, Depends(plan_argument_source)]
 
 
 def policy_engine(tools: Tools, permissions: Permissions) -> PolicyEngine:

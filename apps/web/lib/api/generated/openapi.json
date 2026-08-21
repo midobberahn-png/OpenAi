@@ -85,12 +85,19 @@
         "type": "object"
       },
       "AdvanceRequest": {
-        "description": "Argumente für den **nächsten geplanten** Schritt.\n\nKein Werkzeugname — und das ist der ganze Unterschied zu\n``POST /runs/{id}/steps``. Welches Werkzeug an der Reihe ist, bestimmt der\nPlan; der Aufrufer liefert nur, womit es aufgerufen wird.\n\nDass die Argumente von außen kommen, ist keine Designentscheidung, sondern\nder heutige Stand: Ein ``PlanStep`` führt Werkzeug und Reihenfolge, aber\nkeine Argumente — die stammen im fertigen System vom Modell. Solange die\nModellschleife nicht angeschlossen ist, liefert sie der Aufrufer.",
+        "description": "Argumente für den **nächsten geplanten** Schritt — oder keine.\n\nKein Werkzeugname — und das ist der ganze Unterschied zu\n``POST /runs/{id}/steps``. Welches Werkzeug an der Reihe ist, bestimmt der\nPlan; der Aufrufer liefert höchstens, womit es aufgerufen wird.\n\n**Zwei Modi, und der Unterschied ist genau ein Feld.**\n\n``arguments`` gesetzt (auch leer: ``{}``)\n    Der Aufrufer formuliert. Der Weg, den es bisher allein gab.\n\n``arguments`` weggelassen (``null``)\n    Ein Modell formuliert. Es bekommt Ziel, Schrittbeschreibung, den\n    bisherigen Verlauf und **ein** Werkzeugschema — das des geplanten\n    Schrittes. Was danach geschieht, ist in beiden Modi dasselbe:\n    Schemaprüfung, Policy, Taint-Gate, gegebenenfalls Bestätigung, Grant,\n    Verbrauch.\n\nDie Unterscheidung liegt bewusst zwischen „gesetzt\" und „nicht gesetzt\"\nund nicht in einem Schalter ``use_model``. Ein Schalter neben einem\nArgumentfeld ließe beides gleichzeitig zu, und dann gäbe es eine Frage zu\nbeantworten, die niemand stellen sollte: Was gilt, wenn der Aufrufer\nArgumente schickt *und* das Modell welche liefert?",
         "properties": {
           "arguments": {
-            "additionalProperties": true,
-            "title": "Arguments",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arguments"
           }
         },
         "title": "AdvanceRequest",
@@ -1200,7 +1207,7 @@
     },
     "/runs/{run_id}/advance": {
       "post": {
-        "description": "Führt den nächsten fälligen Schritt des Plans aus.\n\n**Der Plan bindet.** Bei ``POST /runs/{id}/steps`` nennt der Aufrufer das\nWerkzeug; hier nennt es der Plan. Das ist die engere Tür: Wer diesen\nEndpunkt benutzt, kann keinen Schritt überspringen und keinen einschieben,\nder nicht angekündigt war — und der Nutzer hat den Plan vorher gesehen.\n\nBeide Wege enden bei derselben Policy-Entscheidung. Der Plan ersetzt keine\nPrüfung; er verengt nur, was überhaupt zur Prüfung kommt.\n\n**Warum ein Schritt scheitern kann, obwohl er im Plan steht:** Der Plan\nentstand aus dem Angebot eines sauberen Laufs. Kontaminiert ein früherer\nSchritt den Lauf, fällt ein später geplantes sendendes Werkzeug aus dem\nAngebot. Dieser Endpunkt weist das dann mit 409 ab und nennt den Grund —\n``GET /runs/{id}`` zeigt denselben Schritt als ``blocked``.",
+        "description": "Führt den nächsten fälligen Schritt des Plans aus.\n\n**Der Plan bindet.** Bei ``POST /runs/{id}/steps`` nennt der Aufrufer das\nWerkzeug; hier nennt es der Plan. Das ist die engere Tür: Wer diesen\nEndpunkt benutzt, kann keinen Schritt überspringen und keinen einschieben,\nder nicht angekündigt war — und der Nutzer hat den Plan vorher gesehen.\n\nBeide Wege enden bei derselben Policy-Entscheidung. Der Plan ersetzt keine\nPrüfung; er verengt nur, was überhaupt zur Prüfung kommt.\n\n**Die Argumente kommen aus einer von zwei Quellen** — aus dem Request oder\naus einem Modell (``arguments`` weggelassen). Danach ist der Weg identisch,\nund das ist die tragende Eigenschaft: Ein Werkzeugvorschlag eines Modells\nträgt keine Berechtigung mit sich. Er geht durch dieselbe Schemaprüfung,\ndieselbe Policy Engine, dasselbe Taint-Gate und denselben Grant-Verbrauch\nwie eine Absicht, die der Nutzer selbst getippt hat.\n\n**Was sich mit dem Modell ändert, ist der Rang des Payload-Hashes.**\nSolange ein Mensch die Argumente tippte, war er eine Formalie: Angezeigt\nwurde, was derselbe Mensch kurz vorher geschrieben hatte. Jetzt hat sie ein\nModell formuliert, das eine kontaminierte Datei gelesen haben kann — und\nder Hash ist die Stelle, an der Bestätigtes und Ausgeführtes\nübereinstimmen.\n\n**Und die Kontamination wird vor dem Schritt fortgeschrieben.** Eine\nModellantwort erbt den Taint ihres Kontextes. Käme sie erst nach der\nAusführung in den Lauf, träfe das Werkzeug einen Lauf an, der sauberer\naussieht, als er ist — und ein Termin mit Teilnehmern liefe durch, den das\nTaint-Gate hätte sperren müssen.\n\n**Warum ein Schritt scheitern kann, obwohl er im Plan steht:** Der Plan\nentstand aus dem Angebot eines sauberen Laufs. Kontaminiert ein früherer\nSchritt den Lauf, fällt ein später geplantes sendendes Werkzeug aus dem\nAngebot. Dieser Endpunkt weist das dann mit 409 ab und nennt den Grund —\n``GET /runs/{id}`` zeigt denselben Schritt als ``blocked``.",
         "operationId": "advance_run_runs__run_id__advance_post",
         "parameters": [
           {

@@ -230,8 +230,11 @@ class OllamaProvider:
     def _vorschlaege(nachricht: dict[str, Any]) -> list[ProposedToolCall]:
         """Übersetzt Werkzeugaufrufe — als Vorschläge.
 
-        Ollama vergibt keine Aufruf-IDs; sie werden hier durchnummeriert, weil
-        das Protokoll eine Zuordnung braucht. Die Argumente werden
+        Zur Aufruf-ID: Neuere Ollama-Fassungen vergeben eine (beobachtet unter
+        0.32: ``call_m16i0po5``), ältere nicht. Deshalb wird die vorhandene
+        übernommen und nur ersatzweise durchnummeriert — das Protokoll braucht
+        eine Zuordnung, und welche Seite sie stellt, ist gleichgültig. Die
+        Argumente werden
         **ungeprüft** durchgereicht: Validierung gegen das Werkzeugschema und
         die Policy-Entscheidung kommen beide danach, und ein Adapter, der hier
         schon aussortiert, verdeckt genau die Fälle, die man sehen will.
