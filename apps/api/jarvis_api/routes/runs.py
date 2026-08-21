@@ -42,6 +42,7 @@ from jarvis_api.deps import (
     CurrentSession,
     Invocations,
     ModelArguments,
+    ModelResponse,
     Policy,
     Runs,
     Tools,
@@ -51,16 +52,20 @@ from jarvis_api.settings import Settings, get_settings
 from jarvis_contracts import (
     BUDGET_PRESETS,
     ApprovalChannel,
+    Plan,
+    PlanStep,
     Run,
     RunStatus,
     RunTrigger,
     Session,
+    StepOutcome,
     TaintLevel,
 )
 from jarvis_core.orchestrator import (
     ArgumentsUnavailable,
     BudgetTracker,
     NoEligibleModel,
+    ResponseUnavailable,
     ToolExecutor,
     classify,
     plan_turn,
@@ -154,9 +159,12 @@ async def _planschritte(lauf: Run, *, angebot: set[str]) -> list[PlanStepView]:
     nicht mehr geht; das andere verschweigt, dass sich die Lage geändert hat.
     Stattdessen steht je Schritt, woran er jetzt ist.
 
-    ``needs_model`` ist dabei die ehrlichste Auskunft des Systems: Schritte der
-    Art ``llm`` und ``agent`` kann heute niemand ausführen, weil die
-    Modellschleife nicht angeschlossen ist.
+    ``needs_model`` blieb übrig für den einen Schritttyp, den dieser Endpunkt
+    weiterhin nicht ausführt: ``agent``. Ein Sub-Agent wählt seine Werkzeuge
+    selbst — das ist eine andere und größere Fläche als „ein Modell füllt die
+    Argumente eines angekündigten Schrittes", und ``ModelLoop`` hat dafür noch
+    keinen Endpunkt. ``llm``-Schritte sind seit dem Antwortschritt ausführbar
+    und werden deshalb wie jeder andere fällige Schritt als ``ready`` geführt.
     """
     if lauf.plan is None:
         return []
@@ -170,8 +178,12 @@ async def _planschritte(lauf: Run, *, angebot: set[str]) -> list[PlanStepView]:
             stand = "done"
         elif schritt.seq not in bereit:
             stand = "waiting"
-        elif schritt.kind != "tool":
+        elif schritt.kind == "agent":
             stand = "needs_model"
+        elif schritt.kind == "llm":
+            # Kein Angebotsabgleich: Der Schritt bekommt kein Werkzeug zu sehen
+            # und kann deshalb an keinem fehlenden scheitern.
+            stand = "ready"
         elif schritt.target not in angebot:
             stand = "blocked"
         else:
@@ -527,6 +539,7 @@ async def advance_run(
     approvals: Approvals,
     invocations: Invocations,
     modell: ModelArguments,
+    antworten: ModelResponse,
 ) -> StepView:
     """Führt den nächsten fälligen Schritt des Plans aus.
 
@@ -595,26 +608,45 @@ async def advance_run(
         )
 
     schritt_plan = faellig[0]
-    if schritt_plan.kind != "tool":
-        # Die ehrlichste Auskunft, die dieses System derzeit gibt.
+    if schritt_plan.kind == "agent":
+        # Der einzige Schritttyp, den dieser Endpunkt nicht ausführt. ``ModelLoop``
+        # ist gebaut und hat keinen Endpunkt — ein Sub-Agent wählt seine Werkzeuge
+        # selbst, und das ist eine andere und größere Fläche als „ein Modell füllt
+        # die Argumente eines angekündigten Schrittes".
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Schritt {schritt_plan.seq} ist vom Typ {schritt_plan.kind!r}. Ein Modell "
-                "füllt hier die Argumente eines Werkzeugschrittes; Schritte, die selbst "
-                "aus einem Modell bestehen, führt dieser Endpunkt nicht aus."
+                f"Schritt {schritt_plan.seq} delegiert an den Sub-Agenten "
+                f"{schritt_plan.target!r}. Die Agentenschleife hat noch keinen Endpunkt."
             ),
         )
 
-    angebot = await policy.effective_tools(session.user_id, tools.names(), taint=lauf.taint_level)
-    if schritt_plan.target not in angebot:
+    if schritt_plan.kind != "tool" and payload.arguments is not None:
+        # Nicht stillschweigend verwerfen. Ein Aufrufer, der Argumente für einen
+        # Schritt schickt, der keine kennt, hat eine andere Vorstellung vom Plan
+        # als der Plan — und ein Feld, das ignoriert wird, ist eine
+        # Falschaussage über das, was gleich passiert.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Schritt {schritt_plan.seq} ({schritt_plan.target}) ist nicht mehr "
-                "durchführbar — der Lauf hat sich seit der Planung verändert."
+                f"Schritt {schritt_plan.seq} ist vom Typ {schritt_plan.kind!r} und nimmt "
+                'keine Argumente entgegen. Ohne „arguments" formuliert das Modell die '
+                "Antwort."
             ),
         )
+
+    if schritt_plan.kind == "tool":
+        angebot = await policy.effective_tools(
+            session.user_id, tools.names(), taint=lauf.taint_level
+        )
+        if schritt_plan.target not in angebot:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Schritt {schritt_plan.seq} ({schritt_plan.target}) ist nicht mehr "
+                    "durchführbar — der Lauf hat sich seit der Planung verändert."
+                ),
+            )
 
     status_vorher = lauf.status
     executor = ToolExecutor(
@@ -623,6 +655,18 @@ async def advance_run(
     tracker = BudgetTracker(lauf.budget, usage=lauf.usage)
     if lauf.status is RunStatus.QUEUED:
         lauf = executor.start(lauf, tracker)
+
+    if schritt_plan.kind != "tool":
+        return await _antwortschritt(
+            lauf,
+            tracker,
+            executor=executor,
+            runs=runs,
+            antworten=antworten,
+            plan=plan,
+            schritt_plan=schritt_plan,
+            status_vorher=status_vorher,
+        )
 
     # Die Argumente — aus dem Request oder aus dem Modell.
     argumente = payload.arguments
@@ -679,23 +723,147 @@ async def advance_run(
         channel=KANAL,
     )
 
-    try:
-        await runs.save(ausgefuehrt.run, erwarteter_status=status_vorher)
-    except RunStateConflict as konflikt:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Der Lauf wurde parallel verändert. Neu laden und wiederholen.",
-        ) from konflikt
+    # Abgeschlossen wird nur, wenn der Schritt auch durchlief. Ein blockierter
+    # oder wartender Schritt lässt den Plan offen — und ein Lauf, der auf eine
+    # Bestätigung wartet, darf nicht als erledigt gelten.
+    endstand = ausgefuehrt.run
+    if ausgefuehrt.executed:
+        endstand = _falls_fertig(endstand, tracker, executor=executor, plan=plan)
+
+    await _gespeichert(runs, endstand, status_vorher)
 
     ergebnis = ausgefuehrt.result
     return StepView(
         status=ausgefuehrt.status,
         reason=ausgefuehrt.reason,
-        run_status=str(ausgefuehrt.run.status),
-        taint_level=str(ausgefuehrt.run.taint_level),
+        run_status=str(endstand.status),
+        taint_level=str(endstand.taint_level),
         display=ergebnis.display if ergebnis else "",
         data=ergebnis.data if ergebnis else None,
         data_class=str(ergebnis.produced_data_class) if ergebnis else None,
         action_id=str(ausgefuehrt.pending.id) if ausgefuehrt.pending else None,
         code=ausgefuehrt.code,
     )
+
+
+async def _antwortschritt(
+    lauf: Run,
+    tracker: BudgetTracker,
+    *,
+    executor: ToolExecutor,
+    runs: PostgresRunStore,
+    antworten: ModelResponse,
+    plan: Plan,
+    schritt_plan: PlanStep,
+    status_vorher: RunStatus,
+) -> StepView:
+    """Der abschließende ``llm``-Schritt: Ein Modell formuliert die Antwort.
+
+    **Was diesen Schritt vom Werkzeugschritt unterscheidet, ist eine
+    Abwesenheit.** Es gibt keine Policy-Entscheidung, keine Bestätigung, keinen
+    Grant und keinen Verbrauch — weil es nichts auszuführen gibt. Dem Modell
+    wird kein Werkzeug angeboten, und es kann deshalb nichts vorschlagen.
+
+    Das ist keine ausgelassene Prüfung, sondern eine, die kein Objekt hätte:
+    Die Policy Engine entscheidet über Werkzeugaufrufe. Ein Schritt, der Text
+    erzeugt und ihn dem Eigentümer der Daten zeigt, ist keiner.
+
+    **Was bleibt, ist die Herkunft.** Stammt der Text aus einem kontaminierten
+    Lauf, kann er eine untergeschobene Anweisung an den *Menschen* enthalten.
+    Dagegen hilft das Taint-Tracking nicht — es sperrt Werkzeuge, und hier ist
+    keines beteiligt. Der Lauf wird deshalb auf ``tainted`` fortgeschrieben,
+    damit ``GET /runs/{id}`` es zeigt und eine Oberfläche den Text kennzeichnen
+    kann. Diese Lücke schließt der Kern nicht; er liefert die Auskunft, ohne
+    die niemand sie schließen kann.
+    """
+    try:
+        antwort = await antworten.for_step(
+            step=schritt_plan,
+            run=lauf,
+            goal=plan.goal,
+            # Wie beim Werkzeugschritt: das geroutete Modell des Laufs.
+            model=lauf.routing.model if lauf.routing else "",
+        )
+    except ResponseUnavailable as ohne:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ohne)) from ohne
+
+    tracker.record_model_call(
+        tokens_in=antwort.usage.tokens_in,
+        tokens_out=antwort.usage.tokens_out,
+        cost_eur=antwort.usage.cost_eur,
+    )
+    tracker.record_step()
+
+    if antwort.taints:
+        lauf = lauf.with_taint(TaintLevel.TAINTED)
+
+    fertig = lauf.model_copy(
+        update={
+            "state": lauf.state.with_step_done(
+                StepOutcome(
+                    seq=schritt_plan.seq,
+                    ok=True,
+                    # Die Zusammenfassung ist gekappt (``StepOutcome.summary``
+                    # fasst 2000 Zeichen); der vollständige Text steht in
+                    # ``partial_output``. Zwei Felder, weil das eine in den
+                    # Kontext des nächsten Schrittes geht und das andere an den
+                    # Nutzer.
+                    summary=antwort.text[:2000],
+                    finished_at=utc_now(),
+                )
+            ).model_copy(update={"partial_output": antwort.text}),
+            "usage": tracker.usage,
+        }
+    )
+    fertig = _falls_fertig(fertig, tracker, executor=executor, plan=plan)
+    await _gespeichert(runs, fertig, status_vorher)
+
+    return StepView(
+        status="executed",
+        reason="Antwort formuliert.",
+        run_status=str(fertig.status),
+        taint_level=str(fertig.taint_level),
+        display=antwort.text,
+        data=None,
+        data_class=None,
+        action_id=None,
+        code=None,
+    )
+
+
+async def _gespeichert(runs: PostgresRunStore, lauf: Run, erwartet: RunStatus) -> None:
+    """Fortschreiben gegen den Status, der beim Laden galt.
+
+    Läuft parallel ein zweiter Schritt, gewinnt genau einer; der andere bekommt
+    409 statt eines überschriebenen Laufs.
+    """
+    try:
+        await runs.save(lauf, erwarteter_status=erwartet)
+    except RunStateConflict as konflikt:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Der Lauf wurde parallel verändert. Neu laden und wiederholen.",
+        ) from konflikt
+
+
+def _falls_fertig(lauf: Run, tracker: BudgetTracker, *, executor: ToolExecutor, plan: Plan) -> Run:
+    """Schließt den Lauf ab, wenn der Plan nichts mehr hergibt.
+
+    **Bis zu diesem Block hat kein Lauf je einen Endzustand erreicht.**
+    ``RunStatus.COMPLETED`` kam im gesamten Anwendungscode nicht vor; jeder Lauf
+    blieb in ``executing`` stehen. Aufgefallen ist das nicht, weil kein Plan
+    abschließbar war — sein letzter Schritt ist stets ein ``llm``-Schritt, und
+    der war nicht ausführbar.
+
+    Die Frage „ist noch etwas fällig?" wird über dieselbe Funktion beantwortet
+    wie beim Betreten des Endpunkts (``Plan.ready_steps``). Eine zweite Fassung
+    dieser Rechnung wäre die Stelle, an der ein Lauf entweder zu früh
+    abgeschlossen wird oder ewig offen bleibt.
+
+    Optionale Schritte sind dabei kein Sonderfall: Was ``ready_steps`` nicht
+    mehr nennt, ist nicht mehr fällig — ob es lief oder übersprungen wurde,
+    entscheidet dort und nicht hier.
+    """
+    if plan.ready_steps(lauf.state.completed_seqs):
+        return lauf
+    return executor.finish(lauf, tracker)

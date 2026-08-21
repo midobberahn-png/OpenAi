@@ -46,6 +46,7 @@ from jarvis_contracts import (
     ToolSpec,
 )
 from jarvis_core.orchestrator.plan_arguments import PlanArgumentSource
+from jarvis_core.orchestrator.plan_response import PlanResponseSource
 from jarvis_core.providers import ModelGateway, ModelNotPermitted
 from jarvis_core.tools import validate_arguments
 from jarvis_providers.ollama import OllamaError, OllamaProvider
@@ -344,3 +345,65 @@ class TestArgumenteVomEchtenModell:
         else:
             assert einstufung is PayloadInspectability.STRUCTURED
             assert gate is TaintGateOutcome.SANITIZABLE, gate
+
+
+class TestAntwortVomEchtenModell:
+    """Der abschließende ``llm``-Schritt gegen ein laufendes Modell.
+
+    Struktur, nicht Inhalt: Ein Sprachmodell ist keine Funktion, und eine
+    Zusicherung über den Wortlaut wäre ein Test, der irgendwann aus dem falschen
+    Grund rot wird. Geprüft wird, dass Text ankommt, dass er nicht leer ist —
+    und dass dem Modell dabei tatsächlich kein Werkzeug angeboten wurde.
+    """
+
+    @staticmethod
+    def _quelle() -> PlanResponseSource:
+        return PlanResponseSource(
+            gateway=ModelGateway({"ollama": OllamaProvider(base_url=URL)}, [LOKAL])
+        )
+
+    async def test_das_modell_formuliert_eine_antwort(self) -> None:
+        ergebnis = await self._quelle().for_step(
+            step=PlanStep(
+                seq=1,
+                description="Antwort formulieren",
+                kind="llm",
+                target="response",
+            ),
+            run=build_run(),
+            goal="Nenne mir in einem Satz, was ein Kalender ist.",
+            model=MODELL,
+        )
+        assert ergebnis.text.strip()
+        assert ergebnis.usage.tokens_out > 0
+        assert ergebnis.taints is False
+
+    @pytest.mark.security
+    async def test_ohne_werkzeuge_kommt_kein_werkzeugaufruf_zurueck(self) -> None:
+        """Die Gegenprobe zum leeren Angebot, mit echter Gegenstelle.
+
+        Dass die Anfrage keine Werkzeuge führt, prüft der Unit-Test. Hier geht
+        es um die Gegenstelle: Ollama darf aus einer Anfrage ohne ``tools``
+        keinen Werkzeugaufruf machen. Wäre es anders, liefe die Zusicherung
+        „dieser Schritt kann nichts auslösen" gegen eine Annahme statt gegen
+        eine Tatsache.
+        """
+        ergebnis = await ModelGateway({"ollama": OllamaProvider(base_url=URL)}, [LOKAL]).complete(
+            CompletionRequest(
+                model=MODELL,
+                messages=[
+                    Message(
+                        role=MessageRole.USER,
+                        content=(
+                            "Lege mir bitte einen Termin an: morgen 10 Uhr, Abstimmung. "
+                            "Nutze dafür ein Werkzeug."
+                        ),
+                    )
+                ],
+                tools=[],
+                max_tokens=256,
+            ),
+            data_class=DataClass.P2,
+        )
+        assert ergebnis.tool_calls == []
+        assert not ergebnis.wants_tools

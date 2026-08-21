@@ -36,7 +36,7 @@ from jarvis_api.tools import file_reader_for, tool_catalog
 from jarvis_contracts import Session
 from jarvis_core.auth import PasskeyService, SessionManager
 from jarvis_core.limits import RateLimiter, RateLimitExceeded, RateLimitPolicy
-from jarvis_core.orchestrator import PlanArgumentSource
+from jarvis_core.orchestrator import PlanArgumentSource, PlanResponseSource
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
 from jarvis_core.tools import ToolRegistry
 
@@ -48,6 +48,7 @@ __all__ = [
     "Invocations",
     "Limiter",
     "ModelArguments",
+    "ModelResponse",
     "Passkeys",
     "Permissions",
     "Policy",
@@ -66,6 +67,7 @@ __all__ = [
     "passkey_service",
     "permission_store",
     "plan_argument_source",
+    "plan_response_source",
     "policy_engine",
     "rate_limited",
     "run_store",
@@ -269,6 +271,22 @@ def plan_argument_source(
 
 
 ModelArguments = Annotated[PlanArgumentSource, Depends(plan_argument_source)]
+
+
+def plan_response_source(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> PlanResponseSource:
+    """Die Quelle für den abschließenden ``llm``-Schritt eines Plans.
+
+    Getrennt von ``plan_argument_source``, obwohl beide nur das Gateway
+    brauchen: Die eine bietet dem Modell ein Werkzeug an, die andere keines.
+    Eine gemeinsame Dependency verwischte genau den Unterschied, auf den es
+    ankommt.
+    """
+    return PlanResponseSource(gateway=model_gateway(settings))
+
+
+ModelResponse = Annotated[PlanResponseSource, Depends(plan_response_source)]
 
 
 def policy_engine(tools: Tools, permissions: Permissions) -> PolicyEngine:

@@ -800,3 +800,63 @@ class TestDoppelteFortsetzung:
         assert spies["calendar.create"].call_count == 1
         blockiert = [e for e in ergebnisse if e.status == "blocked"]
         assert blockiert[0].code == "already-executed"
+
+
+# ==========================================================================
+# Abschluss — bis hierher hat kein Lauf je einen Endzustand erreicht
+# ==========================================================================
+
+
+class TestAbschluss:
+    """`RunStatus.COMPLETED` kam im gesamten Anwendungscode nicht vor.
+
+    Ein Lauf ging `queued → planning → executing` und blieb dort. Die
+    Übergangstabelle führte `executing → completed` seit jeher; aufgerufen hat
+    ihn niemand. Das fiel nicht auf, weil kein Plan abschließbar war — der
+    letzte Schritt jedes Plans ist ein `llm`-Schritt, und der war nicht
+    ausführbar.
+
+    `start()` und `finish()` sind deshalb Gegenstücke: Beide gehören dem
+    Executor, weil ihm die Zustandsübergänge gehören. *Wann* abgeschlossen
+    wird, entscheidet er nicht — das hängt am Plan, und den kennt er nicht.
+    """
+
+    def test_ein_laufender_lauf_wird_abgeschlossen(self) -> None:
+        executor, _, _ = _setup(FakePermissions())
+        fertig = executor.finish(build_run(status=RunStatus.EXECUTING), _tracker())
+        assert fertig.status is RunStatus.COMPLETED
+        assert fertig.finished_at == NOW
+
+    def test_der_abschluss_geht_ueber_die_uebergangstabelle(self) -> None:
+        """Kein direkter Statuswechsel.
+
+        Ein `model_copy(update={"status": COMPLETED})` an dieser Stelle wäre
+        bequem und ließe den Automaten hinter sich — geprüft wird deshalb der
+        Fall, den die Tabelle verbietet.
+        """
+        from jarvis_core.runs.fsm import IllegalTransition
+
+        executor, _, _ = _setup(FakePermissions())
+        with pytest.raises(IllegalTransition):
+            executor.finish(build_run(status=RunStatus.AWAITING_CONFIRMATION), _tracker())
+
+    def test_ein_abgeschlossener_lauf_wird_nicht_zweimal_abgeschlossen(self) -> None:
+        """`COMPLETED` ist ein Endzustand; die Tabelle führt von dort nirgendwo
+        hin. Ohne diese Prüfung setzte ein zweiter Aufruf `finished_at` neu und
+        verschöbe damit den Zeitpunkt, den das Audit festhält."""
+        from jarvis_core.runs.fsm import IllegalTransition
+
+        executor, _, _ = _setup(FakePermissions())
+        with pytest.raises(IllegalTransition):
+            executor.finish(build_run(status=RunStatus.COMPLETED), _tracker())
+
+    def test_der_verbrauch_wird_mitgeschrieben(self) -> None:
+        """Wie bei jedem anderen Übergang: Der Zähler des Laufs ist der
+        persistierte Zustand, und der Abschluss ist die letzte Gelegenheit, ihn
+        festzuhalten."""
+        executor, _, _ = _setup(FakePermissions())
+        tracker = _tracker()
+        tracker.record_model_call(tokens_in=10, tokens_out=5)
+        fertig = executor.finish(build_run(status=RunStatus.EXECUTING), tracker)
+        assert fertig.usage.tokens_in == 10
+        assert fertig.usage.tokens_out == 5

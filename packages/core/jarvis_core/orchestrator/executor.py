@@ -356,6 +356,27 @@ class ToolExecutor:
         planning = self._advance(run, RunStatus.PLANNING, tracker)
         return self._advance(planning, RunStatus.EXECUTING, tracker)
 
+    def finish(self, run: Run, tracker: BudgetTracker) -> Run:
+        """Bringt einen Lauf von ``executing`` in den Endzustand ``completed``.
+
+        Das Gegenstück zu ``start()``, und bis zu diesem Commit hat es gefehlt:
+        ``RunStatus.COMPLETED`` kam im gesamten Anwendungscode nicht vor. Jeder
+        Lauf blieb in ``executing`` stehen. Aufgefallen ist das nicht, weil kein
+        Plan abschließbar war — sein letzter Schritt ist stets ein
+        ``llm``-Schritt, und der war nicht ausführbar.
+
+        **Wann abgeschlossen wird, entscheidet der Executor nicht.** Das hängt
+        am Plan, und den kennt er nicht; er kennt Werkzeugaufrufe. Der Aufrufer
+        stellt fest, dass nichts mehr fällig ist, und sagt es hier.
+
+        Der Weg führt über ``_advance`` und damit über die Übergangstabelle.
+        Ein direktes Setzen des Status wäre kürzer und ließe den Automaten
+        hinter sich: Ein wartender Lauf würde dann abgeschlossen, obwohl die
+        Bestätigung noch offen ist.
+        """
+        fertig = self._advance(run, RunStatus.COMPLETED, tracker)
+        return fertig.model_copy(update={"finished_at": self._clock()})
+
     # -- Innere Schritte --------------------------------------------------
     async def _request_confirmation(
         self,

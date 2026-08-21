@@ -48,12 +48,12 @@ from pydantic import BaseModel, ConfigDict
 from jarvis_contracts import (
     CompletionRequest,
     Message,
-    MessageRole,
     ModelUsage,
     PlanStep,
     Run,
     ToolSpec,
 )
+from jarvis_core.orchestrator.plan_context import PlanStepUnavailable, schritt_nachrichten
 from jarvis_core.providers.gateway import ModelGateway, ModelNotPermitted
 
 __all__ = ["ArgumentsUnavailable", "FormulatedArguments", "PlanArgumentSource"]
@@ -63,7 +63,7 @@ MAX_TOKENS = 1024
 Modell dazu ein, den Payload mit Text zu füllen, den ein Mensch prüfen muss."""
 
 
-class ArgumentsUnavailable(Exception):
+class ArgumentsUnavailable(PlanStepUnavailable):
     """Für diesen Schritt lassen sich keine Argumente gewinnen.
 
     Ausnahme und kein leeres Argumentobjekt: Ein leeres Dict sähe aus wie „das
@@ -189,22 +189,12 @@ class PlanArgumentSource:
     # -- Kontext ----------------------------------------------------------
     @staticmethod
     def _verlauf(*, spec: ToolSpec, step: PlanStep, run: Run, goal: str) -> list[Message]:
-        """Der Kontext des Modellaufrufs — mit Herkunftsmarkierung.
+        """Der Kontext des Modellaufrufs.
 
-        Drei Teile, und die Trennung ist bedeutungstragend:
-
-        * Die **Systemnachricht** beschreibt die Aufgabe. Sie stammt aus dem
-          Programm und ist vertrauenswürdig.
-        * Das **Ziel** hat der Nutzer formuliert.
-        * Der **bisherige Verlauf** besteht aus den Zusammenfassungen erledigter
-          Schritte. Sie sind aus Werkzeugergebnissen abgeleitet, und in einem
-          kontaminierten Lauf gilt für sie, was für den Lauf gilt:
-          ``is_untrusted``. Daran entscheidet das Gateway, ob die Antwort
-          kontaminiert — nicht daran, ob wir es für wahrscheinlich halten.
-
-        Die Markierung wird nicht übertragen: Der Adapter schickt Rolle und
-        Inhalt. Sie dem Modell mitzuschicken hieße, ihm die Kennzeichnung zur
-        eigenen Verwendung zu überlassen.
+        Aufgebaut wird er in ``plan_context.py``, gemeinsam mit dem
+        abschließenden ``llm``-Schritt: Beide brauchen dieselbe
+        Herkunftsmarkierung an derselben Stelle, und zwei Fassungen davon liefen
+        irgendwann auseinander. Eigen ist hier nur der Auftrag.
         """
         auftrag = (
             f"Du füllst die Argumente für genau einen Werkzeugaufruf: {spec.name}. "
@@ -212,25 +202,4 @@ class PlanArgumentSource:
             "Schema — erfinde keine Felder. Was du nicht sicher weißt, lässt du weg, "
             "sofern es nicht Pflicht ist. Zeitangaben immer mit Zeitzone."
         )
-
-        verlauf = [
-            Message(role=MessageRole.SYSTEM, content=auftrag),
-            Message(role=MessageRole.USER, content=f"Ziel des Vorgangs: {goal}"),
-            Message(role=MessageRole.USER, content=f"Dieser Schritt: {step.description}"),
-        ]
-
-        erledigt = run.state.completed_steps
-        if erledigt:
-            verlauf.append(
-                Message(
-                    role=MessageRole.USER,
-                    content="Bisher erledigt:\n"
-                    + "\n".join(f"{s.seq}. {s.summary}" for s in erledigt),
-                    # Abgeleitet aus Werkzeugergebnissen. In einem
-                    # kontaminierten Lauf ist das Fremdinhalt — und zwar
-                    # unabhängig davon, wie harmlos eine Zusammenfassung
-                    # aussieht.
-                    is_untrusted=run.taint_level.is_tainted,
-                )
-            )
-        return verlauf
+        return schritt_nachrichten(auftrag=auftrag, step=step, run=run, goal=goal)
