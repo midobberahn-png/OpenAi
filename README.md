@@ -2,17 +2,24 @@
 
 Persönliches, selbst gehostetes KI-Assistenzsystem: Sprache, Text, Vision, Gedächtnis, Werkzeuge und Agenten — mit einem Berechtigungssystem, das jede Aktion mit Außenwirkung kontrolliert.
 
-> **Status: Phase 1 in Arbeit.** Sicherheitssockel, Orchestrator, Agentenketten,
-> Anmeldung mit Passkeys, HTTP-Grenze, Sprachmodell-Anbindung (Ollama) und das
-> erste echte Werkzeug (`files.read`) stehen. Ein Lauf lässt sich über HTTP
-> anlegen und eine Bestätigung erteilen; **ausgeführt** wird über HTTP noch
-> nicht.
+> **Status: Phase 1 in Arbeit.**
 >
-> Diese Zeile ist schon einmal ein Jahr zu alt gewesen — ein externer Prüfer
-> hat das README zu Recht als Statusquelle verworfen. Der belastbare Stand
-> steht deshalb an genau einer Stelle:
+> **Diese Datei führt keinen Stand mehr.** Sie hat es zweimal versucht und war
+> zweimal veraltet — beim zweiten Mal stand hier „ausgeführt wird über HTTP
+> noch nicht", während zwei Endpunkte genau das taten. Ein externer Prüfer hat
+> beide Male den Widerspruch gefunden, das zweite Mal gegen einen Commit, der
+> „der gemessene Durchstich" hieß.
 >
-> **Neue Sitzung startet hier: [HANDOFF.md](HANDOFF.md)**
+> Der Grund ist keine Nachlässigkeit, sondern Bauart: Ein Statusabsatz in einer
+> Einstiegsdatei wird beim Bauen nicht gebraucht und deshalb nicht gelesen.
+> Was niemand liest, pflegt niemand.
+>
+> Der belastbare Stand steht an genau **einer** Stelle, und die wird bei jedem
+> Block angefasst, weil sie der Einstieg für die nächste Sitzung ist:
+>
+> **→ [HANDOFF.md](HANDOFF.md)** — Stand, Kennzahlen, Umgebung, nächster
+> Schritt, Fallstricke. Ihr Kopf nennt den Commit; `git log --oneline -1` muss
+> dazu passen.
 
 ---
 
@@ -65,15 +72,11 @@ Phasen 5–8 (≈17 Wochen) sind additiv — UI-Ausbau, Vision, Agenten, Plugins
 
 ## Nächster Schritt
 
-**Der Werkzeugschritt über HTTP.** Ein Lauf entsteht über `POST /runs`, eine
-Bestätigung wird über `POST /actions/{id}/respond` erteilt — aber ausgeführt
-wird noch nicht über die HTTP-Grenze. Damit sind die Glieder ⑤ und ⑦ der
-Angriffskette weiterhin nur im Kern geprüft
-(**[docs/18-angriffskette.md](docs/18-angriffskette.md)**).
+Steht in **[HANDOFF.md §8](HANDOFF.md)** und nur dort — siehe oben, warum.
 
-Seit `files.read` ist das nicht mehr durch fehlende Werkzeuge blockiert.
-
-Vollständiger Stand, Umgebung und Fallstricke: **[HANDOFF.md](HANDOFF.md)**
+Wer wissen will, welche Übergänge von HTTP bis zur Ausführung wodurch
+abgesichert sind und welche Flächen offen bleiben:
+**[docs/18-angriffskette.md](docs/18-angriffskette.md)**.
 
 ---
 

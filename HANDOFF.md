@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `644e9de` auf `main`.** Dieses Dokument ist der
+> **Stand: 21.08.2026, Commit `50a12be` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 48, Remote auf GitHub |
-| Tests | **1034** gesamt — 0 übersprungen |
-| **Security Invariant Coverage** | **46/47** |
+| Commits | 50, Remote auf GitHub |
+| Tests | **1040** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
+| **Security Invariant Coverage** | **47/48** |
 | mypy | `strict`, sauber über 107 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 9 Migrationen, bi-direktional geprüft |
@@ -79,6 +79,12 @@ Zwei Dinge daran sind wichtiger als die Verdrahtung selbst:
    Das ist der Unterschied zu allem davor: Bisher war dieser Ablauf an
    Attrappen belegt, und die Attrappe tat, was der Test ihr sagte. Jetzt tut
    es ein echtes Modell aus eigenem Antrieb.
+
+**Ein fünfter Bypass, aus einem Prüfbericht** (`50a12be`). Der Anspruch auf
+einen Planschritt stand *hinter* der Wirkung: Sechs parallele `advance` auf
+denselben geplanten `calendar.create` ergaben sechs Termine. Verdeckt war das
+durch einen Zufall, der lehrreicher ist als der Befund selbst — dazu
+Abschnitt 7. Behoben durch `claim_step()`.
 
 **Der Plan wird zu Ende gelaufen.** Der abschließende Schritt jedes Plans
 (`kind="llm"`) ist ausführbar; dem Modell wird dabei **kein** Werkzeug
@@ -122,8 +128,8 @@ sanierten Lauf angelegt. Über HTTP, mit echtem Kalendereintrag am Ende
 (`test_http_runs.py::TestAlltagsfall`). Das ist der Ablauf, an dem sich die
 Architektur entschieden hat — bis hierher war er nur an Attrappen belegt.
 
-**Vier gefundene Sicherheitslücken** prägen den Umgang mit diesem Projekt
-(Abschnitt 7). Drei kamen von externen Prüfern, eine beim Bauen — und
+**Fünf gefundene Sicherheitslücken** prägen den Umgang mit diesem Projekt
+(Abschnitt 7). Vier kamen von externen Prüfern, eine beim Bauen — und
 mehrere weitere Befunde fielen an, sobald Schichten zusammenliefen, die einzeln
 grün waren.
 
@@ -139,8 +145,10 @@ uv run python scripts/pruefpaket.py     # -> pruefpaket/ (nicht versioniert)
 git bundle create /tmp/jarvis.bundle --all
 ```
 
-**Beide gefundenen Bypässe stammen aus dieser Prüfung.** Keiner davon wäre
-durch mehr Tests derselben Art gefunden worden.
+**Vier der fünf Befunde stammen aus dieser Prüfung** (Abschnitt 7). Keiner
+davon wäre durch mehr Tests derselben Art gefunden worden — und der jüngste
+kam als *Verdacht*, weil dem Prüfer die Datenbank fehlte. Nachgemessen hat er
+getragen.
 
 ## 3. Umgebung aufsetzen
 
@@ -332,6 +340,7 @@ niemand zurück.
 | Werkzeugschritt | `api/routes/runs.py:execute_step` | Aufrufer nennt das Werkzeug; Policy → Gate → Registry |
 | Planschritt | `api/routes/runs.py:advance_run` | **Der Plan** nennt das Werkzeug; die Argumente kommen vom Aufrufer **oder vom Modell**. `llm`-Schritte laufen, `agent`-Schritte nicht |
 | Abschluss | `core/orchestrator/executor.py:finish` | Gegenstück zu `start()`; über die Übergangstabelle, nicht am Automaten vorbei |
+| Schrittanspruch | `api/db/run_store.py:claim_step` | atomar und in **eigener** Transaktion, **vor** Modell und Werkzeug |
 | Plan | `api/routes/runs.py:_planschritte` | Stand je Schritt bei jedem Abruf neu berechnet — Veralten wird sichtbar |
 | Werkzeug `files.read` | `core/tools/builtin/files.py` | lesend, kontaminiert den Lauf |
 | Werkzeug `calendar.create` | `core/tools/builtin/calendar.py` | schreibend; `outbound_fields` entscheidet über Sanierbarkeit |
@@ -382,6 +391,9 @@ Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
   Adresse — **3 von 3 Versuchen**. Das Taint-Gate blockiert 3 von 3; der
   Kalender bleibt leer. Der Unterschied zum Punkt darüber ist der Urheber: Dort
   tat es eine Attrappe, weil der Test es ihr sagte
+- **Nebenläufige Planschritte**: sechs Sitzungen desselben Nutzers, sechs
+  parallele `advance` auf denselben geplanten `calendar.create` → **ein**
+  Termin, eine Invocation; die fünf Verlierer scheitern **vor** jeder Wirkung
 - **Erfundene Felder in Werkzeugargumenten**: `additionalProperties: false`
   gilt, seit die Argumente gegen `ToolSpec.parameters` geprüft werden — vor der
   Policy-Entscheidung, vor der Vorschau, vor dem Payload-Hash
@@ -515,7 +527,45 @@ committet, bevor der Handler beginnt — der Verbraucher nimmt deshalb eine
 > erste. Die zweite hängt daran, wem die Transaktion gehört — und die Frage,
 > wem sie gehört, stellt kein Nebenläufigkeitstest.
 
-**Ein fünfter Befund, gleiche Bauart, andere Achse.** `ToolSpec.parameters` ist
+**Bypass 5 — der Anspruch stand hinter der Wirkung** (`50a12be`). Die drei
+Bypässe oben hingen einen Schritt zu *früh*. Dieser hing einen Schritt zu
+**spät**: Bei `POST /runs/{id}/advance` stand der Compare-and-set in
+`runs.save()` — also *nachdem* Modell und Werkzeug gelaufen waren. Zwei
+Requests laden denselben Lauf, beide führen aus, und erst danach verliert
+einer.
+
+Gemessen mit sechs Sitzungen desselben Nutzers und sechs parallelen Aufrufen
+eines geplanten `calendar.create`:
+
+```
+6 Kalendereinträge, 6 ausgeführte Invocations
+1x 200 executed
+5x 409 „Der Lauf wurde parallel verändert. Neu laden und wiederholen."
+```
+
+Fünf Aufrufer bekamen „bitte neu laden", während ihr Termin bereits im
+Kalender stand.
+
+**Und der lehrreichere Teil ist, warum es so lange nicht auffiel.** Jede
+Sitzungsprüfung schreibt `last_seen_at` in dieselbe Zeile, und zwar in der
+Transaktion des Requests, die bis zu dessen Ende offen bleibt. Das ist ein
+Zeilen-Lock: Alle Requests *einer* Sitzung laufen dadurch hintereinander. Ein
+Nebenläufigkeitstest mit einem Cookie misst deshalb nicht die Nebenläufigkeit,
+sondern diesen Nebeneffekt — und besteht, solange er hält. Zwei Geräte, zwei
+Browserfenster, eine zweite Anmeldung: weg ist er.
+
+> **Ein Nebeneffekt, den niemand entworfen hat, ist keine Zusicherung.** Bevor
+> ein Nebenläufigkeitstest grün zählt, gehört die Frage dazu, *was* die
+> Requests eigentlich serialisiert — und ob das etwas ist, worauf man sich
+> berufen möchte.
+
+Behoben durch `RunStore.claim_step()`: ein bedingtes UPDATE auf
+`RunState.current_step`, in eigener Transaktion committet, bevor Modell oder
+Werkzeug laufen. `POST /runs/{id}/steps` bekommt bewusst keinen Anspruch —
+dort nennt der Aufrufer das Werkzeug, und zweimal befohlen ist zweimal
+ausgeführt.
+
+**Ein sechster Befund, gleiche Bauart, andere Achse.** `ToolSpec.parameters` ist
 JSON Schema. Es wurde an genau einer Stelle gelesen — in `to_schema()`, also
 dort, wo dem Modell mitgeteilt wird, was es schicken soll. Was zurückkam, hielt
 niemand dagegen. `required` stand im Schema und galt nicht;
@@ -531,17 +581,18 @@ jeher, aus dem *validierten* Argument-Objekt zu bauen.
 > innen.** Dieselbe Familie wie „ein Vertragsfeld ohne Mechanismus ist eine
 > Falschaussage" — nur dass hier die Falschaussage an ein Modell ging.
 
-**Was alle fünf gemeinsam haben:** Es wurde nicht zu wenig geprüft, sondern die
+**Was alle gemeinsam haben:** Es wurde nicht zu wenig geprüft, sondern die
 falsche Frage gestellt. Drei grüne Tests deckten Bypass 1 ab; sie prüften, ob
 ein Grant mit falschem Hash abgewiesen wird — nur nicht, ob überhaupt einer
 vorliegt.
 
-**Und das Muster hat eine Richtung:** Die Einmaligkeit hing dreimal einen
-Schritt zu früh — an der Nonce statt an der Ausführung, an der Autorisierung
-statt am Aufruf, an der Ausstellung statt an der Verwendung. Die brauchbare
-Frage bei jeder Einmaligkeitszusage lautet deshalb nicht „wird geprüft?",
-sondern **„wo entsteht die Wirkung, und wie weit ist der Anspruch davon
-entfernt?"**
+**Und das Muster hat eine Richtung — inzwischen zwei.** Die Einmaligkeit hing
+dreimal einen Schritt zu früh: an der Nonce statt an der Ausführung, an der
+Autorisierung statt am Aufruf, an der Ausstellung statt an der Verwendung. Bei
+Bypass 5 hing sie einen Schritt zu **spät** — hinter der Wirkung statt davor.
+Die brauchbare Frage bei jeder Einmaligkeitszusage lautet deshalb nicht „wird
+geprüft?", sondern **„wo entsteht die Wirkung, und wie weit ist der Anspruch
+davon entfernt?"** — in beide Richtungen.
 
 Bypass 4 hat die Frage um eine zweite Achse ergänzt. Der Anspruch stand dort,
 wo er hingehört, und war trotzdem einlösbar — weil „gilt" und „ist
@@ -784,6 +835,7 @@ klären, indem der Fall ausgeführt wurde.
 | **Ein Vertragsfeld ohne Mechanismus ist eine Falschaussage** | `ToolSpec.supports_undo` speist `ActionPreview.reversible` — den Satz „das kannst du rückgängig machen", den ein Mensch vor der Bestätigung liest. Einen Einlöseweg für `undo_token` gibt es nicht. `calendar.create` steht deshalb auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Der Handler bekommt keine Identität — und das ist die Absicherung** | `registry.execute()` ruft `handler(**auth.arguments)`. Ein schreibendes Werkzeug braucht trotzdem einen Eigentümer. Ein Feld `user_id` in den Argumenten wäre dieselbe Lücke wie `user_id` im Request-Body, nur eine Schicht tiefer. Der Kalender wird deshalb **beim Verdrahten** aus `CurrentSession` gebunden; der Handler kann keinen fremden benennen, weil er es nicht kann — nicht, weil er es nicht darf. |
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
+| **Was serialisiert diesen Nebenläufigkeitstest eigentlich?** | Jede Sitzungsprüfung schreibt `last_seen_at` derselben Zeile — in der Request-Transaktion, die bis zum Ende offen bleibt. Das ist ein Zeilen-Lock und serialisiert alle Requests **einer** Sitzung. Ein Test mit einem Cookie misst deshalb nicht Nebenläufigkeit; er misst diesen Nebeneffekt und besteht, solange er hält. Wer nebenläufig prüft, prüft mit **mehreren Sitzungen** — und fragt vorher, was die Requests eigentlich auseinanderhält. |
 | **Ein Beispiel in einer Schemabeschreibung ist die Antwort** | `files.read` führt in `description` das Beispiel `/Users/ich/Notizen/plan.md`. Ein Modell ohne andere Information gab es **3 von 3 Mal wörtlich zurück**. Für einen Menschen ist ein Beispiel eine Illustration; für ein Modell, das raten muss, ist es die naheliegendste Antwort. Wer Werkzeugschemata schreibt, schreibt damit Vorgabewerte. |
 | **Zwei Lücken können sich gegenseitig verdecken** | `RunStatus.COMPLETED` kam im Anwendungscode nicht vor — kein Lauf erreichte je einen Endzustand. Aufgefallen ist das über ein Jahr Projektzeit nicht, weil der letzte Schritt jedes Plans ohnehin nicht ausführbar war. Eine Lücke, die nur sichtbar wird, wenn eine andere geschlossen ist, findet kein Test, den man vorher schreibt. |
 | **Ein Modell folgt einer untergeschobenen Anweisung — verlässlich** | Nicht gelegentlich, nicht unter besonderen Umständen: llama3.1:8b legte 3 von 3 Malen den Termin mit der Adresse an, die in der gelesenen Datei stand. Wer die Architektur gegen „das Modell wird schon merken, dass das nicht der Nutzer war" abwägt, wägt gegen etwas ab, das nicht eintritt. Der Schutz muss folgenlos machen, nicht erkennen. |
