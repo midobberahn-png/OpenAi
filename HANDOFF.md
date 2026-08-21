@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `79346cf` auf `main`.** Dieses Dokument ist der
+> **Stand: 21.08.2026, Commit `91c1f43` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,10 +42,10 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 51, Remote auf GitHub |
-| Tests | **1042** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
-| **Security Invariant Coverage** | **47/48** |
-| mypy | `strict`, sauber über 107 Dateien |
+| Commits | 54, Remote auf GitHub |
+| Tests | **1057** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
+| **Security Invariant Coverage** | **48/49** |
+| mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 9 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis als Dienste |
@@ -85,6 +85,19 @@ einen Planschritt stand *hinter* der Wirkung: Sechs parallele `advance` auf
 denselben geplanten `calendar.create` ergaben sechs Termine. Verdeckt war das
 durch einen Zufall, der lehrreicher ist als der Befund selbst — dazu
 Abschnitt 7. Behoben durch `claim_step()`.
+
+**Die Ablaufsteuerung ist aus der Route gezogen** (`cf84edf`). `RunAdvancer`
+in `core/orchestrator/advance.py` führt einen Planschritt aus; `runs.py` ging
+von 1038 auf 608 Zeilen. Das war ein Clean-Code-Befund und kein Stilhinweis:
+An dieser Grenze sind zwei Sicherheitslücken kurz nacheinander entstanden,
+beide an der Reihenfolge *Anspruch → Wirkung → Festschreiben*. Sie steht jetzt
+an einer Stelle, mit den Phasen als Zweck der Datei. Zwei neue Strukturgrenzen
+halten das: kein `fastapi` im Kern, und `advance_run` darf nicht mehr selbst
+orchestrieren.
+
+**Das Fencing-Token** (`91c1f43`). `claim_step()` liefert eine Kennung;
+Freigabe und Fortschreiben gelten nur mit ihr. Eingeführt **vor** der
+Wiederaufnahme, weil ein Token nachzurüsten laufenden Zustand wandern hieße.
 
 **Der Plan wird zu Ende gelaufen.** Der abschließende Schritt jedes Plans
 (`kind="llm"`) ist ausführbar; dem Modell wird dabei **kein** Werkzeug
@@ -340,7 +353,8 @@ niemand zurück.
 | Werkzeugschritt | `api/routes/runs.py:execute_step` | Aufrufer nennt das Werkzeug; Policy → Gate → Registry |
 | Planschritt | `api/routes/runs.py:advance_run` | **Der Plan** nennt das Werkzeug; die Argumente kommen vom Aufrufer **oder vom Modell**. `llm`-Schritte laufen, `agent`-Schritte nicht |
 | Abschluss | `core/orchestrator/executor.py:finish` | Gegenstück zu `start()`; über die Übergangstabelle, nicht am Automaten vorbei |
-| Schrittanspruch | `api/db/run_store.py:claim_step` | atomar und in **eigener** Transaktion, **vor** Modell und Werkzeug |
+| Schrittanspruch | `api/db/run_store.py:claim_step` | atomar, in **eigener** Transaktion, **vor** Modell und Werkzeug; liefert das Fencing-Token |
+| Ablaufsteuerung | `core/orchestrator/advance.py` | `RunAdvancer` — die Phasen ①–⑤ an einer Stelle, ohne HTTP |
 | Plan | `api/routes/runs.py:_planschritte` | Stand je Schritt bei jedem Abruf neu berechnet — Veralten wird sichtbar |
 | Werkzeug `files.read` | `core/tools/builtin/files.py` | lesend, kontaminiert den Lauf |
 | Werkzeug `calendar.create` | `core/tools/builtin/calendar.py` | schreibend; `outbound_fields` entscheidet über Sanierbarkeit |
@@ -391,6 +405,8 @@ Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
   Adresse — **3 von 3 Versuchen**. Das Taint-Gate blockiert 3 von 3; der
   Kalender bleibt leer. Der Unterschied zum Punkt darüber ist der Urheber: Dort
   tat es eine Attrappe, weil der Test es ihr sagte
+- **Fremder Aufräumer**: eine falsche Anspruchskennung gibt nichts frei; ein
+  abgelaufener Anspruch schreibt sein Ergebnis nicht mehr (`RunStateConflict`)
 - **Fehler nach der Wirkung**: Handler legt den Termin an, `runs.save`
   scheitert → der Anspruch bleibt stehen, der Wiederholer bekommt 409, es
   bleibt bei **einem** Termin
@@ -411,9 +427,9 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 | **Undo** | `ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
 | **Autonome Abarbeitung** | Halb da. Jeder einzelne Schritt läuft ohne Zutun, und der Lauf erreicht sein Ende. Was fehlt, ist die Schleife *darum herum*: Jemand muss `advance` weiterhin je Schritt aufrufen. Ein Arbeiter, der das tut, ist dieselbe Baustelle wie die Wiederaufnahme abgebrochener Läufe. |
-| **Ein brauchbarer Antwortschritt** | Er läuft — und sieht nur Schritt*zusammenfassungen*, keine Werkzeug*daten*. „Lies X und fasse es zusammen" endet deshalb mit „ich kenne den Inhalt nicht". Der Weg dorthin führt über Fremdinhalt im Prompt und ist die heikelste offene Entscheidung (Abschnitt 8.3). |
+| **Ein brauchbarer Antwortschritt** | Er läuft — und sieht nur Schritt*zusammenfassungen*, keine Werkzeug*daten*. „Lies X und fasse es zusammen" endet deshalb mit „ich kenne den Inhalt nicht". Der Weg dorthin führt über Fremdinhalt im Prompt und ist die heikelste offene Entscheidung (Abschnitt 8.4). |
 | **`agent`-Planschritte** | `ModelLoop` ist gebaut und geprüft, hat aber keinen Endpunkt. Ein Schritt, der an einen Sub-Agenten delegiert, wird mit 409 abgewiesen. Dort wählt das Modell die Werkzeuge selbst — eine andere Fläche als „ein Modell füllt die Argumente eines angekündigten Schrittes". |
-| **Modellgetriebener Dateizugriff** | Gemessen: Steht der Pfad im Auftrag, trifft das Modell 3/3. Kennt es nur die freigegebene Wurzel, 0/3. Es braucht **Aufzählbarkeit** (`files.list`), nicht nur Auskunft über die Grenze — Abschnitt 8.4. |
+| **Modellgetriebener Dateizugriff** | Gemessen: Steht der Pfad im Auftrag, trifft das Modell 3/3. Kennt es nur die freigegebene Wurzel, 0/3. Es braucht **Aufzählbarkeit** (`files.list`), nicht nur Auskunft über die Grenze — Abschnitt 8.5. |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
 | **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
@@ -432,7 +448,7 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
   Schleife braucht dann auch eine Grenze.
 - Beide Modellquellen bekommen die Zusammenfassungen erledigter Schritte als
   Kontext, nicht deren Daten (`plan_context.py`). Das ist inzwischen kein
-  Randfall mehr, sondern der Engpass — siehe Abschnitt 8.3.
+  Randfall mehr, sondern der Engpass — siehe Abschnitt 8.4.
 - Der Antwortschritt macht **einen** Versuch, wie die Argumentquelle. Ein
   Modell, das leeren Text liefert, bekommt keinen zweiten aus dieser Datei.
 - `_falls_fertig` schließt einen Lauf ab, sobald `Plan.ready_steps` nichts mehr
@@ -688,7 +704,29 @@ Ollama — Modell formuliert den Pfad → `files.read` läuft → Lauf kontamini
 Modell formuliert die Antwort → `completed`, `finished_at` gesetzt, beide
 Schritte `done`.
 
-### 3. Werkzeugergebnisse in den Modellkontext — die heikelste Stelle
+### 3. Erledigt: Ablaufsteuerung, Anspruch, Fencing
+
+Aus zwei Prüfberichten, in dieser Reihenfolge abgearbeitet und hier als
+erledigt geführt, weil der nächste Zuschnitt daran hängt.
+
+* **`RunAdvancer`** (`cf84edf`) — der Ablauf eines Planschrittes steht in
+  `core/orchestrator/advance.py` statt in der Routendatei. Die Phasen sind der
+  Zweck der Datei: ① Auswählen ② Beanspruchen ③ Vorbereiten ④ Wirken
+  ⑤ Festschreiben. Freigegeben wird nur bei einem Fehler in ①–③.
+* **Der Anspruch** (`50a12be`, `79346cf`) — vor der Wirkung, und er überlebt
+  sie.
+* **Das Fencing-Token** (`91c1f43`) — Freigabe und Fortschreiben gelten nur
+  mit der Kennung, unter der beansprucht wurde.
+
+**Was daraus für die Wiederaufnahme folgt**, denn sie ist der Grund für das
+Token: Ein Lauf in `executing` mit belegtem `current_step` ist entweder gerade
+in Arbeit oder hängengeblieben — von außen nicht unterscheidbar. Wer die
+Wiederaufnahme baut, braucht deshalb eine Frist (`claimed_at` oder ein Lease)
+und muss beantworten, was mit einem Schritt geschieht, dessen Wirkung unklar
+ist. Das Token sorgt nur dafür, dass die Neuvergabe den alten Arbeiter
+aussperrt; *wann* neu vergeben wird, ist noch nicht entschieden.
+
+### 4. Werkzeugergebnisse in den Modellkontext — die heikelste Stelle
 
 **Das ist jetzt der Engpass, und er ist beim Messen aufgefallen.** Der
 Durchstich oben lief technisch sauber und lieferte diese Antwort:
@@ -719,7 +757,7 @@ zu klären ist:
   bewusst nicht. Fremdinhalt im Prompt als solchen zu markieren wäre eine
   *andere* Maßnahme (Delimiter, Rollenwechsel) und ist nicht dieselbe Frage.
 
-### 4. Was ein Modell nicht raten kann — und was daraus folgt
+### 5. Was ein Modell nicht raten kann — und was daraus folgt
 
 Beim Durchstich gemessen und für die nächste Sitzung der wichtigste Einzelbefund
 zur Argumentquelle. Gesucht war `…/projektnotiz.md`, dreimal je Lage:
@@ -750,7 +788,7 @@ das Beispiel aus `description` wörtlich zurück** (`/Users/ich/Notizen/plan.md`
 Ein Beispiel in einer Schemabeschreibung ist für ein Modell ohne andere
 Information keine Illustration, sondern die Antwort.
 
-### 5. Die eigentliche Agentenschleife
+### 6. Die eigentliche Agentenschleife
 
 `agents/model_loop.py` ist gebaut, geprüft und hat weiterhin keinen Endpunkt.
 Ein Planschritt der Art `agent` wird von `advance_run` mit 409 abgewiesen und in
@@ -779,7 +817,7 @@ oben. Was fehlt, ist der Weg hinein und die Antwort auf zwei Fragen:
   müsste jemand die Schleife *fortsetzen*, nicht neu starten. `RunState` trägt
   das Nötige; es ruft nur niemand auf.
 
-### 6. Undo — oder die Zusage zurücknehmen
+### 7. Undo — oder die Zusage zurücknehmen
 
 `ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein
 Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf
@@ -802,12 +840,12 @@ Zwei Wege, und die Entscheidung steht aus:
 Was nicht geht: den Wert auf `True` stellen, ohne den Weg zu bauen.
 
 
-### 7. Web-UI, Grundfassung
+### 8. Web-UI, Grundfassung
 
 Chat, Statusleiste, Bestätigungsdialog, Permission Center. Ohne sie ist das
 System nicht bedienbar.
 
-### 8. Weitere Provider
+### 9. Weitere Provider
 
 Anthropic und OpenAI, dieselbe Form wie Ollama. Dabei mitzunehmen, was aus dem
 Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch
@@ -870,6 +908,8 @@ klären, indem der Fall ausgeführt wurde.
 | **Ein Vertragsfeld ohne Mechanismus ist eine Falschaussage** | `ToolSpec.supports_undo` speist `ActionPreview.reversible` — den Satz „das kannst du rückgängig machen", den ein Mensch vor der Bestätigung liest. Einen Einlöseweg für `undo_token` gibt es nicht. `calendar.create` steht deshalb auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Der Handler bekommt keine Identität — und das ist die Absicherung** | `registry.execute()` ruft `handler(**auth.arguments)`. Ein schreibendes Werkzeug braucht trotzdem einen Eigentümer. Ein Feld `user_id` in den Argumenten wäre dieselbe Lücke wie `user_id` im Request-Body, nur eine Schicht tiefer. Der Kalender wird deshalb **beim Verdrahten** aus `CurrentSession` gebunden; der Handler kann keinen fremden benennen, weil er es nicht kann — nicht, weil er es nicht darf. |
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
+| **Ein Parameter, der nur in `IS NULL` vorkommt, braucht einen Cast** | `AND (:x IS NULL OR …)` bricht in PostgreSQL mit `AmbiguousParameterError` ab — der Typ lässt sich aus der Verwendung nicht herleiten. `CAST(:x AS text) IS NULL`. Kostet zwei Minuten, wenn man es weiß, und einen verwirrenden Testlauf, wenn nicht. |
+| **Ein Zustand, den niemand auflösen kann, gehört nicht behandelt, sondern verhindert** | Seit die Freigabe eines Planschrittes die Anspruchskennung verlangt, wäre ein `current_step` ohne `claim_id` für immer belegt. Statt einen Sonderweg dafür zu bauen, weist `RunState` den Zustand zurück. Drei Bestandstests bauten ihn und wurden nachgezogen — das war der Vertrag, der sich verschärft hat, nicht Rot, das grün gepatcht wurde. |
 | **Ein `except` um eine Wirkung herum ist eine Aussage über sie** | Ein `except BaseException`, das den halben Ablauf umschließt, sieht nach Sorgfalt aus und behauptet in Wahrheit: „hier ist nichts geschehen". Sobald ein Seiteneffekt darin liegt, ist das falsch. Die brauchbare Frage vor jedem breiten `except`: **Was kann in diesem Block bereits gewirkt haben — und nehme ich das mit der Aufräumzeile zurück?** |
 | **Was serialisiert diesen Nebenläufigkeitstest eigentlich?** | Jede Sitzungsprüfung schreibt `last_seen_at` derselben Zeile — in der Request-Transaktion, die bis zum Ende offen bleibt. Das ist ein Zeilen-Lock und serialisiert alle Requests **einer** Sitzung. Ein Test mit einem Cookie misst deshalb nicht Nebenläufigkeit; er misst diesen Nebeneffekt und besteht, solange er hält. Wer nebenläufig prüft, prüft mit **mehreren Sitzungen** — und fragt vorher, was die Requests eigentlich auseinanderhält. |
 | **Ein Beispiel in einer Schemabeschreibung ist die Antwort** | `files.read` führt in `description` das Beispiel `/Users/ich/Notizen/plan.md`. Ein Modell ohne andere Information gab es **3 von 3 Mal wörtlich zurück**. Für einen Menschen ist ein Beispiel eine Illustration; für ein Modell, das raten muss, ist es die naheliegendste Antwort. Wer Werkzeugschemata schreibt, schreibt damit Vorgabewerte. |
