@@ -1,5 +1,6 @@
 """Werkzeugkatalog."""
 
+from .arguments import ArgumentsRejected, validate_arguments
 from .grants import InProcessGrants
 from .registry import (
     DuplicateTool,
@@ -12,6 +13,7 @@ from .registry import (
 )
 
 __all__ = [
+    "ArgumentsRejected",
     "DuplicateTool",
     "ForgedAuthorization",
     "GrantAlreadyUsed",
@@ -20,4 +22,5 @@ __all__ = [
     "ToolRegistry",
     "UnguardedExecution",
     "UnknownTool",
+    "validate_arguments",
 ]

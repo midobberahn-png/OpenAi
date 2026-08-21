@@ -483,6 +483,23 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.tools.registry",
     ),
     Invariant(
+        id="tool-arguments-match-schema",
+        title="Argumente werden gegen das Werkzeugschema geprüft",
+        statement=(
+            "Kein Argumentobjekt erreicht Policy-Entscheidung, Vorschau, Payload-Hash "
+            "oder Handler, ohne gegen ``ToolSpec.parameters`` geprüft worden zu sein."
+        ),
+        why=(
+            "Das Schema ist die Zusage, nach der ein Modell seine Argumente bildet. "
+            "Ohne Gegenprüfung ist es eine Ansage nach außen ohne Kontrolle nach innen: "
+            "Ein Modell, das eine kontaminierte Datei gelesen hat, kann beliebige Felder "
+            "erfinden, und der Mensch liest sie in der Vorschau, als gehörten sie zur "
+            "Aktion."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.orchestrator.executor",
+    ),
+    Invariant(
         id="data-class-hard-filter",
         title="Datenklassifikation ist ein hartes Filter",
         statement="Ein Kontext, der eine Klasse nicht zulässt, führt kein Werkzeug dieser Klasse aus.",

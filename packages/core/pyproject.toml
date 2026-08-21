@@ -5,6 +5,11 @@ description = "JARVIS Kern — Orchestrator, Policy, Taint, Audit, Gedächtnis"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "jarvis-contracts",
+    # Die Referenzimplementierung von JSON Schema — dem Format, in dem
+    # ``ToolSpec.parameters`` ohnehin geschrieben ist. Ein selbst gebauter
+    # Teilmengen-Prüfer wäre die zweite Wahrheit über dasselbe Schema, und
+    # genau daran ist ``FilesConstraints.check()`` schon einmal gescheitert.
+    "jsonschema>=4.21",
 ]
 
 [build-system]

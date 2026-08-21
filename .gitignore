@@ -38,3 +38,6 @@ openapi.json.tmp
 # macOS
 .DS_Store
 pruefpaket/
+
+# Arbeitskopien von Claude-Code-Worktrees — gehören nicht ins Repo.
+.claude/worktrees/

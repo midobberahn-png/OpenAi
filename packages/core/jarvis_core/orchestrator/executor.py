@@ -55,6 +55,7 @@ from jarvis_core.policy.approval import ApprovalGateway, ExecutionDenied, Execut
 from jarvis_core.policy.engine import PolicyEngine
 from jarvis_core.ports.invocations import InvocationStore
 from jarvis_core.runs.fsm import assert_transition
+from jarvis_core.tools.arguments import ArgumentsRejected, validate_arguments
 from jarvis_core.tools.registry import ToolRegistry
 
 __all__ = ["StepExecution", "StepStatus", "ToolExecutor"]
@@ -140,6 +141,35 @@ class ToolExecutor:
             )
 
         spec = self._registry.require(tool_name)
+
+        # Vor allem anderen: Passen die Argumente zum Schema des Werkzeugs?
+        #
+        # Diese Prüfung steht hier und nicht später, weil ab hier alles von den
+        # Argumenten abhängt. ``decide()`` liest sie für das Taint-Gate, die
+        # Vorschau zeigt sie einem Menschen, der Payload-Hash bindet sie an die
+        # Ausführung, der Handler bekommt sie ausgepackt. Eine Prüfung hinter
+        # einer dieser Stellen prüfte etwas, das schon gewirkt hat.
+        #
+        # Solange ein Mensch die Argumente tippte, war das Schema eine Ansage
+        # nach außen, die niemand verletzte. Ab der Modellschleife formuliert
+        # sie ein Modell, das eine kontaminierte Datei gelesen haben kann —
+        # und ein erfundenes Feld erschiene in der Vorschau als Zeile, als
+        # gehörte es zur Aktion.
+        #
+        # Kein Protokolleintrag: Es gibt keine Entscheidung, die festzuhalten
+        # wäre, und kein Aufruf hat stattgefunden. Was geschah, steht im
+        # Aktivitätsprotokoll.
+        try:
+            arguments = validate_arguments(spec, arguments)
+        except ArgumentsRejected as unpassend:
+            await self._log(run, "tool.rejected", tool_name, {"reason": str(unpassend)}, now)
+            return StepExecution(
+                status="blocked",
+                run=self._with_usage(run, tracker),
+                reason=str(unpassend),
+                code="arguments-invalid",
+            )
+
         request = self._policy_request(
             run, tool_name=tool_name, arguments=arguments, agent_name=agent_name
         )

@@ -19,6 +19,10 @@ dev = [
     "mypy>=1.13",
     "freezegun>=1.5",
     "httpx>=0.28",
+    # Typstubs für die Schemaprüfung der Werkzeugargumente. mypy läuft
+    # strict; ein ungetypter Import wäre eine Lücke in genau dem Pfad, über
+    # den ab jetzt Modellausgaben laufen.
+    "types-jsonschema>=4.21",
 ]
 
 [tool.uv]
