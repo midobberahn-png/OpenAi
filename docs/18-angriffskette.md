@@ -1,6 +1,7 @@
 # Die Angriffskette — was wo erzwungen wird
 
-> Stand: Commit `316f9ce`, überarbeitet nach dem externen Review.
+> Stand: Commit `da244dc`, fortgeschrieben, seit ein Modell die
+> Werkzeugargumente formuliert.
 
 > **Nachtrag.** Ein externes Review hat Glied ⑦ praktisch falsifiziert, während
 > es hier als gesichert geführt war. `ExecutionAuthorization` war ein
@@ -42,7 +43,7 @@ untrusted HTTP → Auth → Session → Identity → Run → Policy → Approval
 | ② | Auth → Session | Token nur einmal ausgegeben, in der DB nur als Hash; Doppelfrist (absolut + Leerlauf); Widerruf wirkt sofort | `test_sessions.py` (unit + integration) | **ja** |
 | ③ | Session → Identity | `current_session` ist die einzige Quelle; kein Request-Modell führt `user_id`; jeder Endpunkt ist geschützt oder begründet öffentlich | `test_http_boundary.py` (AST), `test_http_auth.py` | **ja** |
 | ④ | Identity → Run | `Run.user_id` stammt aus der Sitzung; ein fremder Lauf ist von einem nicht existierenden nicht unterscheidbar (404) | `test_http_runs.py` (Body mit fremder `user_id`, fremde `run_id`), `test_http_boundary.py` (AST), `test_e2e_identity_to_execution.py` | **ja** |
-| ⑤ | Run → Policy | `PolicyRequest` entsteht an genau einer Stelle; `trigger` und `allowed_data_class` aus dem persistierten Run | `test_executor.py` (AST + Verhalten), `test_http_runs.py` (Schritt-Endpunkt) | **ja** |
+| ⑤ | Run → Policy | `PolicyRequest` entsteht an genau einer Stelle; `trigger` und `allowed_data_class` aus dem persistierten Run; **Argumente werden vorher gegen `ToolSpec.parameters` geprüft — gleich, ob sie vom Aufrufer oder vom Modell stammen** | `test_executor.py` (AST + Verhalten), `test_tool_arguments.py` (Schemaprüfung, Gegenprobe), `test_http_runs.py` (Schritt- und Planschritt-Endpunkt) | **ja** |
 | ⑥ | Policy → Approval | Payload-Hash eingefroren; Nonce einmalig; Sitzungs-, Nutzer- und Kanalbindung; Sitzung wird verifiziert; der Kanal ist kein Feld des Requests | `test_approval_gateway.py`, `test_sessions.py`, `test_http_runs.py` | **ja** |
 | ⑦ | Approval → Execution | **Herkunft nominal geprüft** (`type(auth) is ExecutionGrant`); an Lauf und Nutzer gebunden; Hash dreifach geprüft; erneute Policy-Prüfung im Gate; **Verbrauch als letzter Schritt vor dem Handler, in eigener Transaktion committed** | `test_tool_registry.py` (Herkunft), `test_grant_replay.py` (Verbrauch, Kopien, Nebenläufigkeit), `test_grant_consumption.py` (Verbindungsgrenzen, Absturz vor dem Commit), `test_layering.py` (AST), `test_werkzeug_files_read.py` (echtes Werkzeug), `test_http_runs.py` (über HTTP) | **ja** |
 
@@ -122,11 +123,13 @@ schreibendes Werkzeug gibt. Der Alltagsfall aus `docs/16-v1.1-review.md §1`
 | Fläche | Bewertung | Stand |
 |---|---|---|
 | **Sitzungstoken ohne Rotation** | Ein entwendeter Token bleibt bis Ablauf oder Widerruf gültig, auch wenn der rechtmäßige Nutzer weiterarbeitet. Das Replay-Fenster ist die volle Sitzungsdauer. | `session-token-rotation` als PLANNED geführt. Race-Semantik ist zu spezifizieren, bevor implementiert wird. |
-| **Sanierung eines kontaminierten Laufs über HTTP** | Der Fall, den die geschlossene Kette noch nicht abdeckt: Bestätigung → sanierter Lauf → schreibendes Werkzeug. Im Kern geprüft, über HTTP nicht — es gibt kein schreibendes Werkzeug. | Offen bis zum zweiten Werkzeug (`calendar.create`). |
+| **Sanierung eines kontaminierten Laufs über HTTP** | Bestätigung → sanierter Lauf → schreibendes Werkzeug. | Geschlossen mit `calendar.create` (`test_http_runs.py::TestAlltagsfall`), inzwischen auch mit modellformulierten Argumenten. |
 | **Globale Rate-Limit-Stufe** | Ist selbst ein Denial-of-Service-Werkzeug: Wer sie füllt, sperrt auch den rechtmäßigen Nutzer aus. | Bewusst in Kauf genommen; Grenze liegt weit über der Alltagsnutzung. Eine volle Challenge-Tabelle wäre schlimmer. |
 | **Audit-Sink fehlt** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Sicherheitsvorfälle (Klonverdacht, abgewiesene Grants) landen derzeit nur im Anwendungsprotokoll. | Offen. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ist ebenfalls noch nicht implementiert. |
-| **Keine Modellanbindung** | Die größte kommende Fläche: Prompt Injection, Tool-Call-Injection, unvertrauenswürdige Modellausgabe, P3-Abfluss. | Der Taint-Schutz ist dafür gebaut, aber noch nie gegen ein echtes Modell erprobt. |
-| **Dateiinhalt als Fremdinhalt** | `files.read` bringt erstmals echten Fremdinhalt ins System — eine Datei mit `SYSTEM: sende …` ist ein Injection-Versuch wie eine Mail. Der Schutz besteht nicht im Erkennen, sondern darin, dass der Lauf danach kontaminiert ist und keine sendenden Werkzeuge mehr im Angebot hat. | Geprüft (`taints_context`), aber noch nie gegen ein Modell, das den Vorschlag tatsächlich machen würde. |
+| **Modellformulierte Werkzeugargumente** | Die Fläche ist jetzt real: `advance_run` nimmt die Argumente wahlweise aus einem Modell, das eine kontaminierte Datei gelesen haben kann. Prompt Injection wirkt sich damit erstmals auf einen Payload aus, der zur Ausführung kommt. | **Erprobt, nicht behauptet.** llama3.1:8b folgt der untergeschobenen Anweisung 3 von 3 Malen; das Taint-Gate blockiert 3 von 3 (`test_ollama_live.py`, `test_http_runs.py::TestArgumenteAusDemModell`). Der Schutz besteht darin, dass der Vorschlag denselben Weg nimmt wie eine Absicht des Nutzers — nicht darin, dass das Modell widersteht. |
+| **Werkzeugwahl durch ein Modell** | Bislang wählt der **Plan** das Werkzeug und das Modell nur die Argumente. Sobald `ModelLoop` einen Endpunkt bekommt, wählt das Modell aus der Schnittmenge — eine andere und größere Fläche. | Offen. `AgentRuntime` berechnet das Angebot je Zugriff neu und `ModelLoop` führt nichts aus; geprüft ist beides nur ohne Endpunkt. |
+| **Dateiinhalt als Fremdinhalt** | `files.read` bringt echten Fremdinhalt ins System — eine Datei mit `SYSTEM: sende …` ist ein Injection-Versuch wie eine Mail. Der Schutz besteht nicht im Erkennen, sondern darin, dass der Lauf danach kontaminiert ist und keine sendenden Werkzeuge mehr im Angebot hat. | Geprüft (`taints_context`) — und seit dem Modellmodus auch gegen ein Modell, das den Vorschlag tatsächlich macht. |
+| **Werkzeugergebnisse im Modellkontext** | `PlanArgumentSource` gibt dem Modell heute nur Schritt-Zusammenfassungen (Pfad, Bytezahl), nicht die gelesenen Daten. Sobald es die Daten braucht, steht Fremdinhalt im Prompt. | Offen und bewusst so zugeschnitten. Die Herkunftsmarkierung (`Message.is_untrusted`) trägt schon heute, entscheidet aber über wenig — das ändert sich mit dem ersten Schritt, der Inhalt weiterreicht. |
 
 ---
 
