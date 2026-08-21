@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `50a12be` auf `main`.** Dieses Dokument ist der
+> **Stand: 21.08.2026, Commit `79346cf` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,8 +42,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 50, Remote auf GitHub |
-| Tests | **1040** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
+| Commits | 51, Remote auf GitHub |
+| Tests | **1042** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
 | **Security Invariant Coverage** | **47/48** |
 | mypy | `strict`, sauber über 107 Dateien |
 | Ruff | sauber (check + format) |
@@ -391,6 +391,9 @@ Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
   Adresse — **3 von 3 Versuchen**. Das Taint-Gate blockiert 3 von 3; der
   Kalender bleibt leer. Der Unterschied zum Punkt darüber ist der Urheber: Dort
   tat es eine Attrappe, weil der Test es ihr sagte
+- **Fehler nach der Wirkung**: Handler legt den Termin an, `runs.save`
+  scheitert → der Anspruch bleibt stehen, der Wiederholer bekommt 409, es
+  bleibt bei **einem** Termin
 - **Nebenläufige Planschritte**: sechs Sitzungen desselben Nutzers, sechs
   parallele `advance` auf denselben geplanten `calendar.create` → **ein**
   Termin, eine Invocation; die fünf Verlierer scheitern **vor** jeder Wirkung
@@ -564,6 +567,38 @@ Behoben durch `RunStore.claim_step()`: ein bedingtes UPDATE auf
 Werkzeug laufen. `POST /runs/{id}/steps` bekommt bewusst keinen Anspruch —
 dort nennt der Aufrufer das Werkzeug, und zweimal befohlen ist zweimal
 ausgeführt.
+
+**Bypass 5b — der Anspruch überlebte die Wirkung nicht** (`79346cf`). Derselbe
+Prüfer, dieselbe Stelle, eine Ebene tiefer: Der Anspruch stand jetzt *vor* der
+Wirkung, aber ein `except BaseException` umschloss **beide** Phasen und gab ihn
+auch danach zurück. Nachgemessen, indem `runs.save` einmal nach dem Handler
+scheiterte:
+
+```
+Handler legt den Termin an          → 1 Kalendereintrag
+runs.save scheitert                 → Ausnahme
+except BaseException → release_step → current_step = None
+Wiederholer findet den Schritt fällig
+                                    → 2 Kalendereinträge
+```
+
+Und hier zeigt sich, warum *zwei* Ansprüche nötig sind: Es war **kein** Replay
+desselben Grants. Der alte blieb verbraucht, der zweite Versuch bekam eine
+eigene Invocation und einen eigenen Grant. Der Einmaligkeitsanspruch am Grant
+sichert *einen Aufruf*; er sichert nicht *einen Planschritt*. Wer den einen für
+den anderen hält, hat eine Zusage zu viel gelesen.
+
+Behoben durch eine Grenze in der Mitte von `_werkzeugschritt`:
+
+| Phase | Was geschehen sein kann | Anspruch |
+|---|---|---|
+| Vorbereitung (`_argumente_fuer`) | nichts — kein Protokoll, kein Grant, kein Handler | wird zurückgegeben |
+| Wirkung (ab `execute_tool`) | alles ab dem Protokolleintrag | bleibt **stehen** |
+
+Ist unklar, ob gewirkt wurde, steht der Lauf in `executing` mit belegtem
+`current_step` — sichtbar und über `is_resumable` auffindbar. Ein Termin, der
+vielleicht fehlt, lässt sich erneut anstoßen; einer, der zweimal im Kalender
+steht, nicht.
 
 **Ein sechster Befund, gleiche Bauart, andere Achse.** `ToolSpec.parameters` ist
 JSON Schema. Es wurde an genau einer Stelle gelesen — in `to_schema()`, also
@@ -835,6 +870,7 @@ klären, indem der Fall ausgeführt wurde.
 | **Ein Vertragsfeld ohne Mechanismus ist eine Falschaussage** | `ToolSpec.supports_undo` speist `ActionPreview.reversible` — den Satz „das kannst du rückgängig machen", den ein Mensch vor der Bestätigung liest. Einen Einlöseweg für `undo_token` gibt es nicht. `calendar.create` steht deshalb auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Der Handler bekommt keine Identität — und das ist die Absicherung** | `registry.execute()` ruft `handler(**auth.arguments)`. Ein schreibendes Werkzeug braucht trotzdem einen Eigentümer. Ein Feld `user_id` in den Argumenten wäre dieselbe Lücke wie `user_id` im Request-Body, nur eine Schicht tiefer. Der Kalender wird deshalb **beim Verdrahten** aus `CurrentSession` gebunden; der Handler kann keinen fremden benennen, weil er es nicht kann — nicht, weil er es nicht darf. |
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
+| **Ein `except` um eine Wirkung herum ist eine Aussage über sie** | Ein `except BaseException`, das den halben Ablauf umschließt, sieht nach Sorgfalt aus und behauptet in Wahrheit: „hier ist nichts geschehen". Sobald ein Seiteneffekt darin liegt, ist das falsch. Die brauchbare Frage vor jedem breiten `except`: **Was kann in diesem Block bereits gewirkt haben — und nehme ich das mit der Aufräumzeile zurück?** |
 | **Was serialisiert diesen Nebenläufigkeitstest eigentlich?** | Jede Sitzungsprüfung schreibt `last_seen_at` derselben Zeile — in der Request-Transaktion, die bis zum Ende offen bleibt. Das ist ein Zeilen-Lock und serialisiert alle Requests **einer** Sitzung. Ein Test mit einem Cookie misst deshalb nicht Nebenläufigkeit; er misst diesen Nebeneffekt und besteht, solange er hält. Wer nebenläufig prüft, prüft mit **mehreren Sitzungen** — und fragt vorher, was die Requests eigentlich auseinanderhält. |
 | **Ein Beispiel in einer Schemabeschreibung ist die Antwort** | `files.read` führt in `description` das Beispiel `/Users/ich/Notizen/plan.md`. Ein Modell ohne andere Information gab es **3 von 3 Mal wörtlich zurück**. Für einen Menschen ist ein Beispiel eine Illustration; für ein Modell, das raten muss, ist es die naheliegendste Antwort. Wer Werkzeugschemata schreibt, schreibt damit Vorgabewerte. |
 | **Zwei Lücken können sich gegenseitig verdecken** | `RunStatus.COMPLETED` kam im Anwendungscode nicht vor — kein Lauf erreichte je einen Endzustand. Aufgefallen ist das über ein Jahr Projektzeit nicht, weil der letzte Schritt jedes Plans ohnehin nicht ausführbar war. Eine Lücke, die nur sichtbar wird, wenn eine andere geschlossen ist, findet kein Test, den man vorher schreibt. |
