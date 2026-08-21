@@ -685,3 +685,226 @@ class TestAlltagsfall:
 
         alt = await client.get(f"/runs/{run_id}")
         assert alt.json()["taint_level"] == "tainted"
+
+
+class TestMehrschrittplan:
+    """Der Plan als bindende Reihenfolge — und was passiert, wenn er veraltet.
+
+    Ein Plan entsteht **vor** dem ersten Schritt, aus dem Angebot eines
+    sauberen Laufs. Kontaminiert ein Schritt den Lauf, kann ein später
+    geplanter Schritt hinfaellig werden. Diese Tests halten beide Seiten fest:
+    dass der Plan traegt, und dass sein Veralten sichtbar ist statt verdeckt.
+    """
+
+    async def test_der_plan_steht_vor_dem_ersten_schritt(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Der Nutzer sieht, was passieren wird, bevor etwas passiert.
+
+        Und er sieht nur, was auch gehen kann: Der Plan entsteht aus
+        ``effective_tools()``, also aus der Schnittmenge mit den erteilten
+        Rechten. Ein Schritt, der ohnehin blockiert wuerde, wird nicht
+        angekuendigt.
+        """
+        wurzel = tmp_path / "u"
+        wurzel.mkdir()
+        (wurzel / "a.md").write_text("Notiz", encoding="utf-8")
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        get_settings.cache_clear()
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_dateirecht(engine, user_id=user_id, wurzel=wurzel)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+
+        lauf = await client.post(
+            "/runs", json={"input": "Lies die Notiz und lege danach einen Termin an"}
+        )
+        assert lauf.status_code == 201, lauf.text
+        run_id = lauf.json()["id"]
+
+        sicht = await client.get(f"/runs/{run_id}")
+        plan = sicht.json()["plan"]
+        assert plan, "Ohne Plan prueft dieser Test nichts."
+
+        werkzeugschritte = [s for s in plan if s["kind"] == "tool"]
+        assert [s["target"] for s in werkzeugschritte] == ["files.read", "calendar.create"], (
+            "Lesend vor schreibend — die Reihenfolge ist Teil des Plans."
+        )
+        assert werkzeugschritte[0]["status"] == "ready"
+        assert werkzeugschritte[1]["status"] == "waiting", "Schritt 2 haengt an Schritt 1."
+        abschluss = next(s for s in plan if s["kind"] == "llm")
+        assert abschluss["status"] == "waiting", (
+            "Der Abschlussschritt haengt an beiden Werkzeugschritten. ``needs_model`` "
+            "gilt erst, wenn er tatsaechlich an der Reihe ist — der Status beschreibt "
+            "die Lage, nicht die Bauart des Schrittes."
+        )
+
+    async def test_ein_faelliger_modellschritt_sagt_es(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Die Gegenprobe: ein llm-Schritt ohne Abhaengigkeiten ist faellig.
+
+        Dann steht dort ``needs_model`` — die ehrlichste Auskunft, die dieses
+        System derzeit gibt, statt eines Schrittes, der ``ready`` behauptet und
+        beim Ausfuehren scheitert.
+        """
+        await _angemeldet(client, engine)
+        lauf = await client.post("/runs", json={"input": "Wie spaet ist es?"})
+        sicht = await client.get(f"/runs/{lauf.json()['id']}")
+        plan = sicht.json()["plan"]
+        assert plan, "Auch ein einschrittiger Turn hat einen Plan."
+        assert plan[0]["kind"] == "llm"
+        assert plan[0]["status"] == "needs_model", plan
+
+    async def test_ohne_recht_kein_schritt_im_plan(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Was nicht erlaubt ist, wird nicht angekuendigt.
+
+        Der Nutzer hat nur ``files.read``. Ein Kalenderschritt darf im Plan
+        nicht auftauchen — sonst verspricht die Oberflaeche etwas, das die
+        Policy gleich darauf abweist.
+        """
+        wurzel = tmp_path / "u"
+        wurzel.mkdir()
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        get_settings.cache_clear()
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_dateirecht(engine, user_id=user_id, wurzel=wurzel)
+
+        lauf = await client.post(
+            "/runs", json={"input": "Lies die Notiz und lege danach einen Termin an"}
+        )
+        sicht = await client.get(f"/runs/{lauf.json()['id']}")
+        ziele = {s["target"] for s in sicht.json()["plan"] if s["kind"] == "tool"}
+        assert "calendar.create" not in ziele, ziele
+
+    async def test_advance_folgt_dem_plan_und_nimmt_kein_werkzeug_entgegen(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Der Plan bestimmt das Werkzeug, der Aufrufer nur die Argumente."""
+        wurzel = tmp_path / "u"
+        wurzel.mkdir()
+        (wurzel / "a.md").write_text("Mittwoch frei", encoding="utf-8")
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        get_settings.cache_clear()
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_dateirecht(engine, user_id=user_id, wurzel=wurzel)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+
+        lauf = await client.post(
+            "/runs", json={"input": "Lies die Notiz und lege danach einen Termin an"}
+        )
+        run_id = lauf.json()["id"]
+
+        weiter = await client.post(
+            f"/runs/{run_id}/advance",
+            json={"arguments": {"path": str(wurzel / "a.md")}},
+        )
+        assert weiter.status_code == 200, weiter.text
+        assert weiter.json()["status"] == "executed", weiter.json()
+        assert "Mittwoch" in weiter.json()["data"]["text"]
+        assert weiter.json()["taint_level"] == "tainted"
+
+        sicht = await client.get(f"/runs/{run_id}")
+        schritte = {s["seq"]: s["status"] for s in sicht.json()["plan"]}
+        assert schritte[1] == "done", schritte
+
+    async def test_ein_veralteter_planschritt_wird_benannt_nicht_ausgefuehrt(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Der Kern dieses Blocks.
+
+        Der Plan sah ``calendar.create`` als Schritt 2 vor — geplant, als der
+        Lauf noch sauber war. Nach dem Lesen ist er kontaminiert. Der Schritt
+        bleibt moeglich, solange keine Teilnehmer im Spiel sind; er ist dann
+        aber bestaetigungspflichtig statt einfach ausfuehrbar.
+
+        Geprueft wird, dass der Stand des Schrittes die Lage abbildet und nicht
+        den Plan von vorhin.
+        """
+        wurzel = tmp_path / "u"
+        wurzel.mkdir()
+        (wurzel / "a.md").write_text("Fremdinhalt", encoding="utf-8")
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        get_settings.cache_clear()
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_dateirecht(engine, user_id=user_id, wurzel=wurzel)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+
+        lauf = await client.post(
+            "/runs", json={"input": "Lies die Notiz und lege danach einen Termin an"}
+        )
+        run_id = lauf.json()["id"]
+        await client.post(
+            f"/runs/{run_id}/advance", json={"arguments": {"path": str(wurzel / "a.md")}}
+        )
+
+        weiter = await client.post(
+            f"/runs/{run_id}/advance",
+            json={
+                "arguments": {
+                    "title": "Fokuszeit",
+                    "start": "2026-08-29T09:00:00+00:00",
+                    "end": "2026-08-29T10:00:00+00:00",
+                }
+            },
+        )
+        assert weiter.status_code == 200, weiter.text
+        assert weiter.json()["status"] == "awaiting_confirmation", (
+            "Im kontaminierten Lauf ist der geplante Schritt nur noch nach Bestaetigung "
+            "moeglich — der Plan allein genuegt nicht."
+        )
+
+    async def test_advance_ohne_plan_und_nach_abarbeitung(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Zwei Konfliktfaelle, beide 409 und beide mit Grund."""
+        await _angemeldet(client, engine)
+        lauf = await client.post("/runs", json={"input": "Wie spaet ist es?"})
+        run_id = lauf.json()["id"]
+
+        # Der Plan dieses Laufs hat nur einen llm-Schritt.
+        weiter = await client.post(f"/runs/{run_id}/advance", json={"arguments": {}})
+        assert weiter.status_code == 409, weiter.text
+        assert "Modellschleife" in weiter.json()["detail"], weiter.json()
+
+    async def test_planschritt_und_einzelschritt_kollidieren_nicht(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Schrittnummern aus Plan und Einzelaufruf duerfen sich nicht doppeln.
+
+        ``RunState`` weist doppelte Nummern zurueck. ``len(completed)+1`` waere
+        naheliegend und falsch, sobald zuerst ein Planschritt mit hoeherer
+        Nummer lief.
+        """
+        wurzel = tmp_path / "u"
+        wurzel.mkdir()
+        (wurzel / "a.md").write_text("A", encoding="utf-8")
+        (wurzel / "b.md").write_text("B", encoding="utf-8")
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        get_settings.cache_clear()
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_dateirecht(engine, user_id=user_id, wurzel=wurzel)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+
+        lauf = await client.post(
+            "/runs", json={"input": "Lies die Notiz und lege danach einen Termin an"}
+        )
+        run_id = lauf.json()["id"]
+
+        erst = await client.post(
+            f"/runs/{run_id}/advance", json={"arguments": {"path": str(wurzel / "a.md")}}
+        )
+        assert erst.status_code == 200, erst.text
+
+        dann = await client.post(
+            f"/runs/{run_id}/steps",
+            json={"tool": "files.read", "arguments": {"path": str(wurzel / "b.md")}},
+        )
+        assert dann.status_code == 200, dann.text
+        assert dann.json()["status"] == "executed", dann.json()

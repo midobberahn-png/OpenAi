@@ -84,6 +84,18 @@
         "title": "ActionView",
         "type": "object"
       },
+      "AdvanceRequest": {
+        "description": "Argumente für den **nächsten geplanten** Schritt.\n\nKein Werkzeugname — und das ist der ganze Unterschied zu\n``POST /runs/{id}/steps``. Welches Werkzeug an der Reihe ist, bestimmt der\nPlan; der Aufrufer liefert nur, womit es aufgerufen wird.\n\nDass die Argumente von außen kommen, ist keine Designentscheidung, sondern\nder heutige Stand: Ein ``PlanStep`` führt Werkzeug und Reihenfolge, aber\nkeine Argumente — die stammen im fertigen System vom Modell. Solange die\nModellschleife nicht angeschlossen ist, liefert sie der Aufrufer.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          }
+        },
+        "title": "AdvanceRequest",
+        "type": "object"
+      },
       "AuthenticationRequest": {
         "properties": {
           "challenge": {
@@ -157,6 +169,53 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "PlanStepView": {
+        "description": "Ein Planschritt mit seinem **jetzigen** Stand.",
+        "properties": {
+          "depends_on": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "optional": {
+            "title": "Optional",
+            "type": "boolean"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "kind",
+          "target",
+          "description",
+          "depends_on",
+          "optional",
+          "status"
+        ],
+        "title": "PlanStepView",
         "type": "object"
       },
       "PreviewFieldView": {
@@ -346,6 +405,17 @@
             ],
             "title": "Finished At"
           },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -364,6 +434,14 @@
           "is_multi_step": {
             "title": "Is Multi Step",
             "type": "boolean"
+          },
+          "plan": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PlanStepView"
+            },
+            "title": "Plan",
+            "type": "array"
           },
           "started_at": {
             "format": "date-time",
@@ -1078,7 +1156,7 @@
     },
     "/runs/{run_id}": {
       "get": {
-        "description": "Ein einzelner eigener Lauf.",
+        "description": "Ein einzelner eigener Lauf — mit dem Plan und seinem jetzigen Stand.",
         "operationId": "read_run_runs__run_id__get",
         "parameters": [
           {
@@ -1115,6 +1193,60 @@
           }
         },
         "summary": "Read Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/advance": {
+      "post": {
+        "description": "Führt den nächsten fälligen Schritt des Plans aus.\n\n**Der Plan bindet.** Bei ``POST /runs/{id}/steps`` nennt der Aufrufer das\nWerkzeug; hier nennt es der Plan. Das ist die engere Tür: Wer diesen\nEndpunkt benutzt, kann keinen Schritt überspringen und keinen einschieben,\nder nicht angekündigt war — und der Nutzer hat den Plan vorher gesehen.\n\nBeide Wege enden bei derselben Policy-Entscheidung. Der Plan ersetzt keine\nPrüfung; er verengt nur, was überhaupt zur Prüfung kommt.\n\n**Warum ein Schritt scheitern kann, obwohl er im Plan steht:** Der Plan\nentstand aus dem Angebot eines sauberen Laufs. Kontaminiert ein früherer\nSchritt den Lauf, fällt ein später geplantes sendendes Werkzeug aus dem\nAngebot. Dieser Endpunkt weist das dann mit 409 ab und nennt den Grund —\n``GET /runs/{id}`` zeigt denselben Schritt als ``blocked``.",
+        "operationId": "advance_run_runs__run_id__advance_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdvanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StepView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Advance Run",
         "tags": [
           "runs"
         ]

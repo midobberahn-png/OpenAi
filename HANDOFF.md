@@ -35,8 +35,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 43, Remote auf GitHub |
-| Tests | **954** gesamt — 599 mit `-m security`, 153 mit `-m integration`, **0 übersprungen** |
+| Commits | 44, Remote auf GitHub |
+| Tests | **961** gesamt — 606 mit `-m security`, 160 mit `-m integration`, **0 übersprungen** |
 | **Security Invariant Coverage** | **45/46** |
 | mypy | `strict`, sauber über 102 Dateien |
 | Ruff | sauber (check + format) |
@@ -241,7 +241,9 @@ niemand zurück.
 | Berechtigungen | `apps/api/jarvis_api/db/permission_store.py` | erst jetzt in der Anwendung; vorher nur als Kopie im Testcode |
 | Werkzeugkatalog | `apps/api/jarvis_api/tools.py` | ein Werkzeug, mit persistentem Grant-Verbrauch verdrahtet |
 | Modellkatalog | `apps/api/jarvis_api/models.py` | ein lokales Modell — ohne ihn bleibt die Werkzeugschicht per Entwurf gesperrt |
-| Werkzeugschritt | `api/routes/runs.py:execute_step` | Policy → Gate → Registry über HTTP, Fortschreiben mit Statusvergleich |
+| Werkzeugschritt | `api/routes/runs.py:execute_step` | Aufrufer nennt das Werkzeug; Policy → Gate → Registry |
+| Planschritt | `api/routes/runs.py:advance_run` | **Der Plan** nennt das Werkzeug; der Aufrufer nur die Argumente |
+| Plan | `api/routes/runs.py:_planschritte` | Stand je Schritt bei jedem Abruf neu berechnet — Veralten wird sichtbar |
 | Werkzeug `files.read` | `core/tools/builtin/files.py` | lesend, kontaminiert den Lauf |
 | Werkzeug `calendar.create` | `core/tools/builtin/calendar.py` | schreibend; `outbound_fields` entscheidet über Sanierbarkeit |
 | Kalender | `api/db/calendar_store.py` | Nutzer beim Verdrahten gebunden, nicht als Argument |
@@ -295,7 +297,7 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 | **Werkzeuge — mehr als zwei** | `files.read` (lesend) und `calendar.create` (schreibend). Der Scope-Katalog führt 34 Einträge, der Werkzeugkatalog zwei. Es fehlen `mail.*`, `web.fetch`, `tasks.*`. |
 | **Undo** | `ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
-| **Mehrschrittpläne über HTTP** | Ein Schritt geht (`POST /runs/{id}/steps`), ein Plan noch nicht: Niemand ruft `plan_turn()` auf und arbeitet die Schritte ab. Die Angriffskette ist damit geschlossen, der Alltagsfall aus `docs/16 §1` aber nicht. |
+| **Autonome Abarbeitung** | Der Plan steht und bindet (`POST /runs/{id}/advance`), aber die **Argumente** kommen weiterhin von außen: Ein `PlanStep` führt Werkzeug und Reihenfolge, keine Argumente — die stammen im fertigen System vom Modell. Schritte der Art `llm`/`agent` sind gar nicht ausführbar und melden das (`needs_model`). |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
 | **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
@@ -412,51 +414,59 @@ Kontamination" nicht hielt.
 
 Die Reihenfolge ist begründet, nicht beliebig.
 
-### 1. Mehrschrittpläne — der Orchestrator ruft die Werkzeuge selbst
+### 1. Die Modellschleife anschließen
 
-**Das ist die Stelle, an der das System aufhört, eine Fernsteuerung zu sein.**
-Heute nennt der Aufrufer jedes Werkzeug einzeln (`POST /runs/{id}/steps`). Der
-Planer existiert (`plan_turn()`), aber niemand ruft ihn auf und niemand
-arbeitet einen Plan ab.
+**Das ist jetzt der Engpass, und er ist scharf umrissen.** Der Plan steht, er
+bindet, und `GET /runs/{id}` zeigt je Schritt, woran er ist. Was fehlt, ist
+genau eine Sache: **die Argumente.** Ein `PlanStep` führt Werkzeug und
+Reihenfolge, keine Argumente — die stammen im fertigen System vom Modell.
+Heute liefert sie der Aufrufer, und Schritte der Art `llm`/`agent` sind gar
+nicht ausführbar (`needs_model`).
 
-Was dafür zusammenkommen muss, liegt bereit:
+`agents/model_loop.py` ist gebaut und geprüft — gegen aufgezeichnete Antworten.
+**Der Ollama-Adapter war nie gegen ein laufendes Ollama verbunden.** Der erste
+echte Lauf wird Kleinigkeiten zutage fördern; das ist normal und sollte nicht
+mit einem Architekturproblem verwechselt werden.
 
-* `plan_turn(classification, available_tools=…, tools=…)` erzeugt den Plan.
-  `available_tools` ist die Schnittmenge aus Werkzeugwunsch, Rechten und Taint
-  (`PolicyEngine.effective_tools()`) — was dort fehlt, taucht im Plan nicht
-  auf, und der Nutzer sieht keinen Schritt angekündigt, der ohnehin blockiert
-  würde.
-* `Plan.ready_steps(completed)` gibt die Schritte, die jetzt laufen können.
-* `Run.state.completed_steps` hält fest, was schon lief — die Grundlage für
-  Wiederaufnahme.
-
-**Die interessante Frage ist die Kontamination zwischen den Schritten.** Ein
-Plan wird *vor* dem ersten Schritt erstellt, aber nach `files.read` ist der
-Lauf kontaminiert und das Angebot verengt sich. Ein Plan, der Schritt 3 als
-`mail.send` vorsieht, ist nach Schritt 1 ungültig. Der Planer darf deshalb
-nicht einmal laufen, sondern das Angebot muss **je Schritt** neu berechnet
-werden — genau das tut `AgentRuntime` bereits, und die Modellschleife
-(`agents/model_loop.py`) ebenfalls. Wer den Plan abarbeitet, muss dieselbe
-Regel einhalten.
-
-**Vorschlag für den Zuschnitt:** kein neuer Endpunkt, sondern `POST /runs`
-erweitern — Plan erzeugen und persistieren — plus `POST /runs/{id}/advance`,
-das den nächsten ausführbaren Schritt nimmt. Bestätigungspflichtige Schritte
-enden wie heute mit `awaiting_confirmation`; die Fortsetzung nach dem „Ja"
-läuft bereits (`_ausfuehren_nach_bestaetigung`).
-
-### 2. Die Modellschleife anschließen
-
-Erst danach, und mit Ollama tatsächlich laufend. `agents/model_loop.py` ist
-gebaut und geprüft — gegen aufgezeichnete Antworten. **Der Adapter war nie
-gegen ein echtes Ollama verbunden.** Der erste echte Lauf wird Kleinigkeiten
-zutage fördern; das ist normal und sollte nicht mit einem Architekturproblem
-verwechselt werden.
-
-Die Sicherheitsfrage dabei ist gelöst und muss es bleiben: Die Schleife führt
+Die Sicherheitsfrage ist gelöst und muss es bleiben: Die Schleife führt
 **nichts** aus. Jeder Vorschlag geht durch `AgentSession.call_tool()` und damit
 denselben Weg wie eine Absicht des Nutzers — Policy, Gate, Grant. Ein
 Werkzeugvorschlag eines Modells trägt keine Berechtigung mit sich.
+
+**Zuschnittvorschlag:** `advance_run` bekommt einen zweiten Modus. Statt
+`arguments` aus dem Request nimmt er sie aus einem Modellaufruf, der den
+Planschritt, das Werkzeugschema und den bisherigen Zustand als Kontext
+bekommt. Das Angebot je Runde neu berechnen — `AgentRuntime` tut das bereits,
+und die Regel gilt hier genauso, weil ein Schritt den Lauf kontaminieren kann.
+
+**Und der Punkt, an dem es interessant wird:** Sobald ein Modell die Argumente
+liefert, ist der Payload-Hash der Bestätigung nicht mehr eine Formalie. Bis
+heute hat ein Mensch die Argumente getippt; ab dann hat sie ein Modell
+formuliert, das eine kontaminierte Datei gelesen haben kann. Genau dafür ist
+die Vorschau aus dem *validierten Argument-Objekt* gebaut.
+
+
+### 2. Undo — oder die Zusage zurücknehmen
+
+`ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein
+Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf
+`supports_undo=False`: Der Wert speist `ActionPreview.reversible` — den Satz
+„das kannst du rückgängig machen", den ein Mensch **vor** seiner Bestätigung
+liest. Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren
+kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat.
+
+Zwei Wege, und die Entscheidung steht aus:
+
+* **Undo bauen.** Ein Endpunkt, der ein `undo_token` einlöst, mit derselben
+  Zugehörigkeitsprüfung wie alles andere und einer Frist (15 Minuten laut
+  Vertrag). Dann darf `supports_undo=True` stehen, und MEDIUM-Aktionen werden
+  spürbar leichter — ein angebotenes Undo ist für den Nutzer oft wertvoller als
+  ein weiterer Dialog.
+* **Das Feld streichen.** Wenn Undo auf absehbare Zeit nicht kommt, ist ein
+  Vertragsfeld, das nie gesetzt wird, eine Einladung, sich später darauf zu
+  verlassen.
+
+Was nicht geht: den Wert auf `True` stellen, ohne den Weg zu bauen.
 
 
 ### 3. Web-UI, Grundfassung
