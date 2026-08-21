@@ -356,11 +356,11 @@ class TestFehlerNachDerWirkung:
         echt = PostgresRunStore.save
         zaehler = {"n": 0}
 
-        async def kaputt(self, run, *, erwarteter_status):
+        async def kaputt(self, run, *, erwarteter_status, claim_id=None):
             zaehler["n"] += 1
             if zaehler["n"] == beim:
                 raise RuntimeError("Verbindung weg — nach dem Handler, vor dem Commit des Laufs.")
-            return await echt(self, run, erwarteter_status=erwarteter_status)
+            return await echt(self, run, erwarteter_status=erwarteter_status, claim_id=claim_id)
 
         monkeypatch.setattr(PostgresRunStore, "save", kaputt)
 

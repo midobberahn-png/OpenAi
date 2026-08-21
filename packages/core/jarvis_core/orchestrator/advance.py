@@ -160,7 +160,17 @@ class RunAdvancer:
         status_vorher = lauf.status
 
         # ② Beanspruchen — atomar und committed, bevor irgendetwas beginnt.
-        if not await self._runs.claim_step(lauf.id, schritt.seq, erwarteter_status=status_vorher):
+        #
+        # Der Rückgabewert ist das Fencing-Token. Es wandert durch die ganze
+        # Ausführung und begleitet jede Schreiboperation: Nur wer den Anspruch
+        # *noch* hat, gibt ihn frei und schreibt sein Ergebnis. Ohne das wäre
+        # der Anspruch eine Aussage über den Schritt, aber keine über den, der
+        # ihn hält — und spätestens die Wiederaufnahme hängender Läufe erzeugt
+        # zwei Anwärter auf denselben.
+        anspruch = await self._runs.claim_step(
+            lauf.id, schritt.seq, erwarteter_status=status_vorher
+        )
+        if anspruch is None:
             raise AdvanceRejected(
                 "step-claimed",
                 f"Schritt {schritt.seq} wird bereits ausgeführt oder der Lauf hat sich "
@@ -174,9 +184,9 @@ class RunAdvancer:
             lauf = self._executor.start(lauf, tracker)
 
         if schritt.kind != "tool":
-            return await self._antwort(lauf, tracker, plan, schritt, status_vorher)
+            return await self._antwort(lauf, tracker, plan, schritt, status_vorher, anspruch)
         return await self._werkzeug(
-            lauf, tracker, plan, schritt, status_vorher, vorgegeben, session_id
+            lauf, tracker, plan, schritt, status_vorher, vorgegeben, session_id, anspruch
         )
 
     # -- ① Auswählen ------------------------------------------------------
@@ -250,6 +260,7 @@ class RunAdvancer:
         status_vorher: RunStatus,
         vorgegeben: dict[str, Any] | None,
         session_id: UUID,
+        anspruch: UUID,
     ) -> AdvanceOutcome:
         """Die Grenze in der Mitte dieser Methode ist die ganze Zusage."""
         # ③ Vorbereiten — hier ist nichts geschehen.
@@ -260,7 +271,7 @@ class RunAdvancer:
             # außen — ein Client, der während des sekundenlangen Modellaufrufs
             # auflegt — soll den Schritt nicht dauerhaft belegen. Zulässig ist
             # das nur, weil diese Phase nachweislich nichts bewirkt hat.
-            await self._runs.release_step(lauf.id)
+            await self._runs.release_step(lauf.id, anspruch)
             raise
 
         # ④ Wirken — ab hier gibt kein Weg den Anspruch mehr zurück.
@@ -280,7 +291,7 @@ class RunAdvancer:
         endstand = ausgefuehrt.run
         if ausgefuehrt.executed:
             endstand = self._falls_fertig(endstand, tracker, plan)
-        await self._speichern(endstand, status_vorher)
+        await self._speichern(endstand, status_vorher, anspruch)
 
         ergebnis = ausgefuehrt.result
         return AdvanceOutcome(
@@ -346,6 +357,7 @@ class RunAdvancer:
         plan: Plan,
         schritt: PlanStep,
         status_vorher: RunStatus,
+        anspruch: UUID,
     ) -> AdvanceOutcome:
         """Der abschließende ``llm``-Schritt.
 
@@ -356,9 +368,11 @@ class RunAdvancer:
         an. Ihn belegt zu lassen wäre eine Sperre ohne Zweck.
         """
         try:
-            return await self._antwort_formulieren(lauf, tracker, plan, schritt, status_vorher)
+            return await self._antwort_formulieren(
+                lauf, tracker, plan, schritt, status_vorher, anspruch
+            )
         except BaseException:
-            await self._runs.release_step(lauf.id)
+            await self._runs.release_step(lauf.id, anspruch)
             raise
 
     async def _antwort_formulieren(
@@ -368,6 +382,7 @@ class RunAdvancer:
         plan: Plan,
         schritt: PlanStep,
         status_vorher: RunStatus,
+        anspruch: UUID,
     ) -> AdvanceOutcome:
         try:
             antwort = await self._responses.for_step(
@@ -406,7 +421,7 @@ class RunAdvancer:
             }
         )
         fertig = self._falls_fertig(fertig, tracker, plan)
-        await self._speichern(fertig, status_vorher)
+        await self._speichern(fertig, status_vorher, anspruch)
 
         return AdvanceOutcome(
             status="executed",
@@ -428,15 +443,20 @@ class RunAdvancer:
             return lauf
         return self._executor.finish(lauf, tracker)
 
-    async def _speichern(self, lauf: Run, erwartet: RunStatus) -> None:
-        """Fortschreiben gegen den Status, der beim Laden galt.
+    async def _speichern(self, lauf: Run, erwartet: RunStatus, anspruch: UUID) -> None:
+        """Fortschreiben gegen Status **und** Anspruch.
+
+        Der Statusvergleich allein reicht hier nicht: Ein abgelaufener und ein
+        neuer Arbeiter sehen beide ``executing``, und ein Vergleich, der für
+        beide gilt, unterscheidet sie nicht. Das Fencing-Token tut es.
 
         Gibt zugleich den Anspruch frei: Der gespeicherte Zustand führt
-        ``current_step`` nicht mehr, weil ``with_step_done`` ihn auf ``None``
-        setzt. Deshalb braucht der Erfolgsweg keine ausdrückliche Freigabe.
+        ``current_step`` und ``claim_id`` nicht mehr, weil ``with_step_done``
+        beide auf ``None`` setzt. Deshalb braucht der Erfolgsweg keine
+        ausdrückliche Freigabe.
         """
         try:
-            await self._runs.save(lauf, erwarteter_status=erwartet)
+            await self._runs.save(lauf, erwarteter_status=erwartet, claim_id=anspruch)
         except RunStateConflict as konflikt:
             raise AdvanceRejected(
                 "run-changed",

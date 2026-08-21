@@ -501,6 +501,23 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.db.run_store",
     ),
     Invariant(
+        id="plan-step-claim-is-fenced",
+        title="Nur der Inhaber gibt seinen Anspruch frei und schreibt sein Ergebnis",
+        statement=(
+            "Freigabe und Fortschreiben eines beanspruchten Planschrittes gelten nur mit "
+            "der Kennung, unter der er beansprucht wurde."
+        ),
+        why=(
+            "``current_step`` sagt, *dass* ein Schritt beansprucht ist, nicht *von wem*. "
+            "Sobald eine Wiederaufnahme hängende Läufe neu vergibt, gibt es zwei Anwärter "
+            "auf denselben Schritt — und ein abgelaufener Arbeiter gäbe den fremden "
+            "Anspruch frei oder überschriebe dessen Ergebnis. Der Statusvergleich fängt "
+            "das nicht: Beide stehen in ``executing``."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.db.run_store",
+    ),
+    Invariant(
         id="tool-arguments-match-schema",
         title="Argumente werden gegen das Werkzeugschema geprüft",
         statement=(

@@ -55,6 +55,33 @@ class RunState(BaseModel):
 
     completed_steps: list[StepOutcome] = Field(default_factory=list)
     current_step: int | None = None
+    """Welcher Planschritt gerade läuft — und zugleich der Anspruch darauf.
+
+    Zwei Bedeutungen in einem Feld, und das ist bewusst so knapp: *Welcher
+    Schritt ist fachlich dran?* und *wer darf ihn ausführen?* fallen hier
+    zusammen, weil immer höchstens einer läuft.
+    """
+
+    claim_id: UUID | None = None
+    """Wem der Anspruch gehört — das Fencing-Token.
+
+    ``current_step`` allein sagt, **dass** ein Schritt beansprucht ist, nicht
+    **von wem**. Solange nur der Anspruchsinhaber freigibt, trägt das. Sobald
+    eine Wiederaufnahme hinzukommt — ein hängender Lauf wird nach einer Frist
+    neu vergeben —, gibt es zwei Anwärter auf denselben Schritt, und dann ist
+    „ist beansprucht?" die falsche Frage. Die richtige lautet „ist es noch
+    *mein* Anspruch?".
+
+    Ohne dieses Feld könnte ein alter Arbeiter, der nach seinem Ablauf
+    aufwacht, den Anspruch eines neueren freigeben oder sein Ergebnis
+    überschreiben — und der Statusvergleich fiele nicht auf, weil beide Läufe
+    in ``executing`` stehen.
+
+    Eingeführt **vor** der Wiederaufnahme und nicht danach: Ein Token
+    nachzurüsten, während bereits Ansprüche in der Datenbank stehen, hieße,
+    laufenden Zustand zu wandern.
+    """
+
     awaiting_action_id: UUID | None = None
     """Gesetzt, solange auf eine Bestätigung gewartet wird."""
 
@@ -81,6 +108,15 @@ class RunState(BaseModel):
             raise ValueError(
                 f"Schritt {self.current_step} ist gleichzeitig laufend und abgeschlossen."
             )
+        # Anspruch und Kennung gehören zusammen. Ein ``current_step`` ohne
+        # ``claim_id`` wäre ein Anspruch ohne Inhaber — niemand könnte ihn
+        # freigeben, ohne einen fremden zu treffen. Eine ``claim_id`` ohne
+        # ``current_step`` wäre ein Inhaber ohne Anspruch.
+        if (self.current_step is None) != (self.claim_id is None):
+            raise ValueError(
+                "current_step und claim_id gelten gemeinsam: Ein Anspruch ohne Inhaber "
+                "lässt sich nicht sicher freigeben, ein Inhaber ohne Anspruch bindet nichts."
+            )
         return self
 
     @property
@@ -89,11 +125,17 @@ class RunState(BaseModel):
 
     def with_step_done(self, outcome: StepOutcome) -> RunState:
         """Schritt abschließen. Erzeugt einen neuen Zustand, statt zu mutieren —
-        der alte bleibt für das Aktivitätsprotokoll erhalten."""
+        der alte bleibt für das Aktivitätsprotokoll erhalten.
+
+        Gibt den Anspruch mit frei: Ein erledigter Schritt braucht keinen mehr,
+        und ``claim_id`` muss mit ``current_step`` fallen — sonst schlägt die
+        Konsistenzprüfung zu, und zwar zu Recht.
+        """
         return self.model_copy(
             update={
                 "completed_steps": [*self.completed_steps, outcome],
                 "current_step": None,
+                "claim_id": None,
             }
         )
 

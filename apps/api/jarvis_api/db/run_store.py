@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -83,7 +83,10 @@ Einschränkung auf den Eigentümer soll nicht weglassbar sein. Der Index
 _CLAIM = text(
     """
     UPDATE runs
-       SET state = jsonb_set(state, '{current_step}', to_jsonb(CAST(:seq AS integer)))
+       SET state = state || jsonb_build_object(
+               'current_step', CAST(:seq AS integer),
+               'claim_id', CAST(:claim_id AS text)
+           )
      WHERE id = :id
        AND status = :erwarteter_status
        AND (state ->> 'current_step') IS NULL
@@ -103,6 +106,11 @@ falsch und der Lauf dauerhaft blockiert. ``->>`` liefert Text und ergibt
 SQL-``NULL`` sowohl bei fehlendem Schlüssel als auch bei JSON-``null``. Genau
 diese zweite Lesart ist gemeint, weil ``_RELEASE`` JSON-``null`` schreibt.
 
+``claim_id`` wird mitgeschrieben und ist das Fencing-Token: Es sagt nicht nur,
+**dass** der Schritt beansprucht ist, sondern **von wem**. ``||`` statt zweier
+``jsonb_set``, weil beide Schlüssel gemeinsam gelten müssen — ein Anspruch ohne
+Inhaber ließe sich nicht sicher freigeben (``RunState`` weist das zurück).
+
 Zu prüfen, ob nur *dieser* Schritt frei ist, wäre die schwächere Zusage: Dann
 liefen zwei verschiedene Schritte desselben Laufs gleichzeitig, und der zweite
 entschiede über einen Taint-Zustand, den der erste gerade ändert."""
@@ -110,15 +118,23 @@ entschiede über einen Taint-Zustand, den der erste gerade ändert."""
 _RELEASE = text(
     """
     UPDATE runs
-       SET state = jsonb_set(state, '{current_step}', 'null'::jsonb)
+       SET state = state || jsonb_build_object('current_step', NULL, 'claim_id', NULL)
      WHERE id = :id
+       AND (state ->> 'claim_id') = :claim_id
     RETURNING id
     """
 )
 """Gibt den Anspruch zurück, ohne den Schritt als erledigt zu führen.
 
-Ohne Statusbedingung und ohne Trefferprüfung: Freigeben ist immer zulässig, und
-ein Lauf, den es nicht mehr gibt, braucht keine Freigabe."""
+``AND (state ->> 'claim_id') = :claim_id`` ist das Fencing. Ohne diese Zeile
+gibt jeder Aufräumer jeden Anspruch frei — auch den, der inzwischen einem
+anderen gehört. Heute räumt nur der Inhaber auf; mit der Wiederaufnahme
+hängender Läufe gibt es zwei Anwärter, und dann trifft die bedingungslose
+Freigabe den falschen.
+
+Ohne Statusbedingung und ohne Trefferprüfung: Wessen Anspruch nicht mehr gilt,
+hat nichts freizugeben, und das ist kein Fehler — es ist der Ausgang, den das
+Fencing herbeiführen soll."""
 
 _UPDATE = text(
     """
@@ -141,10 +157,25 @@ _UPDATE = text(
            sanitized_from_run_id = :sanitized_from_run_id
      WHERE id = :id
        AND status = :erwarteter_status
+       AND (CAST(:claim_id AS text) IS NULL OR (state ->> 'claim_id') = :claim_id)
     RETURNING id
     """
 )
-"""``AND status = :erwarteter_status`` ist die ganze Zusicherung.
+"""``AND status = :erwarteter_status`` ist die Grundzusicherung.
+
+Dazu das Fencing: Wer sich auf einen Anspruch beruft, schreibt nur, solange er
+**noch seiner** ist. ``:claim_id IS NULL`` lässt den anspruchslosen Pfad
+(``POST /runs/{id}/steps``) unverändert durch — er beruft sich auf keinen und
+darf deshalb nicht an einem fremden scheitern.
+
+Der ``CAST`` davor ist kein Zierrat: Ohne ihn kann PostgreSQL den Typ eines
+Parameters, der nur in ``IS NULL`` vorkommt, nicht herleiten und bricht mit
+``AmbiguousParameterError`` ab.
+
+Warum das nötig ist, obwohl der Status schon verglichen wird: Ein abgelaufener
+und ein neuer Arbeiter sehen beide ``executing``. Ein Vergleich, der für beide
+gilt, unterscheidet sie nicht — und der Langsamere überschriebe das Ergebnis
+des Schnelleren.
 
 Trefferzahl null heißt: Die Zeile steht woanders — oder es gibt sie nicht.
 Beides muss unterschieden werden, deshalb folgt im selben Transaktionsrahmen
@@ -218,7 +249,9 @@ class PostgresRunStore:
             )
         return [Run.model_validate(dict(z)) for z in zeilen]
 
-    async def claim_step(self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus) -> bool:
+    async def claim_step(
+        self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus
+    ) -> UUID | None:
         """Beansprucht einen Planschritt in **eigener** Transaktion.
 
         ``self._engine.begin()`` und nicht die Verbindung des Requests — der
@@ -231,27 +264,40 @@ class PostgresRunStore:
         „Lauf steht woanders". Beides heißt für den Aufrufer dasselbe: nicht
         jetzt, nicht von dir.
         """
+        kennung = uuid4()
         async with self._engine.begin() as conn:
             treffer = await conn.execute(
                 _CLAIM,
-                {"id": run_id, "seq": seq, "erwarteter_status": str(erwarteter_status)},
+                {
+                    "id": run_id,
+                    "seq": seq,
+                    "claim_id": str(kennung),
+                    "erwarteter_status": str(erwarteter_status),
+                },
             )
-            return treffer.first() is not None
+            return kennung if treffer.first() is not None else None
 
-    async def release_step(self, run_id: UUID) -> None:
+    async def release_step(self, run_id: UUID, claim_id: UUID) -> None:
         """Gibt den Anspruch zurück — ebenfalls in eigener Transaktion.
 
         Sonst hinge die Freigabe an einem Request, der gerade scheitert, und
         würde mit ihm zurückgerollt: Der Anspruch bliebe stehen, obwohl nichts
         geschehen ist.
+
+        Trifft die Kennung nicht, geschieht nichts, und das ist kein Fehler:
+        Der Anspruch gehört jemand anderem, und genau das soll die Bedingung
+        herbeiführen.
         """
         async with self._engine.begin() as conn:
-            await conn.execute(_RELEASE, {"id": run_id})
+            await conn.execute(_RELEASE, {"id": run_id, "claim_id": str(claim_id)})
 
-    async def save(self, run: Run, *, erwarteter_status: RunStatus) -> None:
+    async def save(
+        self, run: Run, *, erwarteter_status: RunStatus, claim_id: UUID | None = None
+    ) -> None:
         async with self._engine.begin() as conn:
             parameter = _parameter(run)
             parameter["erwarteter_status"] = str(erwarteter_status)
+            parameter["claim_id"] = str(claim_id) if claim_id is not None else None
             if (await conn.execute(_UPDATE, parameter)).first() is not None:
                 return
 

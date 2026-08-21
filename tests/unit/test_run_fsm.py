@@ -109,9 +109,10 @@ class TestRunState:
         assert s.replan_count == 0
 
     def test_schritt_abschliessen(self) -> None:
-        s = RunState(current_step=1).with_step_done(_outcome(1))
+        s = RunState(current_step=1, claim_id=uuid4()).with_step_done(_outcome(1))
         assert s.completed_seqs == {1}
         assert s.current_step is None
+        assert s.claim_id is None, "Der Anspruch fällt mit dem Schritt — sonst bliebe er stehen."
 
     def test_doppelter_schritt_ist_unzulaessig(self) -> None:
         with pytest.raises(ValidationError, match="zweimal"):
@@ -119,7 +120,25 @@ class TestRunState:
 
     def test_schritt_kann_nicht_laufend_und_fertig_sein(self) -> None:
         with pytest.raises(ValidationError, match="gleichzeitig"):
-            RunState(completed_steps=[_outcome(1)], current_step=1)
+            RunState(completed_steps=[_outcome(1)], current_step=1, claim_id=uuid4())
+
+    @pytest.mark.invariant("plan-step-claim-is-fenced")
+    def test_ein_anspruch_ohne_inhaber_ist_nicht_darstellbar(self) -> None:
+        """Seit die Freigabe die Kennung verlangt, wäre er unlösbar.
+
+        Ein ``current_step`` ohne ``claim_id`` ließe sich nur noch durch eine
+        bedingungslose Freigabe klären — und genau die gibt es nicht mehr, weil
+        sie fremde Ansprüche träfe. Der Zustand wäre also für immer belegt.
+        Statt ihn zu behandeln, ist er nicht darstellbar.
+        """
+        with pytest.raises(ValidationError, match="gemeinsam"):
+            RunState(current_step=1)
+
+    @pytest.mark.invariant("plan-step-claim-is-fenced")
+    def test_ein_inhaber_ohne_anspruch_ist_nicht_darstellbar(self) -> None:
+        """Die Gegenrichtung, damit die Kopplung in beide Richtungen gilt."""
+        with pytest.raises(ValidationError, match="gemeinsam"):
+            RunState(claim_id=uuid4())
 
     def test_korrektur_behaelt_unbetroffene_schritte(self) -> None:
         """Der Kern der Korrektursemantik: Ein Abbruch mit Neustart verwürfe
@@ -140,7 +159,7 @@ class TestRunState:
     def test_zustand_ist_unveraendert_nach_kopie(self) -> None:
         """Die Fortschreibung erzeugt neue Zustände, damit der alte fürs
         Aktivitätsprotokoll erhalten bleibt."""
-        s = RunState(current_step=1)
+        s = RunState(current_step=1, claim_id=uuid4())
         s.with_step_done(_outcome(1))
         assert s.current_step == 1
 
@@ -150,5 +169,5 @@ class TestRunState:
 
     def test_wartende_bestaetigung_wird_festgehalten(self) -> None:
         aid = uuid4()
-        s = RunState(current_step=3, awaiting_action_id=aid)
+        s = RunState(current_step=3, claim_id=uuid4(), awaiting_action_id=aid)
         assert s.awaiting_action_id == aid

@@ -100,7 +100,9 @@ class RunStore(Protocol):
         """
         ...
 
-    async def save(self, run: Run, *, erwarteter_status: RunStatus) -> None:
+    async def save(
+        self, run: Run, *, erwarteter_status: RunStatus, claim_id: UUID | None = None
+    ) -> None:
         """Schreibt den Lauf fort, sofern er noch im erwarteten Status steht.
 
         Der Status wird ausdrücklich übergeben und nicht ``run.status``
@@ -109,12 +111,25 @@ class RunStore(Protocol):
         Überlegung wie bei ``ToolRegistry.execute()``, die ``run_id`` und
         ``user_id`` vom Aufrufer verlangt, statt sie dem Grant zu entnehmen.
 
+        ``claim_id`` ist das Fencing-Token: Wer sich darauf beruft, schreibt nur,
+        solange der Anspruch **noch seiner** ist. Das schützt nicht die Freigabe,
+        sondern das Ergebnis — ein abgelaufener Arbeiter, dessen Schritt
+        inzwischen neu vergeben wurde, überschriebe sonst die Arbeit des neuen.
+        Der Statusvergleich fängt das nicht: Beide stehen in ``executing``, und
+        ein Vergleich, der für beide gilt, unterscheidet sie nicht.
+
+        ``None`` heißt „ich berufe mich auf keinen Anspruch" und darf deshalb
+        nicht an einem fremden scheitern — sonst wäre der direkte
+        Werkzeugschritt blockiert, sobald irgendein Planschritt läuft.
+
         Wirft ``RunStateConflict``, wenn die Zeile inzwischen woanders steht,
         und ``RunNotStored``, wenn es sie nicht gibt.
         """
         ...
 
-    async def claim_step(self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus) -> bool:
+    async def claim_step(
+        self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus
+    ) -> UUID | None:
         """Beansprucht einen Planschritt — **bevor** er wirkt.
 
         Der Anspruch aus einem externen Prüfbefund, und er sitzt an derselben
@@ -136,9 +151,15 @@ class RunStore(Protocol):
           gäbe ein Absturz nach dem Seiteneffekt ihn zurück. Implementierungen
           nehmen deshalb eine ``AsyncEngine`` und keine Verbindung.
 
-        ``False`` heißt „ein anderer war schneller" und ist keine Ausnahme: Es
-        ist der Normalfall bei zwei Schreibern, und der Aufrufer kann sinnvoll
-        darauf reagieren.
+        Der Rückgabewert ist das **Fencing-Token** des Anspruchs, oder ``None``,
+        wenn ein anderer schneller war. Keine Ausnahme: Zwei Schreiber sind der
+        Normalfall, und der Aufrufer kann sinnvoll darauf reagieren.
+
+        Warum eine Kennung und nicht ``True``: ``current_step`` sagt, **dass**
+        ein Schritt beansprucht ist, nicht **von wem**. Solange nur der Inhaber
+        freigibt, genügt das. Sobald eine Wiederaufnahme hängende Läufe neu
+        vergibt, gibt es zwei Anwärter auf denselben Schritt — und dann ist „ist
+        beansprucht?" die falsche Frage.
 
         **Die Richtung ist höchstens einmal.** Stürzt der Prozess zwischen
         Anspruch und Ausführung ab, bleibt der Schritt beansprucht und der Lauf
@@ -149,7 +170,7 @@ class RunStore(Protocol):
         """
         ...
 
-    async def release_step(self, run_id: UUID) -> None:
+    async def release_step(self, run_id: UUID, claim_id: UUID) -> None:
         """Gibt den Anspruch zurück, ohne den Schritt als erledigt zu führen.
 
         Für den folgenlos gescheiterten Versuch: Argumente passen nicht zum
@@ -159,5 +180,10 @@ class RunStore(Protocol):
         Ohne diesen Weg wäre der Anspruch keine Absicherung, sondern eine
         Sperre — und eine Sperre, die man nicht mehr loswird, ist schlimmer als
         der doppelte Termin, den sie verhindern soll.
+
+        ``claim_id`` ist Pflicht und nicht optional: Eine bedingungslose
+        Freigabe sieht harmlos aus und trifft, sobald es zwei Anwärter gibt,
+        den fremden Anspruch. Der Parameter zwingt jeden Aufrufer, sich
+        auszuweisen — auch den, der heute der einzige ist.
         """
         ...
