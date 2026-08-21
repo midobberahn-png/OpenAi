@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `da244dc` auf `main`.** Dieses Dokument ist der
+> **Stand: 21.08.2026, Commit `644e9de` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,10 +42,10 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 47, Remote auf GitHub |
-| Tests | **1007** gesamt — 638 mit `-m security`, 174 mit `-m integration`, **0 übersprungen** |
+| Commits | 48, Remote auf GitHub |
+| Tests | **1034** gesamt — 0 übersprungen |
 | **Security Invariant Coverage** | **46/47** |
-| mypy | `strict`, sauber über 105 Dateien |
+| mypy | `strict`, sauber über 107 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 9 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis als Dienste |
@@ -79,6 +79,17 @@ Zwei Dinge daran sind wichtiger als die Verdrahtung selbst:
    Das ist der Unterschied zu allem davor: Bisher war dieser Ablauf an
    Attrappen belegt, und die Attrappe tat, was der Test ihr sagte. Jetzt tut
    es ein echtes Modell aus eigenem Antrieb.
+
+**Der Plan wird zu Ende gelaufen.** Der abschließende Schritt jedes Plans
+(`kind="llm"`) ist ausführbar; dem Modell wird dabei **kein** Werkzeug
+angeboten. Dabei fiel eine zweite Lücke auf, die die erste verdeckt hatte:
+`RunStatus.COMPLETED` kam im gesamten Anwendungscode nicht vor — **kein Lauf
+hat je einen Endzustand erreicht.** Beides ist geschlossen, und der Durchstich
+ist über HTTP gegen ein laufendes Modell gemessen.
+
+Was dabei sichtbar wurde, steht in Abschnitt 8 und ist der nächste Schritt: Der
+Antwortschritt sieht Schritt*zusammenfassungen*, nicht Werkzeug*daten* — „lies X
+und fasse es zusammen" läuft durch und liefert „ich kenne den Inhalt nicht".
 
 **Der Ollama-Adapter spricht mit einem laufenden Ollama.** Bis hierher lief er
 nur gegen aufgezeichnete Antworten. Er trug auf Anhieb; die einzige Korrektur
@@ -300,6 +311,8 @@ niemand zurück.
 | Agent Runtime | `core/agents/runtime.py` | Werkzeugmenge wird **bei jedem Zugriff** neu berechnet |
 | Modellschleife | `core/agents/model_loop.py` | führt nichts aus, schlägt nur weiter — **noch ohne Endpunkt** |
 | Argumentquelle | `core/orchestrator/plan_arguments.py` | ein Modell füllt die Argumente **eines** geplanten Werkzeugschrittes |
+| Antwortquelle | `core/orchestrator/plan_response.py` | der abschließende `llm`-Schritt; **kein** Werkzeug im Angebot |
+| Modellkontext | `core/orchestrator/plan_context.py` | gemeinsamer Aufbau beider Quellen — die Herkunftsmarkierung gibt es nur einmal |
 
 ### Anmeldung und HTTP
 
@@ -317,7 +330,8 @@ niemand zurück.
 | Werkzeugkatalog | `apps/api/jarvis_api/tools.py` | ein Werkzeug, mit persistentem Grant-Verbrauch verdrahtet |
 | Modellkatalog | `apps/api/jarvis_api/models.py` | ein lokales Modell — ohne ihn bleibt die Werkzeugschicht per Entwurf gesperrt |
 | Werkzeugschritt | `api/routes/runs.py:execute_step` | Aufrufer nennt das Werkzeug; Policy → Gate → Registry |
-| Planschritt | `api/routes/runs.py:advance_run` | **Der Plan** nennt das Werkzeug; die Argumente kommen vom Aufrufer **oder vom Modell** |
+| Planschritt | `api/routes/runs.py:advance_run` | **Der Plan** nennt das Werkzeug; die Argumente kommen vom Aufrufer **oder vom Modell**. `llm`-Schritte laufen, `agent`-Schritte nicht |
+| Abschluss | `core/orchestrator/executor.py:finish` | Gegenstück zu `start()`; über die Übergangstabelle, nicht am Automaten vorbei |
 | Plan | `api/routes/runs.py:_planschritte` | Stand je Schritt bei jedem Abruf neu berechnet — Veralten wird sichtbar |
 | Werkzeug `files.read` | `core/tools/builtin/files.py` | lesend, kontaminiert den Lauf |
 | Werkzeug `calendar.create` | `core/tools/builtin/calendar.py` | schreibend; `outbound_fields` entscheidet über Sanierbarkeit |
@@ -381,8 +395,10 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 | **Werkzeuge — mehr als zwei** | `files.read` (lesend) und `calendar.create` (schreibend). Der Scope-Katalog führt 34 Einträge, der Werkzeugkatalog zwei. Es fehlen `mail.*`, `web.fetch`, `tasks.*`. |
 | **Undo** | `ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
-| **Autonome Abarbeitung** | Halb da. Ein Werkzeugschritt läuft ohne Zutun: Der Plan nennt das Werkzeug, ein Modell füllt die Argumente. Was fehlt, ist die Schleife *darum herum* — jemand muss `advance` weiterhin je Schritt aufrufen, und niemand entscheidet, wann ein Lauf fertig ist. Schritte der Art `llm`/`agent` sind weiterhin nicht ausführbar (siehe unten). |
-| **`llm`- und `agent`-Planschritte** | `ModelLoop` ist gebaut und geprüft, hat aber keinen Endpunkt. `advance_run` füllt die Argumente eines **Werkzeug**schrittes; ein Schritt, der selbst aus einem Modell besteht, wird mit 409 abgewiesen. Das ist der nächste Zuschnitt, nicht ein Rest. |
+| **Autonome Abarbeitung** | Halb da. Jeder einzelne Schritt läuft ohne Zutun, und der Lauf erreicht sein Ende. Was fehlt, ist die Schleife *darum herum*: Jemand muss `advance` weiterhin je Schritt aufrufen. Ein Arbeiter, der das tut, ist dieselbe Baustelle wie die Wiederaufnahme abgebrochener Läufe. |
+| **Ein brauchbarer Antwortschritt** | Er läuft — und sieht nur Schritt*zusammenfassungen*, keine Werkzeug*daten*. „Lies X und fasse es zusammen" endet deshalb mit „ich kenne den Inhalt nicht". Der Weg dorthin führt über Fremdinhalt im Prompt und ist die heikelste offene Entscheidung (Abschnitt 8.3). |
+| **`agent`-Planschritte** | `ModelLoop` ist gebaut und geprüft, hat aber keinen Endpunkt. Ein Schritt, der an einen Sub-Agenten delegiert, wird mit 409 abgewiesen. Dort wählt das Modell die Werkzeuge selbst — eine andere Fläche als „ein Modell füllt die Argumente eines angekündigten Schrittes". |
+| **Modellgetriebener Dateizugriff** | Gemessen: Steht der Pfad im Auftrag, trifft das Modell 3/3. Kennt es nur die freigegebene Wurzel, 0/3. Es braucht **Aufzählbarkeit** (`files.list`), nicht nur Auskunft über die Grenze — Abschnitt 8.4. |
 | **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
 | **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
 | **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
@@ -399,11 +415,16 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
   Argumente selbst angeben. Ob ein zweiter Versuch mit der Fehlermeldung im
   Kontext lohnt, ist offen — er wäre der Anfang einer Schleife, und eine
   Schleife braucht dann auch eine Grenze.
-- `PlanArgumentSource` bekommt die Zusammenfassungen erledigter Schritte als
-  Kontext, nicht deren Daten. Für `files.read` heißt das: Pfad und Bytezahl,
-  nicht der Inhalt. Ein Modell, das den gelesenen Text braucht, um die
-  Argumente zu bilden, bekommt ihn heute nicht — und sobald es ihn bekommt,
-  ist die Herkunftsmarkierung an dieser Stelle die ganze Absicherung.
+- Beide Modellquellen bekommen die Zusammenfassungen erledigter Schritte als
+  Kontext, nicht deren Daten (`plan_context.py`). Das ist inzwischen kein
+  Randfall mehr, sondern der Engpass — siehe Abschnitt 8.3.
+- Der Antwortschritt macht **einen** Versuch, wie die Argumentquelle. Ein
+  Modell, das leeren Text liefert, bekommt keinen zweiten aus dieser Datei.
+- `_falls_fertig` schließt einen Lauf ab, sobald `Plan.ready_steps` nichts mehr
+  nennt. Ein Lauf, dessen letzter Schritt **blockiert** ist, bleibt damit in
+  `executing` stehen und ist weder fertig noch fortsetzbar. Das ist heute der
+  ehrlichere Ausgang als ein `failed`, aber es ist kein Endzustand — wer die
+  Wiederaufnahme baut, muss ihn beantworten.
 
 **Eine Beobachtung, die offen bleibt.** In *einem* `make gate`-Durchgang dieser
 Sitzung scheiterten sieben HTTP-Integrationstests gemeinsam — zwei in
@@ -561,28 +582,107 @@ Fernsteuerung für jeden, der dem Modell Text unterschieben kann, und die
 Grenzen dafür (`max_iterations`, Laufbudget) gehören spezifiziert, bevor sie
 gebraucht werden.
 
-### 2. Der `llm`-Planschritt — und damit die eigentliche Schleife
+### 2. Erledigt: Der `llm`-Schritt läuft, und Läufe werden fertig
 
-**Das ist jetzt der Engpass.** `agents/model_loop.py` ist gebaut, geprüft und
-hat keinen Endpunkt. Ein Planschritt der Art `llm` oder `agent` wird von
-`advance_run` mit 409 abgewiesen; der häufigste Plan des Systems („Wie spät ist
-es?") besteht aus genau einem solchen Schritt und ist deshalb nicht ausführbar.
+Der abschließende Schritt jedes Plans (`kind="llm"`, `target="response"`) wird
+ausgeführt (`core/orchestrator/plan_response.py`). Dem Modell wird dabei **kein**
+Werkzeug angeboten — nicht eines wie bei der Argumentquelle, sondern keines.
+Deshalb braucht dieser Schritt keine Abbruchsemantik: Es gibt nichts, wovon
+abzubrechen wäre. Gegen echtes Ollama nachgemessen: Eine Anfrage ohne `tools`
+bekommt auch keinen Werkzeugaufruf zurück.
 
-Der Unterschied zum eben Gebauten ist der ganze Punkt, und er ist keine
-Größenfrage:
+Damit fiel eine zweite Lücke auf, die die erste verdeckt hatte: **Niemand
+schloss je einen Lauf ab.** `RunStatus.COMPLETED` kam im Anwendungscode nicht
+vor; jeder Lauf blieb in `executing`. Aufgefallen war das nicht, weil der letzte
+Schritt ohnehin nie lief. `ToolExecutor.finish()` ist jetzt das Gegenstück zu
+`start()`.
 
-| | Argumentquelle (fertig) | Modellschleife (offen) |
+**Der Durchstich ist gemessen, nicht behauptet:** über HTTP, mit laufendem
+Ollama — Modell formuliert den Pfad → `files.read` läuft → Lauf kontaminiert →
+Modell formuliert die Antwort → `completed`, `finished_at` gesetzt, beide
+Schritte `done`.
+
+### 3. Werkzeugergebnisse in den Modellkontext — die heikelste Stelle
+
+**Das ist jetzt der Engpass, und er ist beim Messen aufgefallen.** Der
+Durchstich oben lief technisch sauber und lieferte diese Antwort:
+
+> „Der Vorgang bestand darin, eine Datei namens „notiz.md" zu lesen. Die Datei
+> hatte eine Größe von 69 Byte. **Leider kann ich die Inhalte der Datei nicht
+> kennen**, da mir keine Werkzeuge zur Verfügung stehen."
+
+Der Grund steht in `plan_context.py`: Das Modell bekommt die Zusammenfassungen
+erledigter Schritte (`StepOutcome.summary`), also für `files.read` Pfad und
+Bytezahl — **nicht den gelesenen Inhalt.** Damit ist „lies X und fasse es
+zusammen" — der Alltagsfall, an dem sich die Architektur entschieden hat —
+ausführbar und nutzlos.
+
+**Und genau deshalb ist das kein Nachziehen, sondern eine Entscheidung.** Sobald
+Werkzeugdaten in den Prompt gehen, steht Fremdinhalt darin, und die
+Herkunftsmarkierung ist dann nicht mehr Vorsichtsmaßnahme, sondern die ganze
+Absicherung. Die Mechanik dafür ist gebaut (`Message.is_untrusted`,
+`ModelGateway._kontaminiert`) und hat bislang über wenig entschieden. Was vorher
+zu klären ist:
+
+* **Wie viel Inhalt, und woher gekappt?** Ein Kontextfenster ist endlich, und
+  wer kappt, entscheidet, welchen Teil des Fremdinhalts das Modell sieht.
+* **Wo wird gekappt — im Werkzeug oder im Kontextbau?** `ToolResult.data` ist
+  heute vollständig; `StepOutcome.summary` fasst 2000 Zeichen. Beides sind
+  Kandidaten, und sie führen zu verschiedenen Zusicherungen.
+* **Wird die Auszeichnung sichtbar?** Der Adapter überträgt `is_untrusted`
+  bewusst nicht. Fremdinhalt im Prompt als solchen zu markieren wäre eine
+  *andere* Maßnahme (Delimiter, Rollenwechsel) und ist nicht dieselbe Frage.
+
+### 4. Was ein Modell nicht raten kann — und was daraus folgt
+
+Beim Durchstich gemessen und für die nächste Sitzung der wichtigste Einzelbefund
+zur Argumentquelle. Gesucht war `…/projektnotiz.md`, dreimal je Lage:
+
+| Informationslage | Treffer |
+|---|---|
+| Der Pfad steht im Auftrag des Nutzers | **3/3** |
+| Nur die freigegebene Wurzel ist bekannt | **0/3** — geraten wurde `Projektnotiz.md` |
+| Wurzel **und** Dateiname sind bekannt | **3/3** |
+
+Zwei Schlüsse, und der zweite ist der unbequeme:
+
+1. **Die Argumentquelle trägt, wo die Anfrage die Information enthält.** Das ist
+   heute der Normalfall bei `calendar.create` (Titel und Zeit stehen im Wunsch)
+   und bei `files.read`, wenn der Nutzer den Pfad nennt.
+2. **Die freigegebenen Wurzeln offenzulegen würde es *nicht* beheben.** Das war
+   die naheliegende Vermutung; die Messung widerlegt sie — an der Groß- und
+   Kleinschreibung eines Dateinamens. Wer den Modellmodus für `files.read`
+   brauchbar machen will, braucht **Aufzählbarkeit** (ein `files.list`), nicht
+   nur Auskunft über die Grenze. Beides zusammen, nicht eines davon.
+
+Ohne den Pfad im Auftrag schlägt der Schritt fail-closed fehl: Die
+Pfadeinschränkung der Berechtigung weist ab, und die Meldung nennt das Ziel
+nicht. Der Nutzer kann die Argumente weiterhin selbst angeben.
+
+Nebenbei ein Fallstrick für den Werkzeugkatalog: Das Modell gab **3 von 3 Mal
+das Beispiel aus `description` wörtlich zurück** (`/Users/ich/Notizen/plan.md`).
+Ein Beispiel in einer Schemabeschreibung ist für ein Modell ohne andere
+Information keine Illustration, sondern die Antwort.
+
+### 5. Die eigentliche Agentenschleife
+
+`agents/model_loop.py` ist gebaut, geprüft und hat weiterhin keinen Endpunkt.
+Ein Planschritt der Art `agent` wird von `advance_run` mit 409 abgewiesen und in
+`GET /runs/{id}` als `needs_model` geführt.
+
+Der Unterschied zum Gebauten ist keine Größenfrage:
+
+| | Argument-/Antwortquelle (fertig) | Agentenschleife (offen) |
 |---|---|---|
 | Werkzeug wählt | der Plan | das Modell |
-| Angebot | genau eines | die Schnittmenge, je Runde neu |
+| Angebot | genau eines bzw. keines | die Schnittmenge, je Runde neu |
 | Runden | eine | bis `max_iterations` |
 | Abbruch | Rückgabewert | braucht eine Entscheidung |
 
-Die Sicherheitsmechanik dafür steht bereits: `AgentSession.call_tool()` geht
-denselben Weg wie eine Absicht des Nutzers, `AgentRuntime` berechnet das
-Angebot bei jedem Zugriff neu, `ModelLoop` bestätigt nicht und meldet
-`NEEDS_CONFIRMATION` nach oben. Was fehlt, ist der Weg hinein und die Antwort
-auf zwei Fragen, die vorher zu klären sind:
+Die Sicherheitsmechanik steht bereits: `AgentSession.call_tool()` geht denselben
+Weg wie eine Absicht des Nutzers, `AgentRuntime` berechnet das Angebot bei jedem
+Zugriff neu, `ModelLoop` bestätigt nicht und meldet `NEEDS_CONFIRMATION` nach
+oben. Was fehlt, ist der Weg hinein und die Antwort auf zwei Fragen:
 
 * **Wer treibt sie an?** Ein HTTP-Aufruf, der bis zu `max_iterations` Runden
   läuft, hält eine Verbindung über Minuten. Das ist die Stelle, an der ein
@@ -593,13 +693,7 @@ auf zwei Fragen, die vorher zu klären sind:
   müsste jemand die Schleife *fortsetzen*, nicht neu starten. `RunState` trägt
   das Nötige; es ruft nur niemand auf.
 
-**Der kleinste ehrliche Schritt** ist vermutlich nicht die volle Schleife,
-sondern ein `llm`-Schritt mit genau einer Runde: Der Plan sieht ihn vor, das
-Modell antwortet mit Text, der Schritt gilt als erledigt. Damit wird „Wie spät
-ist es?" ausführbar, ohne dass eine Abbruchsemantik erfunden werden muss, die
-niemand geprüft hat.
-
-### 3. Undo — oder die Zusage zurücknehmen
+### 6. Undo — oder die Zusage zurücknehmen
 
 `ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein
 Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf
@@ -622,12 +716,12 @@ Zwei Wege, und die Entscheidung steht aus:
 Was nicht geht: den Wert auf `True` stellen, ohne den Weg zu bauen.
 
 
-### 4. Web-UI, Grundfassung
+### 7. Web-UI, Grundfassung
 
 Chat, Statusleiste, Bestätigungsdialog, Permission Center. Ohne sie ist das
 System nicht bedienbar.
 
-### 5. Weitere Provider
+### 8. Weitere Provider
 
 Anthropic und OpenAI, dieselbe Form wie Ollama. Dabei mitzunehmen, was aus dem
 Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch
@@ -690,6 +784,8 @@ klären, indem der Fall ausgeführt wurde.
 | **Ein Vertragsfeld ohne Mechanismus ist eine Falschaussage** | `ToolSpec.supports_undo` speist `ActionPreview.reversible` — den Satz „das kannst du rückgängig machen", den ein Mensch vor der Bestätigung liest. Einen Einlöseweg für `undo_token` gibt es nicht. `calendar.create` steht deshalb auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Der Handler bekommt keine Identität — und das ist die Absicherung** | `registry.execute()` ruft `handler(**auth.arguments)`. Ein schreibendes Werkzeug braucht trotzdem einen Eigentümer. Ein Feld `user_id` in den Argumenten wäre dieselbe Lücke wie `user_id` im Request-Body, nur eine Schicht tiefer. Der Kalender wird deshalb **beim Verdrahten** aus `CurrentSession` gebunden; der Handler kann keinen fremden benennen, weil er es nicht kann — nicht, weil er es nicht darf. |
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
+| **Ein Beispiel in einer Schemabeschreibung ist die Antwort** | `files.read` führt in `description` das Beispiel `/Users/ich/Notizen/plan.md`. Ein Modell ohne andere Information gab es **3 von 3 Mal wörtlich zurück**. Für einen Menschen ist ein Beispiel eine Illustration; für ein Modell, das raten muss, ist es die naheliegendste Antwort. Wer Werkzeugschemata schreibt, schreibt damit Vorgabewerte. |
+| **Zwei Lücken können sich gegenseitig verdecken** | `RunStatus.COMPLETED` kam im Anwendungscode nicht vor — kein Lauf erreichte je einen Endzustand. Aufgefallen ist das über ein Jahr Projektzeit nicht, weil der letzte Schritt jedes Plans ohnehin nicht ausführbar war. Eine Lücke, die nur sichtbar wird, wenn eine andere geschlossen ist, findet kein Test, den man vorher schreibt. |
 | **Ein Modell folgt einer untergeschobenen Anweisung — verlässlich** | Nicht gelegentlich, nicht unter besonderen Umständen: llama3.1:8b legte 3 von 3 Malen den Termin mit der Adresse an, die in der gelesenen Datei stand. Wer die Architektur gegen „das Modell wird schon merken, dass das nicht der Nutzer war" abwägt, wägt gegen etwas ab, das nicht eintritt. Der Schutz muss folgenlos machen, nicht erkennen. |
 | **Nach `make gen` gehört ein Commit** | `gen-check` prüft gegen den **Commit**-Stand, nicht gegen die Arbeitskopie. Zweimal in einer Sitzung das Gate rot bekommen, weil die Artefakte aktuell, aber nicht committet waren. Das ist kein Fehler des Ziels — nur eine Reihenfolge, die man einmal lernt. |
 | **`open()` auf eine FIFO blockiert** | Die Prüfung „ist das eine reguläre Datei?" steht notwendigerweise *nach* dem Öffnen — vorher gäbe es nur `lstat`, und dazwischen läge das Zeitfenster, das die Bauart schließen soll. Der erste Testlauf hing deshalb. `O_NONBLOCK` löst es; für reguläre Dateien ist die Flagge wirkungslos. Ein Test, der eine FIFO anlegt, ist billig — und er hat einen echten Hänger gefunden. |
