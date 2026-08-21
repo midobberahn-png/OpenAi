@@ -285,6 +285,10 @@ class RunAdvancer:
             seq=schritt.seq,
             session_id=session_id,
             channel=self._channel,
+            # Der Anker der Wiederaufnahme. Hier — und nur hier — läuft ein
+            # *geplanter* Schritt; ``POST /runs/{id}/steps`` lässt die Angabe
+            # weg und wird deshalb keinem Planschritt zugeordnet.
+            plan_step_seq=schritt.seq,
         )
 
         # ⑤ Festschreiben.

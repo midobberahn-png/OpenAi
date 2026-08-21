@@ -57,9 +57,29 @@ from jarvis_core.policy.engine import PolicyEngine
 from jarvis_core.ports.invocations import InvocationStore
 from jarvis_core.runs.fsm import assert_transition
 from jarvis_core.tools.arguments import ArgumentsRejected, validate_arguments
-from jarvis_core.tools.registry import ToolRegistry
+from jarvis_core.tools.registry import (
+    ForgedAuthorization,
+    GrantAlreadyUsed,
+    ToolRegistry,
+    UnguardedExecution,
+    UnknownTool,
+)
 
 __all__ = ["StepExecution", "StepStatus", "ToolExecutor"]
+
+_VOR_DEM_HANDLER: tuple[type[Exception], ...] = (
+    ForgedAuthorization,
+    GrantAlreadyUsed,
+    UnguardedExecution,
+    UnknownTool,
+)
+"""Ausnahmen, die ``ToolRegistry.execute()`` **vor** dem Handler wirft.
+
+Die Liste ist die Grundlage der Unterscheidung „nichts geschehen" gegen
+„Wirkung unklar" und gehört deshalb neben die Registry, deren Prüfreihenfolge
+sie abbildet. Wer dort eine Prüfung ergänzt, ergänzt hier eine Zeile — sonst
+gilt ihre Ausnahme als möglicherweise gewirkt, und das ist der sichere
+Vorgabewert."""
 
 
 StepStatus = Literal[
@@ -127,8 +147,16 @@ class ToolExecutor:
         session_id: UUID,
         channel: ApprovalChannel = "ui",
         agent_name: str | None = None,
+        plan_step_seq: int | None = None,
     ) -> StepExecution:
-        """Ein Werkzeugschritt: fragen, gegebenenfalls bestätigen lassen, ausführen."""
+        """Ein Werkzeugschritt: fragen, gegebenenfalls bestätigen lassen, ausführen.
+
+        ``plan_step_seq`` ist getrennt von ``seq``, und das ist bedeutungstragend:
+        ``seq`` nummeriert den Schritt **in diesem Lauf** und wird auch für
+        Einzelaufrufe vergeben; ``plan_step_seq`` sagt, welcher *geplante*
+        Schritt hier läuft — oder ``None``, wenn keiner. Nur die zweite Angabe
+        taugt als Anker für die Wiederaufnahme.
+        """
         now = self._clock()
 
         limit = tracker.exceeded()
@@ -180,7 +208,9 @@ class ToolExecutor:
         # jeder Wirkung. Ein Aufruf, der erst nach seiner Ausführung
         # protokolliert wird, fehlt genau dann, wenn er abgestürzt ist.
         invocation_id = uuid4()
-        await self._record(run, spec, arguments, decision, invocation_id, now)
+        await self._record(
+            run, spec, arguments, decision, invocation_id, now, step_seq=plan_step_seq
+        )
 
         if decision.effect is PolicyEffect.DENY:
             await self._mark(invocation_id, InvocationStatus.BLOCKED, decision.reason)
@@ -450,7 +480,20 @@ class ToolExecutor:
             # aber sein Fehler wird benannt und nicht in ein Ergebnis
             # umgedeutet (docs/04-orchestrator.md §9).
             tracker.record_step()
-            await self._mark(invocation_id, InvocationStatus.FAILED, str(error))
+            # **Wie es vermerkt wird, hängt an der Frage, wie weit es kam.**
+            #
+            # Die Prüfungen der Registry werfen alle *vor* dem Handler; was
+            # danach fliegt, kommt aus dem Handler selbst — und dann weiß
+            # niemand, ob er gewirkt hat. Beides als ``FAILED`` zu führen war
+            # bequem und für die Wiederaufnahme die falsche Auskunft: „nichts
+            # geschehen" und „vielleicht alles" sind entgegengesetzte
+            # Antworten auf die Frage, ob wiederholt werden darf.
+            vermerk = (
+                InvocationStatus.FAILED
+                if isinstance(error, _VOR_DEM_HANDLER)
+                else InvocationStatus.EFFECT_UNKNOWN
+            )
+            await self._mark(invocation_id, vermerk, str(error))
             await self._log(run, "tool.failed", spec.name, {"error": str(error)}, now)
             return StepExecution(
                 status="failed",
@@ -550,6 +593,7 @@ class ToolExecutor:
         decision: PolicyDecision,
         invocation_id: UUID,
         now: datetime,
+        step_seq: int | None = None,
     ) -> None:
         """Hält den Aufruf mitsamt Entscheidung fest.
 
@@ -563,6 +607,11 @@ class ToolExecutor:
             ToolInvocation(
                 id=invocation_id,
                 run_id=run.id,
+                # Der Anker der Wiederaufnahme: Sie bekommt einen Lauf mit
+                # belegtem ``current_step`` und muss wissen, was aus **diesem**
+                # Schritt geworden ist. ``None`` heißt „gehört zu keinem
+                # geplanten Schritt" — der Weg über ``POST /runs/{id}/steps``.
+                step_seq=step_seq,
                 tool_name=spec.name,
                 arguments=arguments,
                 risk_level=spec.risk,

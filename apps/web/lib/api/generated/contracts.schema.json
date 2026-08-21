@@ -7563,6 +7563,7 @@
             "rejected",
             "executed",
             "failed",
+            "effect_unknown",
             "expired",
             "blocked"
           ],
@@ -7791,18 +7792,17 @@
           "$ref": "#/$defs/InvocationStatus",
           "default": "pending"
         },
-        "step_id": {
+        "step_seq": {
           "anyOf": [
             {
-              "format": "uuid",
-              "type": "string"
+              "type": "integer"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Step Id"
+          "title": "Step Seq"
         },
         "tool_name": {
           "title": "Tool Name",

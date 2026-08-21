@@ -518,6 +518,24 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.db.run_store",
     ),
     Invariant(
+        id="invocation-is-recovery-anchor",
+        title="Das Werkzeugprotokoll beantwortet, was aus einem Schritt wurde",
+        statement=(
+            "Jeder Aufruf eines geplanten Schrittes ist über Lauf und Schrittnummer "
+            "auffindbar und lesbar, und sein Zustand unterscheidet „ohne Wirkung "
+            "gescheitert“ von „Wirkung unklar“."
+        ),
+        why=(
+            "Ein Lauf mit belegtem Schritt ist entweder in Arbeit oder hängengeblieben — "
+            "von außen nicht unterscheidbar. Eine Wiederaufnahme, die das nicht "
+            "nachsehen kann, hat nur zwei Möglichkeiten: blind wiederholen (und damit "
+            "den doppelten Seiteneffekt öffnen) oder gar nichts tun (und den Lauf "
+            "dauerhaft blockieren)."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.db.invocation_store",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(

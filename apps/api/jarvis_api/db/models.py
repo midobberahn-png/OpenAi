@@ -474,9 +474,12 @@ class ToolInvocation(Base):
     run_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    step_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("run_steps.id", ondelete="SET NULL")
-    )
+    step_seq: Mapped[int | None] = mapped_column(Integer)
+    """Der Planschritt dieses Aufrufs — der Anker der Wiederaufnahme.
+
+    ``None`` für ``POST /runs/{id}/steps``: Dort nennt der Aufrufer das
+    Werkzeug, und der Aufruf gehört zu keinem geplanten Schritt."""
+
     tool_name: Mapped[str] = mapped_column(String(80), nullable=False)
     arguments: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     risk_level: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -504,6 +507,9 @@ class ToolInvocation(Base):
         CheckConstraint(
             "policy_decision IN ('allow','confirm','deny')", name="policy_decision_valid"
         ),
+        # Die Frage der Wiederaufnahme: „welcher Aufruf gehört zu Schritt N
+        # dieses Laufs?" Ohne Index ein Tabellenscan je Lauf.
+        Index("ix_tool_invocations_run_step", "run_id", "step_seq"),
     )
 
 

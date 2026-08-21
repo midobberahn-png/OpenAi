@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `efdaf8a` auf `main`.** Dieses Dokument ist der
+> **Stand: 21.08.2026, Commit `b81f061` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -43,11 +43,11 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 56, Remote auf GitHub |
-| Tests | **1085** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **49/50** |
+| Tests | **1102** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **50/51** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
-| Datenbank | 33 Tabellen, 9 Migrationen, bi-direktional geprüft |
+| Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis als Dienste |
 
 ### Was seit dem letzten Dossier geschah
@@ -364,6 +364,7 @@ niemand zurück.
 | Planschritt | `api/routes/runs.py:advance_run` | **Der Plan** nennt das Werkzeug; die Argumente kommen vom Aufrufer **oder vom Modell**. `llm`-Schritte laufen, `agent`-Schritte nicht |
 | Abschluss | `core/orchestrator/executor.py:finish` | Gegenstück zu `start()`; über die Übergangstabelle, nicht am Automaten vorbei |
 | Modellsicht | `core/orchestrator/plan_context.py:modellsicht` | Auswahl nach Deklaration, Kappung, Auszeichnung — an einer Stelle |
+| Werkzeugprotokoll | `api/db/invocation_store.py` | schreibt **und liest**; `step_seq` als Anker der Wiederaufnahme |
 | Schrittanspruch | `api/db/run_store.py:claim_step` | atomar, in **eigener** Transaktion, **vor** Modell und Werkzeug; liefert das Fencing-Token |
 | Ablaufsteuerung | `core/orchestrator/advance.py` | `RunAdvancer` — die Phasen ①–⑤ an einer Stelle, ohne HTTP |
 | Plan | `api/routes/runs.py:_planschritte` | Stand je Schritt bei jedem Abruf neu berechnet — Veralten wird sichtbar |

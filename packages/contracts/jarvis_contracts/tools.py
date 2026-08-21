@@ -333,9 +333,57 @@ class InvocationStatus(StrEnum):
     REJECTED = "rejected"
     EXECUTED = "executed"
     FAILED = "failed"
+    """Endgültig **ohne** Wirkung: Das Gate hat vor dem Handler abgewiesen, oder
+    das Werkzeug hat selbst ``ok=False`` gemeldet."""
+
+    EFFECT_UNKNOWN = "effect_unknown"
+    """Der Handler wurde betreten, und niemand weiß, was daraus wurde.
+
+    **Der Name ist die Zusage.** Er behauptet nicht, dass etwas schiefging,
+    sondern dass es sich nicht feststellen lässt — und das ist für eine
+    Wiederaufnahme die wichtigere Auskunft.
+
+    Zuvor stand hier ``FAILED``, und zwar für zwei entgegengesetzte Lagen: „das
+    Werkzeug hat abgelehnt" und „der Handler ist geflogen". Für den Betrieb war
+    das gleichgültig; für die Frage „darf ich das wiederholen?" ist es der
+    Unterschied zwischen *ja* und *auf keinen Fall*.
+    """
+
     EXPIRED = "expired"
     BLOCKED = "blocked"
     """Von der Policy Engine gesperrt — z. B. durch Taint."""
+
+    @property
+    def is_settled(self) -> bool:
+        """Steht das Ergebnis fest?
+
+        ``EFFECT_UNKNOWN`` ausdrücklich **nicht**: Ein Zustand, der als
+        erledigt zählt, käme nie zur Wiederaufnahme — und genau dorthin gehört
+        er.
+        """
+        return self in {
+            InvocationStatus.EXECUTED,
+            InvocationStatus.FAILED,
+            InvocationStatus.BLOCKED,
+            InvocationStatus.REJECTED,
+            InvocationStatus.EXPIRED,
+        }
+
+    @property
+    def may_retry(self) -> bool:
+        """Darf ein Aufruf in diesem Zustand automatisch wiederholt werden?
+
+        Die Zusage steht am Vertrag und nicht in der Wiederaufnahme: Wer später
+        entscheidet, was wiederholt wird, soll die Frage nicht neu beantworten
+        müssen — und sie nicht anders beantworten können.
+
+        ``FAILED`` steht hier bewusst **nicht** drin. „Das Werkzeug hat
+        abgelehnt" heißt nicht „es ist nichts geschehen": Ein Werkzeug kann
+        halb gewirkt und dann ``ok=False`` gemeldet haben. Ob ein solcher
+        Aufruf wiederholbar ist, hängt am Werkzeug (``ToolSpec.idempotent``)
+        und nicht am Protokolleintrag.
+        """
+        return self in {InvocationStatus.BLOCKED, InvocationStatus.REJECTED}
 
     def __str__(self) -> str:
         return self.value
@@ -372,7 +420,17 @@ class ToolInvocation(BaseModel):
 
     id: UUID
     run_id: UUID
-    step_id: UUID | None = None
+    step_seq: int | None = None
+    """Der Planschritt, zu dem dieser Aufruf gehört — oder ``None``.
+
+    Ersetzt ein ``step_id: UUID``, das niemand setzte und das auch nicht passte:
+    Ein Planschritt trägt eine Nummer, keine UUID.
+
+    ``None`` ist keine Lücke, sondern die richtige Auskunft für
+    ``POST /runs/{id}/steps`` — dort nennt der Aufrufer das Werkzeug, und der
+    Aufruf gehört zu keinem geplanten Schritt. Die Wiederaufnahme darf ihn
+    deshalb auch keinem zuordnen.
+    """
     tool_name: str
     arguments: dict[str, Any]
     risk_level: RiskLevel
