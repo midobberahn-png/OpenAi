@@ -318,3 +318,106 @@ class TestDerDirekteSchrittBekommtKeinenAnspruch:
             "Zwei ausdrückliche Befehle ergeben zwei Termine. Wäre das nicht so, "
             "ließe sich dasselbe Werkzeug nicht zweimal mit anderen Argumenten aufrufen."
         )
+
+
+class TestFehlerNachDerWirkung:
+    """**Der Anspruch darf nicht zurück, sobald etwas geschehen sein kann.**
+
+    Zweiter Prüfbefund zu derselben Stelle, und er sitzt genau dort, wo der
+    erste behoben wurde: Der Anspruch stand danach zwar *vor* der Wirkung — aber
+    ein Fehler *nach* der Wirkung gab ihn wieder frei.
+
+    Nachgemessen: Handler legt den Termin an, ``runs.save()`` scheitert, die
+    Ausnahme läuft nach oben, der Anspruch wird freigegeben, der Wiederholer
+    sieht denselben Schritt als fällig — **zwei Termine.**
+
+    Kein Replay desselben Grants: Der alte bleibt verbraucht, der zweite
+    Versuch bekommt eine eigene Invocation und einen eigenen Grant. Der
+    Einmaligkeitsanspruch am Grant greift hier gar nicht; er sichert *einen
+    Aufruf*, nicht *einen Planschritt*.
+
+    **Die Richtung ist höchstens einmal.** Ist unklar, ob gewirkt wurde, bleibt
+    der Schritt beansprucht und der Lauf steht. Ein Termin, der vielleicht
+    fehlt, lässt sich erneut anstoßen; einer, der zweimal im Kalender steht,
+    nicht.
+    """
+
+    @staticmethod
+    def _speichern_scheitert(monkeypatch, *, beim: int = 1):
+        """Lässt ``runs.save`` genau einmal scheitern — nach dem Handler.
+
+        Ein echter Ausfall an dieser Stelle ist keine Erfindung: eine
+        abgerissene Verbindung, ein Serialisierungsfehler, ein ``RunStateConflict``
+        aus einem parallelen Schreiber. Für eine Sicherheitszusage genügt ein
+        erreichbarer Fehlerpfad.
+        """
+        from jarvis_api.db.run_store import PostgresRunStore
+
+        echt = PostgresRunStore.save
+        zaehler = {"n": 0}
+
+        async def kaputt(self, run, *, erwarteter_status):
+            zaehler["n"] += 1
+            if zaehler["n"] == beim:
+                raise RuntimeError("Verbindung weg — nach dem Handler, vor dem Commit des Laufs.")
+            return await echt(self, run, erwarteter_status=erwarteter_status)
+
+        monkeypatch.setattr(PostgresRunStore, "save", kaputt)
+
+    @pytest.mark.invariant("plan-step-claimed-before-effect")
+    async def test_ein_fehler_nach_der_wirkung_gibt_den_anspruch_nicht_zurueck(
+        self, client: AsyncClient, engine: AsyncEngine, monkeypatch
+    ) -> None:
+        user_id = await _angemeldet(client, engine)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+        run_id = await _lauf_mit_terminschritt(client, engine)
+
+        self._speichern_scheitert(monkeypatch)
+
+        with pytest.raises(Exception, match="Verbindung weg"):
+            await client.post(f"/runs/{run_id}/advance", json={"arguments": TERMIN})
+
+        termine, _, _ = await _zaehlung(engine, user_id, run_id)
+        assert termine == 1, "Der Handler lief einmal — das ist der Ausgangspunkt."
+
+        async with engine.begin() as conn:
+            zustand = (
+                await conn.execute(
+                    text("SELECT state FROM runs WHERE id = :r"), {"r": uuid.UUID(run_id)}
+                )
+            ).scalar_one()
+        assert zustand.get("current_step") == 1, (
+            "Der Anspruch muss stehen bleiben. Gibt ihn ein Fehler nach der Wirkung "
+            "zurück, legt der nächste Versuch denselben Termin ein zweites Mal an."
+        )
+
+    @pytest.mark.invariant("plan-step-claimed-before-effect")
+    async def test_der_wiederholer_bekommt_keinen_zweiten_termin(
+        self, client: AsyncClient, engine: AsyncEngine, monkeypatch
+    ) -> None:
+        """Die Wirkung des Befunds, nicht nur sein Zustand.
+
+        Geprüft wird der Kalender und nicht das Zustandsfeld: Ein Anspruch, der
+        richtig aussieht und trotzdem einen zweiten Termin zulässt, hätte den
+        Test darüber bestanden.
+        """
+        user_id = await _angemeldet(client, engine)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+        run_id = await _lauf_mit_terminschritt(client, engine)
+
+        self._speichern_scheitert(monkeypatch)
+        with pytest.raises(Exception, match="Verbindung weg"):
+            await client.post(f"/runs/{run_id}/advance", json={"arguments": TERMIN})
+
+        # Der Wiederholer — genau das, was ein Client oder ein Worker täte.
+        wieder = await client.post(f"/runs/{run_id}/advance", json={"arguments": TERMIN})
+        assert wieder.status_code == 409, (
+            f"Der Wiederholer darf nicht ausführen, sondern muss den belegten Schritt "
+            f"vorfinden. Bekam: {wieder.status_code} {wieder.text[:200]}"
+        )
+
+        termine, _, _ = await _zaehlung(engine, user_id, run_id)
+        assert termine == 1, (
+            f"{termine} Termine nach einem Wiederholungsversuch. Der Anspruch auf einen "
+            "Planschritt muss eine mögliche Wirkung überleben."
+        )

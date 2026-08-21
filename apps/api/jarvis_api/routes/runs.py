@@ -682,43 +682,102 @@ async def advance_run(
     if lauf.status is RunStatus.QUEUED:
         lauf = executor.start(lauf, tracker)
 
-    # Ab hier gibt jeder Weg, der **nicht** bis zum ``save`` kommt, den Anspruch
-    # zurück. ``save`` selbst gibt ihn frei, weil der gespeicherte Zustand
-    # ``current_step`` nicht mehr führt — bei einem erledigten Schritt setzt
-    # ``with_step_done`` ihn auf ``None``.
+    # Ab hier gehört der Schritt diesem Request. Wer ihn zurückgibt, entscheiden
+    # die beiden Funktionen unten — und zwar je nach **Phase**, nicht pauschal.
     #
-    # Ein ``finally`` wäre hier falsch: Es gäbe den Anspruch auch dann zurück,
-    # wenn der Schritt gewirkt hat.
-    try:
-        if schritt_plan.kind != "tool":
-            return await _antwortschritt(
-                lauf,
-                tracker,
-                executor=executor,
-                runs=runs,
-                antworten=antworten,
-                plan=plan,
-                schritt_plan=schritt_plan,
-                status_vorher=status_vorher,
-            )
-        return await _werkzeugschritt(
+    # Ein umfassendes ``except`` an dieser Stelle wäre bequem und war der
+    # zweite Prüfbefund zu derselben Stelle: Es gab den Anspruch auch dann
+    # zurück, wenn der Handler bereits gewirkt hatte und nur das Speichern
+    # scheiterte. Nachgemessen: Termin angelegt, ``save`` scheitert, Anspruch
+    # frei, Wiederholer legt denselben Termin ein zweites Mal an.
+    if schritt_plan.kind != "tool":
+        return await _antwortschritt(
             lauf,
             tracker,
             executor=executor,
             runs=runs,
-            tools=tools,
-            modell=modell,
+            antworten=antworten,
             plan=plan,
             schritt_plan=schritt_plan,
-            session=session,
-            vorgegeben=payload.arguments,
             status_vorher=status_vorher,
         )
-    except BaseException:
-        # Jeder Weg, der nicht bis zum ``save`` kommt, gibt den Anspruch zurück.
-        # Ein ``finally`` wäre falsch: Es gäbe ihn auch nach getaner Wirkung frei.
-        await runs.release_step(lauf.id)
-        raise
+    return await _werkzeugschritt(
+        lauf,
+        tracker,
+        executor=executor,
+        runs=runs,
+        tools=tools,
+        modell=modell,
+        plan=plan,
+        schritt_plan=schritt_plan,
+        session=session,
+        vorgegeben=payload.arguments,
+        status_vorher=status_vorher,
+    )
+
+
+async def _argumente_fuer(
+    lauf: Run,
+    tracker: BudgetTracker,
+    *,
+    tools: ToolRegistry,
+    modell: PlanArgumentSource,
+    plan: Plan,
+    schritt_plan: PlanStep,
+    vorgegeben: dict[str, Any] | None,
+) -> tuple[dict[str, Any], Run]:
+    """Die Argumente eines Werkzeugschrittes — und der fortgeschriebene Lauf.
+
+    **Die Vorbereitungsphase, und sie ist nachweislich folgenlos.** Hier wird
+    kein Aufruf protokolliert, kein Grant ausgestellt, kein Handler gerufen. Nur
+    deshalb darf ein Fehler hier den Anspruch auf den Schritt zurückgeben.
+
+    Der Lauf kommt mit zurück, weil eine Modellantwort ihn kontaminieren kann.
+    Diese Kontamination muss gelten, **bevor** das Taint-Gate entscheidet — ein
+    Rückgabewert und kein Seiteneffekt, damit die Reihenfolge an der
+    Aufrufstelle sichtbar bleibt.
+    """
+    if vorgegeben is not None:
+        return vorgegeben, lauf
+
+    spec = tools.require(schritt_plan.target)
+    try:
+        formuliert = await modell.for_step(
+            spec=spec,
+            step=schritt_plan,
+            run=lauf,
+            goal=plan.goal,
+            # Das geroutete Modell des Laufs, nicht eines aus dem Request. Die
+            # Wahl steht seit ``create_run`` fest und hat dort die Datenklasse
+            # berücksichtigt; sie hier neu treffen zu lassen hieße, die
+            # Obergrenze nachträglich zu verschieben.
+            model=lauf.routing.model if lauf.routing else "",
+        )
+    except ArgumentsUnavailable as ohne:
+        # Kein Serverfehler: Das Modell hat nicht geliefert oder durfte nicht
+        # gefragt werden. Beides ist eine Lage, in der der Nutzer etwas tun kann
+        # — die Argumente selbst angeben.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ohne)) from ohne
+
+    # Der Aufruf hat Tokens gekostet und wird gebucht. Ein Modellaufruf, den
+    # niemand zählt, macht aus der Budgetgrenze eine Empfehlung — und dies ist
+    # der erste Aufruf im System, der ohne ausdrücklichen Wunsch des Nutzers
+    # geschieht.
+    tracker.record_model_call(
+        tokens_in=formuliert.usage.tokens_in,
+        tokens_out=formuliert.usage.tokens_out,
+        cost_eur=formuliert.usage.cost_eur,
+    )
+
+    # Die Kontamination der Antwort **vor** der Ausführung fortschreiben.
+    #
+    # Ein Modell, das den Verlauf eines kontaminierten Laufs gelesen hat,
+    # liefert Argumente, die als Fremdinhalt gelten. Käme das erst danach in den
+    # Lauf, entschiede das Taint-Gate über einen Zustand von vorhin.
+    # ``with_taint`` kann nur erhöhen — die Monotonie liegt im Vertrag.
+    if formuliert.taints:
+        lauf = lauf.with_taint(TaintLevel.TAINTED)
+    return formuliert.arguments, lauf
 
 
 async def _werkzeugschritt(
@@ -735,56 +794,57 @@ async def _werkzeugschritt(
     vorgegeben: dict[str, Any] | None,
     status_vorher: RunStatus,
 ) -> StepView:
-    """Ein geplanter Werkzeugschritt — Argumente aus dem Request oder vom Modell.
+    """Ein geplanter Werkzeugschritt — mit einer Grenze in der Mitte.
 
-    Ausgelagert als Gegenstück zu ``_antwortschritt``, damit der Anspruch auf den
-    Schritt **eine** Freigabestelle hat. Zwei Fehlerpfade mit je eigenem
-    ``release_step`` wären zwei Gelegenheiten, einen zu vergessen — und ein
-    vergessener Anspruch blockiert den Lauf dauerhaft.
+    **Zwei Phasen, und die Grenze dazwischen ist die ganze Zusage.**
+
+    *Vorbereitung* (``_argumente_fuer``) — hier ist nichts geschehen. Ein Fehler
+    gibt den Anspruch auf den Schritt zurück, und das ist nachweisbar folgenlos.
+
+    *Wirkung* (ab ``executor.execute_tool``) — ab hier gibt **kein** Weg den
+    Anspruch mehr zurück. Auch nicht, wenn das Speichern scheitert; auch nicht
+    bei einem Abbruch von außen.
+
+    Der Grund ist ein Prüfbefund zu genau dieser Stelle. Zuvor umschloss ein
+    ``except BaseException`` beide Phasen. Nachgemessen: Der Handler legte den
+    Termin an, ``runs.save()`` scheiterte, die Ausnahme gab den Anspruch frei,
+    der Wiederholer fand den Schritt erneut fällig — **zwei Termine.**
+
+    Kein Replay desselben Grants: Der alte blieb verbraucht, der zweite Versuch
+    bekam eine eigene Invocation und einen eigenen Grant. Der
+    Einmaligkeitsanspruch am Grant sichert *einen Aufruf*, nicht *einen
+    Planschritt*. Zwei Zusagen, zwei Ansprüche.
+
+    **Ist unklar, ob gewirkt wurde, bleibt der Anspruch stehen.** Der Lauf steht
+    dann in ``executing`` mit belegtem ``current_step`` — sichtbar und für die
+    Wiederaufnahme abgebrochener Läufe auffindbar (``is_resumable``). Das ist
+    die gewollte Richtung: Ein Termin, der vielleicht fehlt, lässt sich erneut
+    anstoßen; einer, der zweimal im Kalender steht, nicht.
+
+    Der Erfolgsweg braucht keine ausdrückliche Freigabe: ``with_step_done``
+    setzt ``current_step`` auf ``None``, und das Speichern schreibt es mit.
     """
-    # Die Argumente — aus dem Request oder aus dem Modell.
-    argumente = vorgegeben
-    if argumente is None:
-        spec = tools.require(schritt_plan.target)
-        try:
-            formuliert = await modell.for_step(
-                spec=spec,
-                step=schritt_plan,
-                run=lauf,
-                goal=plan.goal,
-                # Das geroutete Modell des Laufs, nicht eines aus dem Request.
-                # Die Wahl steht seit ``create_run`` fest und hat dort die
-                # Datenklasse berücksichtigt; sie hier neu treffen zu lassen
-                # hieße, die Obergrenze nachträglich zu verschieben.
-                model=lauf.routing.model if lauf.routing else "",
-            )
-        except ArgumentsUnavailable as ohne:
-            # Kein Serverfehler: Das Modell hat nicht geliefert oder durfte
-            # nicht gefragt werden. Beides ist eine Lage, in der der Nutzer
-            # etwas tun kann — die Argumente selbst angeben.
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ohne)) from ohne
-
-        argumente = formuliert.arguments
-
-        # Der Aufruf hat Tokens gekostet und wird gebucht. Ein Modellaufruf,
-        # den niemand zählt, macht aus der Budgetgrenze eine Empfehlung — und
-        # dies ist der erste Aufruf im System, der ohne ausdrücklichen Wunsch
-        # des Nutzers geschieht.
-        tracker.record_model_call(
-            tokens_in=formuliert.usage.tokens_in,
-            tokens_out=formuliert.usage.tokens_out,
-            cost_eur=formuliert.usage.cost_eur,
+    # -- Phase 1: Vorbereitung ------------------------------------------------
+    try:
+        argumente, lauf = await _argumente_fuer(
+            lauf,
+            tracker,
+            tools=tools,
+            modell=modell,
+            plan=plan,
+            schritt_plan=schritt_plan,
+            vorgegeben=vorgegeben,
         )
+    except BaseException:
+        # ``BaseException`` und nicht ``Exception``: Auch ein Abbruch von außen
+        # — ein Client, der während des sekundenlangen Modellaufrufs auflegt —
+        # soll den Schritt nicht dauerhaft belegen. Zulässig ist das nur, weil
+        # diese Phase nachweislich nichts bewirkt hat; nach der Grenze unten
+        # wäre dieselbe Zeile der Befund, der sie veranlasst hat.
+        await runs.release_step(lauf.id)
+        raise
 
-        # Die Kontamination der Antwort **vor** der Ausführung fortschreiben.
-        #
-        # Ein Modell, das den Verlauf eines kontaminierten Laufs gelesen hat,
-        # liefert Argumente, die als Fremdinhalt gelten. Käme das erst danach
-        # in den Lauf, entschiede das Taint-Gate über einen Zustand von vorhin.
-        # ``with_taint`` kann nur erhöhen — die Monotonie liegt im Vertrag.
-        if formuliert.taints:
-            lauf = lauf.with_taint(TaintLevel.TAINTED)
-
+    # -- Phase 2: Wirkung -----------------------------------------------------
     ausgefuehrt = await executor.execute_tool(
         lauf,
         tracker,
@@ -849,7 +909,42 @@ async def _antwortschritt(
     damit ``GET /runs/{id}`` es zeigt und eine Oberfläche den Text kennzeichnen
     kann. Diese Lücke schließt der Kern nicht; er liefert die Auskunft, ohne
     die niemand sie schließen kann.
+
+    **Und deshalb gibt hier jeder Fehler den Anspruch zurück** — anders als beim
+    Werkzeugschritt, der eine Grenze in der Mitte hat. Dieser Schritt wirkt
+    nirgends nach außen: Scheitert er nach dem Modellaufruf, ist nichts
+    geschehen außer verbrauchten Tokens. Ein Wiederholer fragt das Modell
+    erneut und legt nichts doppelt an. Den Schritt trotzdem belegt zu lassen,
+    wäre eine Sperre ohne Zweck.
     """
+    try:
+        return await _antwort_formulieren(
+            lauf,
+            tracker,
+            executor=executor,
+            runs=runs,
+            antworten=antworten,
+            plan=plan,
+            schritt_plan=schritt_plan,
+            status_vorher=status_vorher,
+        )
+    except BaseException:
+        await runs.release_step(lauf.id)
+        raise
+
+
+async def _antwort_formulieren(
+    lauf: Run,
+    tracker: BudgetTracker,
+    *,
+    executor: ToolExecutor,
+    runs: PostgresRunStore,
+    antworten: ModelResponse,
+    plan: Plan,
+    schritt_plan: PlanStep,
+    status_vorher: RunStatus,
+) -> StepView:
+    """Der Ablauf selbst — die Freigabe liegt bei ``_antwortschritt``."""
     try:
         antwort = await antworten.for_step(
             step=schritt_plan,
