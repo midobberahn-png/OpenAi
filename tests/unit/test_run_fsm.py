@@ -171,3 +171,96 @@ class TestRunState:
         aid = uuid4()
         s = RunState(current_step=3, claim_id=uuid4(), awaiting_action_id=aid)
         assert s.awaiting_action_id == aid
+
+
+class TestZustandsuebergaengeErhaltenIhreInvarianten:
+    """Jede Fortschreibung muss einen **neu validierbaren** Zustand erzeugen.
+
+    **Herkunft: externer Prüfbericht, und der Befund war real.**
+    ``with_correction()`` setzte ``current_step=None`` und ließ ``claim_id``
+    stehen — einen Zustand, den der eigene Validator ausdrücklich verbietet.
+    Aufgefallen ist das niemandem, weil ``model_copy(update=...)`` **nicht
+    erneut validiert**: Das Objekt entsteht, die Prüfung greift erst beim
+    nächsten Laden aus der Datenbank.
+
+    Das ist die gefährlichere Sorte Fehler. Er entsteht beim Schreiben und
+    schlägt beim Lesen zu — also nach einem Neustart, im schlechtestmöglichen
+    Moment, und genau dann, wenn eine Wiederaufnahme den Lauf braucht.
+
+    Diese Klasse prüft deshalb nicht einen Fall, sondern **jede** Methode, die
+    einen neuen Zustand erzeugt. Wer eine weitere ergänzt, ergänzt hier eine
+    Zeile — und merkt sofort, wenn sie eine Invariante bricht.
+    """
+
+    @staticmethod
+    def _neu_validierbar(zustand: RunState) -> RunState:
+        """Der Kern: durch ``model_dump()`` und zurück, wie nach einem Neustart."""
+        return RunState.model_validate(zustand.model_dump(mode="json"))
+
+    def test_frischer_zustand(self) -> None:
+        self._neu_validierbar(RunState())
+
+    def test_nach_abgeschlossenem_schritt(self) -> None:
+        beansprucht = RunState(current_step=1, claim_id=uuid4())
+        self._neu_validierbar(beansprucht.with_step_done(_outcome(1)))
+
+    def test_nach_einer_korrektur_ohne_laufenden_schritt(self) -> None:
+        zustand = RunState(completed_steps=[_outcome(1), _outcome(2)])
+        korrigiert = zustand.with_correction(
+            Correction(text="Ich meinte unter 1.000 Euro.", at=NOW, invalidated_steps=[2])
+        )
+        self._neu_validierbar(korrigiert)
+
+    @pytest.mark.invariant("plan-step-claim-is-fenced")
+    def test_nach_einer_korrektur_mit_laufendem_schritt(self) -> None:
+        """**Der gemeldete Fall.**
+
+        Vorher entstand hier ``current_step=None`` bei stehender ``claim_id``.
+        """
+        beansprucht = RunState(completed_steps=[_outcome(1)], current_step=2, claim_id=uuid4())
+        korrigiert = beansprucht.with_correction(
+            Correction(text="Doch nicht Dienstag.", at=NOW, invalidated_steps=[1])
+        )
+        self._neu_validierbar(korrigiert)
+
+
+class TestKorrekturLaesstDenAnspruchInRuhe:
+    """Was eine Korrektur mit einem **laufenden** Schritt macht: nichts.
+
+    Die naheliegende Reparatur wäre gewesen, in ``with_correction`` auch
+    ``claim_id=None`` zu setzen. Sie wäre intern konsistent und fachlich
+    falsch: Ein Wertobjekt im Arbeitsspeicher eines Aufrufers kann einen
+    Arbeiter nicht anhalten, der gerade ein Werkzeug ausführt. Es könnte ihm
+    nur den Anspruch unter den Füßen wegziehen — und damit denselben doppelten
+    Seiteneffekt öffnen, gegen den der Anspruch gebaut wurde.
+
+    Eine Korrektur wird deshalb **vermerkt** und hebt keinen Anspruch auf. Wer
+    einen laufenden Schritt tatsächlich abbrechen will, braucht einen
+    gefencten Übergang mit der Anspruchskennung — und den gibt es noch nicht.
+    Solange er fehlt, ist „vermerken und weiterlaufen lassen" die einzige
+    Antwort, die nichts kaputt macht.
+    """
+
+    def test_der_laufende_schritt_bleibt_beansprucht(self) -> None:
+        kennung = uuid4()
+        beansprucht = RunState(current_step=2, claim_id=kennung)
+        korrigiert = beansprucht.with_correction(Correction(text="Anders.", at=NOW))
+        assert korrigiert.current_step == 2
+        assert korrigiert.claim_id == kennung
+
+    def test_die_korrektur_wird_trotzdem_vermerkt(self) -> None:
+        """Sonst ginge sie verloren, und der Nutzer hätte umsonst korrigiert."""
+        beansprucht = RunState(current_step=2, claim_id=uuid4())
+        korrigiert = beansprucht.with_correction(Correction(text="Anders.", at=NOW))
+        assert len(korrigiert.corrections) == 1
+        assert korrigiert.corrections[0].text == "Anders."
+
+    def test_erledigte_schritte_fallen_weiterhin_weg(self) -> None:
+        """Der eigentliche Zweck der Korrektur bleibt unberührt."""
+        beansprucht = RunState(
+            completed_steps=[_outcome(1), _outcome(2)], current_step=3, claim_id=uuid4()
+        )
+        korrigiert = beansprucht.with_correction(
+            Correction(text="Anders.", at=NOW, invalidated_steps=[2])
+        )
+        assert korrigiert.completed_seqs == {1}

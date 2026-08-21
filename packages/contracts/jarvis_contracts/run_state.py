@@ -163,13 +163,33 @@ class RunState(BaseModel):
 
         Ein Abbruch mit Neustart verwürfe alles und kostete die volle Latenz
         erneut.
+
+        **Ein laufender Schritt bleibt beansprucht.** Diese Methode setzte
+        früher ``current_step=None`` und ließ ``claim_id`` stehen — einen
+        Zustand, den der Validator oben ausdrücklich verbietet. Aufgefallen ist
+        das niemandem, weil ``model_copy(update=...)`` nicht erneut prüft: Der
+        Fehler entsteht beim Schreiben und schlägt beim Lesen zu, also nach
+        einem Neustart und damit genau dann, wenn eine Wiederaufnahme den Lauf
+        braucht. Gemeldet aus einer externen Prüfung.
+
+        Die naheliegende Reparatur wäre gewesen, ``claim_id`` mit zu löschen.
+        Sie wäre intern konsistent und fachlich falsch: Ein Wertobjekt im
+        Arbeitsspeicher eines Aufrufers kann keinen Arbeiter anhalten, der
+        gerade ein Werkzeug ausführt. Es könnte ihm nur den Anspruch unter den
+        Füßen wegziehen — und damit denselben doppelten Seiteneffekt öffnen,
+        gegen den der Anspruch gebaut wurde.
+
+        Eine Korrektur wird deshalb **vermerkt** und hebt keinen Anspruch auf.
+        Wer einen laufenden Schritt tatsächlich abbrechen will, braucht einen
+        gefencten Übergang mit der Anspruchskennung; den gibt es noch nicht,
+        und solange er fehlt, ist „vermerken und weiterlaufen lassen" die
+        einzige Antwort, die nichts kaputt macht.
         """
         invalidated = set(correction.invalidated_steps)
         kept = [s for s in self.completed_steps if s.seq not in invalidated]
         return self.model_copy(
             update={
                 "completed_steps": kept,
-                "current_step": None,
                 "corrections": [*self.corrections, correction],
             }
         )

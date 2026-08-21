@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `f2ec2b3` auf `main`.** Dieses Dokument ist der
+> **Stand: 21.08.2026, Commit `efdaf8a` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -43,7 +43,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 56, Remote auf GitHub |
-| Tests | **1085** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
+| Tests | **1085** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
 | **Security Invariant Coverage** | **49/50** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
@@ -469,6 +469,15 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
   `executing` stehen und ist weder fertig noch fortsetzbar. Das ist heute der
   ehrlichere Ausgang als ein `failed`, aber es ist kein Endzustand — wer die
   Wiederaufnahme baut, muss ihn beantworten.
+
+- **`model_copy(update=...)` validiert nicht erneut.** Der Befund aus der
+  jüngsten Prüfung lag genau dort: `with_correction()` erzeugte einen Zustand,
+  den der eigene Validator verbietet, und niemandem fiel es auf, weil die
+  Prüfung erst beim *Laden* greift — also nach einem Neustart und damit genau
+  dann, wenn eine Wiederaufnahme den Lauf braucht. Behoben, und
+  `TestZustandsuebergaengeErhaltenIhreInvarianten` prüft seitdem **jede**
+  Fortschreibung auf Neuvalidierbarkeit. Wer eine ergänzt, ergänzt dort eine
+  Zeile.
 
 **Eine Beobachtung, die offen bleibt.** In *einem* `make gate`-Durchgang dieser
 Sitzung scheiterten sieben HTTP-Integrationstests gemeinsam — zwei in
@@ -922,6 +931,8 @@ klären, indem der Fall ausgeführt wurde.
 | **Der Handler bekommt keine Identität — und das ist die Absicherung** | `registry.execute()` ruft `handler(**auth.arguments)`. Ein schreibendes Werkzeug braucht trotzdem einen Eigentümer. Ein Feld `user_id` in den Argumenten wäre dieselbe Lücke wie `user_id` im Request-Body, nur eine Schicht tiefer. Der Kalender wird deshalb **beim Verdrahten** aus `CurrentSession` gebunden; der Handler kann keinen fremden benennen, weil er es nicht kann — nicht, weil er es nicht darf. |
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
 | **pytest leitet `tmp_path` vom Testnamen ab** | Ein Test hieß `test_3_zugangsdaten_stufen_hoch`, der Pfad landete im Lauf-Input, und der Klassifikator sah „zugangsdaten" — der Test war **grün aus dem falschen Grund**, die geprüfte Hochstufung kam nicht vom Dateiinhalt. Wer Pfade in Eingaben schreibt, die ein Klassifikator liest, misst den Testnamen mit. |
+| **`git commit --amend` macht einen notierten Hash ungültig** | Der Dossierkopf trug `f2ec2b3` — ich hatte `git rev-parse HEAD` gelesen, die Zeile geschrieben und **danach** amendiert. Der Hash lebte nur noch in meinem lokalen Objektspeicher; im Prüfcheckout gab es ihn nicht, und ein Prüfer hat ihn zu Recht als tot gemeldet. Ausgerechnet an der Stelle, die selbst verlangt, den Commit zu vergleichen. **Der Kopf nennt den letzten gepushten Commit** — nie einen, der noch amendiert werden könnte, und nie den eigenen. |
+| **Eine Zahl im Dossier veraltet, eine Bedingung nicht** | „ohne Dienste werden 178 übersprungen" war nach zwei Blöcken falsch (202). Wo eine Zahl nur eine Bedingung illustriert, gehört die Bedingung hin. |
 | **Ein Anspruch in einem Dokument, das andere im Ganzen schreiben, ist kein Anspruch** | Der Schrittanspruch lag in `RunState`, und `save()` schreibt das **ganze** `state`-Dokument. Die Fencing-Bedingung im `WHERE` schützte nur den, der sich auf den Anspruch *berief* — der anspruchslose Pfad (`/steps`) ging daran vorbei und wischte ihn weg. Gemessen: danach war der Schritt wieder frei, obwohl sein Inhaber noch arbeitete, und derselbe doppelte Seiteneffekt stand über eine andere Tür wieder offen. Behoben mit einem `CASE`, der die Anspruchsfelder aus der Zeile übernimmt, wenn kein Anspruch vorgelegt wird. **Sauberer wären eigene Spalten** — das braucht eine Migration und steht aus. |
 | **Ein Parameter, der nur in `IS NULL` vorkommt, braucht einen Cast** | `AND (:x IS NULL OR …)` bricht in PostgreSQL mit `AmbiguousParameterError` ab — der Typ lässt sich aus der Verwendung nicht herleiten. `CAST(:x AS text) IS NULL`. Kostet zwei Minuten, wenn man es weiß, und einen verwirrenden Testlauf, wenn nicht. |
 | **Ein Zustand, den niemand auflösen kann, gehört nicht behandelt, sondern verhindert** | Seit die Freigabe eines Planschrittes die Anspruchskennung verlangt, wäre ein `current_step` ohne `claim_id` für immer belegt. Statt einen Sonderweg dafür zu bauen, weist `RunState` den Zustand zurück. Drei Bestandstests bauten ihn und wurden nachgezogen — das war der Vertrag, der sich verschärft hat, nicht Rot, das grün gepatcht wurde. |
