@@ -72,7 +72,9 @@ from jarvis_core.orchestrator import (
     route,
     utc_now,
 )
+from jarvis_core.orchestrator.plan_arguments import PlanArgumentSource
 from jarvis_core.ports.runs import RunStateConflict
+from jarvis_core.tools import ToolRegistry
 
 __all__ = ["router"]
 
@@ -649,6 +651,30 @@ async def advance_run(
             )
 
     status_vorher = lauf.status
+
+    # **Der Anspruch auf den Schritt — vor jeder Wirkung.**
+    #
+    # Aus einem externen Prüfbefund, und er sitzt an derselben Achse wie der
+    # Grant-Verbrauch: Wo entsteht die Wirkung, und wie weit ist der Anspruch
+    # davon entfernt? Bei ``runs.save()`` ist er einen Schritt zu spät. Sechs
+    # parallele Aufrufe eines geplanten ``calendar.create`` ergaben sechs
+    # Termine; fünf Aufrufer bekamen „neu laden und wiederholen", während ihr
+    # Termin bereits im Kalender stand.
+    #
+    # Verdeckt war das durch einen Zufall: Jede Sitzungsprüfung schreibt
+    # ``last_seen_at`` derselben Zeile in der Request-Transaktion und
+    # serialisiert damit alle Requests *einer* Sitzung. Zwei Sitzungen — zwei
+    # Geräte, zwei Fenster — und der Schutz ist weg. Ein Nebeneffekt, den
+    # niemand entworfen hat, ist keine Zusicherung.
+    if not await runs.claim_step(lauf.id, schritt_plan.seq, erwarteter_status=status_vorher):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Schritt {schritt_plan.seq} wird bereits ausgeführt oder der Lauf hat "
+                "sich verändert. Neu laden und nachsehen, was daraus geworden ist."
+            ),
+        )
+
     executor = ToolExecutor(
         registry=tools, policy=policy, gateway=approvals, invocations=invocations
     )
@@ -656,20 +682,68 @@ async def advance_run(
     if lauf.status is RunStatus.QUEUED:
         lauf = executor.start(lauf, tracker)
 
-    if schritt_plan.kind != "tool":
-        return await _antwortschritt(
+    # Ab hier gibt jeder Weg, der **nicht** bis zum ``save`` kommt, den Anspruch
+    # zurück. ``save`` selbst gibt ihn frei, weil der gespeicherte Zustand
+    # ``current_step`` nicht mehr führt — bei einem erledigten Schritt setzt
+    # ``with_step_done`` ihn auf ``None``.
+    #
+    # Ein ``finally`` wäre hier falsch: Es gäbe den Anspruch auch dann zurück,
+    # wenn der Schritt gewirkt hat.
+    try:
+        if schritt_plan.kind != "tool":
+            return await _antwortschritt(
+                lauf,
+                tracker,
+                executor=executor,
+                runs=runs,
+                antworten=antworten,
+                plan=plan,
+                schritt_plan=schritt_plan,
+                status_vorher=status_vorher,
+            )
+        return await _werkzeugschritt(
             lauf,
             tracker,
             executor=executor,
             runs=runs,
-            antworten=antworten,
+            tools=tools,
+            modell=modell,
             plan=plan,
             schritt_plan=schritt_plan,
+            session=session,
+            vorgegeben=payload.arguments,
             status_vorher=status_vorher,
         )
+    except BaseException:
+        # Jeder Weg, der nicht bis zum ``save`` kommt, gibt den Anspruch zurück.
+        # Ein ``finally`` wäre falsch: Es gäbe ihn auch nach getaner Wirkung frei.
+        await runs.release_step(lauf.id)
+        raise
 
+
+async def _werkzeugschritt(
+    lauf: Run,
+    tracker: BudgetTracker,
+    *,
+    executor: ToolExecutor,
+    runs: PostgresRunStore,
+    tools: ToolRegistry,
+    modell: PlanArgumentSource,
+    plan: Plan,
+    schritt_plan: PlanStep,
+    session: Session,
+    vorgegeben: dict[str, Any] | None,
+    status_vorher: RunStatus,
+) -> StepView:
+    """Ein geplanter Werkzeugschritt — Argumente aus dem Request oder vom Modell.
+
+    Ausgelagert als Gegenstück zu ``_antwortschritt``, damit der Anspruch auf den
+    Schritt **eine** Freigabestelle hat. Zwei Fehlerpfade mit je eigenem
+    ``release_step`` wären zwei Gelegenheiten, einen zu vergessen — und ein
+    vergessener Anspruch blockiert den Lauf dauerhaft.
+    """
     # Die Argumente — aus dem Request oder aus dem Modell.
-    argumente = payload.arguments
+    argumente = vorgegeben
     if argumente is None:
         spec = tools.require(schritt_plan.target)
         try:

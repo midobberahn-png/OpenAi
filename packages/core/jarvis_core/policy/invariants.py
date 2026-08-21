@@ -483,6 +483,24 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.tools.registry",
     ),
     Invariant(
+        id="plan-step-claimed-before-effect",
+        title="Ein Planschritt wird beansprucht, bevor er wirkt",
+        statement=(
+            "Ein fälliger Planschritt wird atomar und festgeschrieben beansprucht, bevor "
+            "Modell oder Werkzeug laufen; ein zweiter Anspruch auf denselben Schritt "
+            "scheitert vor jeder Wirkung."
+        ),
+        why=(
+            "Ohne den Anspruch laden zwei Requests denselben Lauf, führen beide aus, und "
+            "erst danach verliert einer am Compare-and-set. Gemessen: sechs parallele "
+            "Aufrufe eines geplanten calendar.create ergaben sechs Termine — fünf "
+            "Aufrufer bekamen „neu laden und wiederholen“, nachdem ihr Termin bereits "
+            "im Kalender stand."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.db.run_store",
+    ),
+    Invariant(
         id="tool-arguments-match-schema",
         title="Argumente werden gegen das Werkzeugschema geprüft",
         statement=(

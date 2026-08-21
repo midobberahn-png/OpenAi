@@ -17,19 +17,16 @@ Zwei Angriffe stehen im Mittelpunkt, und beide sind kurz:
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
-import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.db.approval_store import PostgresApprovalStore
-from jarvis_api.main import create_app
 from jarvis_api.settings import get_settings
 from jarvis_contracts import ActionPreview, PendingAction, PreviewField, RiskLevel
 from tests.authenticator import SoftwareAuthenticator
@@ -37,31 +34,8 @@ from tests.authenticator import SoftwareAuthenticator
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.security]
 
 MAIL_PRAEFIX = "runtest-"
-
-
-@pytest_asyncio.fixture
-async def client(engine: AsyncEngine, frische_grenzen: None) -> AsyncIterator[AsyncClient]:
-    """Die App gegen die echte Datenbank — wie in ``test_http_auth.py``.
-
-    Kein umschließender Rollback: Die App führt ihre eigenen Transaktionen, und
-    seit dem vierten Replay-Befund tun das Lauf, Werkzeugprotokoll und
-    Grant-Verbrauch ausdrücklich. Ein Test, der alles in einer Transaktion
-    hielte, prüfte eine Umgebung, die es in Produktion nicht gibt.
-    """
-    from jarvis_api.db.session import dispose
-    from jarvis_api.deps import dispose_redis
-
-    async with AsyncClient(
-        transport=ASGITransport(app=create_app()), base_url="http://test"
-    ) as http:
-        yield http
-
-    await dispose()
-    await dispose_redis()
-    get_settings.cache_clear()
-
-    async with engine.begin() as conn:
-        await conn.execute(text("DELETE FROM users WHERE email LIKE :p"), {"p": f"{MAIL_PRAEFIX}%"})
+"""Auch in ``conftest.py`` geführt — die Aufräumbedingung der ``client``-Fixture
+hängt daran. Hier bleibt er, weil die Testnutzer dieser Datei ihn tragen."""
 
 
 async def _angemeldet(client: AsyncClient, engine: AsyncEngine) -> uuid.UUID:

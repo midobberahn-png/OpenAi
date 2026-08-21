@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 46/47**
+**Security Invariant Coverage: 47/48**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -46,6 +46,7 @@ nicht nachträglich passend machen.
 | `agent-no-capability-escalation` | Delegation erzeugt keine Rechte | Ein Sub-Agent erhält höchstens die Schnittmenge aus eigener Whitelist und Nutzerrechten; ein anderer Agent als Anfragender ändert daran nichts. | `core.policy.engine` |
 | `tool-risk-not-self-declared` | Werkzeuge stufen sich nicht selbst herab | Ein Plugin kann seine Risikoklasse nicht senken; der Kern nimmt das Maximum. | `contracts.tools` |
 | `tool-no-silent-override` | Kein stiller Namenstausch | Ein bereits registriertes Werkzeug lässt sich nicht überschreiben. | `core.tools.registry` |
+| `plan-step-claimed-before-effect` | Ein Planschritt wird beansprucht, bevor er wirkt | Ein fälliger Planschritt wird atomar und festgeschrieben beansprucht, bevor Modell oder Werkzeug laufen; ein zweiter Anspruch auf denselben Schritt scheitert vor jeder Wirkung. | `api.db.run_store` |
 | `tool-arguments-match-schema` | Argumente werden gegen das Werkzeugschema geprüft | Kein Argumentobjekt erreicht Policy-Entscheidung, Vorschau, Payload-Hash oder Handler, ohne gegen ``ToolSpec.parameters`` geprüft worden zu sein. | `core.orchestrator.executor` |
 | `data-class-hard-filter` | Datenklassifikation ist ein hartes Filter | Ein Kontext, der eine Klasse nicht zulässt, führt kein Werkzeug dieser Klasse aus. | `core.policy.engine` |
 | `unattended-runs-are-stricter` | Unbeaufsichtigte Läufe sind strenger | Automationen bestätigen schreibende Aktionen, auch wenn das Recht erteilt ist. | `core.policy.engine` |

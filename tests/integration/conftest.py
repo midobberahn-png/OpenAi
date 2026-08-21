@@ -218,3 +218,37 @@ async def frische_grenzen() -> AsyncIterator[None]:
     yield
     await leeren()
     await client.aclose()
+
+
+@pytest_asyncio.fixture
+async def client(engine: AsyncEngine, frische_grenzen: None):
+    """Die App gegen die echte Datenbank.
+
+    Liegt hier und nicht in einer Testdatei, seit zwei Dateien sie brauchen:
+    ``test_http_runs.py`` und ``test_step_claim.py``. Ein Import der Fixture aus
+    einer Testdatei in die andere funktioniert zwar, kollidiert aber mit jedem
+    Parameter gleichen Namens — und lässt offen, welche Datei sie besitzt.
+
+    Kein umschließender Rollback: Die App führt ihre eigenen Transaktionen, und
+    seit dem vierten Replay-Befund tun das Lauf, Werkzeugprotokoll und
+    Grant-Verbrauch ausdrücklich. Ein Test, der alles in einer Transaktion
+    hielte, prüfte eine Umgebung, die es in Produktion nicht gibt.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from jarvis_api.db.session import dispose
+    from jarvis_api.deps import dispose_redis
+    from jarvis_api.main import create_app
+    from jarvis_api.settings import get_settings
+
+    async with AsyncClient(
+        transport=ASGITransport(app=create_app()), base_url="http://test"
+    ) as http:
+        yield http
+
+    await dispose()
+    await dispose_redis()
+    get_settings.cache_clear()
+
+    async with engine.begin() as conn:
+        await conn.execute(text("DELETE FROM users WHERE email LIKE :p"), {"p": "runtest-%"})

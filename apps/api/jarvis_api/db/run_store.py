@@ -80,6 +80,46 @@ _LISTE = text(
 Einschränkung auf den Eigentümer soll nicht weglassbar sein. Der Index
 ``ix_runs_user_started`` bedient genau diese Reihenfolge."""
 
+_CLAIM = text(
+    """
+    UPDATE runs
+       SET state = jsonb_set(state, '{current_step}', to_jsonb(CAST(:seq AS integer)))
+     WHERE id = :id
+       AND status = :erwarteter_status
+       AND (state ->> 'current_step') IS NULL
+    RETURNING id
+    """
+)
+"""Der Anspruch auf einen Planschritt — ein bedingtes UPDATE, mehr braucht es
+nicht.
+
+``(state ->> 'current_step') IS NULL`` ist die eigentliche Bedingung: wahr
+genau dann, wenn kein Schritt beansprucht ist.
+
+**``->>`` und nicht ``->``, und das ist kein Geschmack.** ``->`` liefert
+JSONB; für einen freigegebenen Anspruch ist das ``jsonb 'null'`` und damit
+*nicht* SQL-``NULL`` — die Bedingung wäre nach der ersten Freigabe für immer
+falsch und der Lauf dauerhaft blockiert. ``->>`` liefert Text und ergibt
+SQL-``NULL`` sowohl bei fehlendem Schlüssel als auch bei JSON-``null``. Genau
+diese zweite Lesart ist gemeint, weil ``_RELEASE`` JSON-``null`` schreibt.
+
+Zu prüfen, ob nur *dieser* Schritt frei ist, wäre die schwächere Zusage: Dann
+liefen zwei verschiedene Schritte desselben Laufs gleichzeitig, und der zweite
+entschiede über einen Taint-Zustand, den der erste gerade ändert."""
+
+_RELEASE = text(
+    """
+    UPDATE runs
+       SET state = jsonb_set(state, '{current_step}', 'null'::jsonb)
+     WHERE id = :id
+    RETURNING id
+    """
+)
+"""Gibt den Anspruch zurück, ohne den Schritt als erledigt zu führen.
+
+Ohne Statusbedingung und ohne Trefferprüfung: Freigeben ist immer zulässig, und
+ein Lauf, den es nicht mehr gibt, braucht keine Freigabe."""
+
 _UPDATE = text(
     """
     UPDATE runs
@@ -177,6 +217,36 @@ class PostgresRunStore:
                 (await conn.execute(_LISTE, {"user_id": user_id, "limit": limit})).mappings().all()
             )
         return [Run.model_validate(dict(z)) for z in zeilen]
+
+    async def claim_step(self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus) -> bool:
+        """Beansprucht einen Planschritt in **eigener** Transaktion.
+
+        ``self._engine.begin()`` und nicht die Verbindung des Requests — der
+        Unterschied ist derselbe wie beim Grant-Verbrauch und hat dieselbe
+        Ursache: Ein Anspruch, der in der Transaktion des Aufrufers steht, wird
+        mit ihr zurückgerollt. Er gälte dann *während* der Ausführung und wäre
+        danach wieder frei, obwohl der Termin im Kalender steht.
+
+        Der Rückgabewert unterscheidet nicht zwischen „schon beansprucht" und
+        „Lauf steht woanders". Beides heißt für den Aufrufer dasselbe: nicht
+        jetzt, nicht von dir.
+        """
+        async with self._engine.begin() as conn:
+            treffer = await conn.execute(
+                _CLAIM,
+                {"id": run_id, "seq": seq, "erwarteter_status": str(erwarteter_status)},
+            )
+            return treffer.first() is not None
+
+    async def release_step(self, run_id: UUID) -> None:
+        """Gibt den Anspruch zurück — ebenfalls in eigener Transaktion.
+
+        Sonst hinge die Freigabe an einem Request, der gerade scheitert, und
+        würde mit ihm zurückgerollt: Der Anspruch bliebe stehen, obwohl nichts
+        geschehen ist.
+        """
+        async with self._engine.begin() as conn:
+            await conn.execute(_RELEASE, {"id": run_id})
 
     async def save(self, run: Run, *, erwarteter_status: RunStatus) -> None:
         async with self._engine.begin() as conn:

@@ -113,3 +113,51 @@ class RunStore(Protocol):
         und ``RunNotStored``, wenn es sie nicht gibt.
         """
         ...
+
+    async def claim_step(self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus) -> bool:
+        """Beansprucht einen Planschritt — **bevor** er wirkt.
+
+        Der Anspruch aus einem externen Prüfbefund, und er sitzt an derselben
+        Achse wie der Grant-Verbrauch: *Wo entsteht die Wirkung, und wie weit
+        ist der Anspruch davon entfernt?*
+
+        Bei ``save()`` ist er einen Schritt zu **spät**. Zwei Requests laden
+        denselben Lauf, führen beide aus, und erst danach verliert einer am
+        Compare-and-set. Gemessen: sechs parallele Aufrufe eines geplanten
+        ``calendar.create`` ergaben sechs Termine — fünf Aufrufer bekamen „neu
+        laden und wiederholen", während ihr Termin bereits im Kalender stand.
+
+        **Zwei Zusagen, und beide sind nötig** (die Lehre aus dem vierten
+        Replay-Pfad):
+
+        * *Atomar* — genau einer gewinnt. Ein bedingtes ``UPDATE`` trägt das.
+        * *Dauerhaft* — der Anspruch gilt, bevor die Wirkung beginnt. Dafür
+          braucht er eine **eigene Transaktion**; läge er in der des Requests,
+          gäbe ein Absturz nach dem Seiteneffekt ihn zurück. Implementierungen
+          nehmen deshalb eine ``AsyncEngine`` und keine Verbindung.
+
+        ``False`` heißt „ein anderer war schneller" und ist keine Ausnahme: Es
+        ist der Normalfall bei zwei Schreibern, und der Aufrufer kann sinnvoll
+        darauf reagieren.
+
+        **Die Richtung ist höchstens einmal.** Stürzt der Prozess zwischen
+        Anspruch und Ausführung ab, bleibt der Schritt beansprucht und der Lauf
+        stehen. Das ist gewollt: Ein Termin, der vielleicht nicht angelegt
+        wurde, lässt sich erneut anstoßen; einer, der zweimal im Kalender
+        steht, nicht. Der Weg zurück ist die Wiederaufnahme abgebrochener
+        Läufe.
+        """
+        ...
+
+    async def release_step(self, run_id: UUID) -> None:
+        """Gibt den Anspruch zurück, ohne den Schritt als erledigt zu führen.
+
+        Für den folgenlos gescheiterten Versuch: Argumente passen nicht zum
+        Schema, das Modell liefert nichts, die Policy weist ab. Nichts ist
+        geschehen, und derselbe Schritt muss erneut versucht werden können.
+
+        Ohne diesen Weg wäre der Anspruch keine Absicherung, sondern eine
+        Sperre — und eine Sperre, die man nicht mehr loswird, ist schlimmer als
+        der doppelte Termin, den sie verhindern soll.
+        """
+        ...
