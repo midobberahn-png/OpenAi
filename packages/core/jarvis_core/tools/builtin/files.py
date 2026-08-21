@@ -85,6 +85,16 @@ FILES_READ = ToolSpec(
     data_class=DataClass.P2,
     idempotent=True,
     reads_untrusted_content=True,
+    # Was ein Modell im nächsten Schritt lesen darf: der Inhalt, sonst nichts.
+    # ``bytes_read`` und ``truncated`` braucht es nicht, und ``path`` hat es
+    # selbst formuliert — was ein Modell nicht sieht, kann es nicht zitieren.
+    #
+    # Damit steht ab hier Fremdinhalt im Prompt. Folgenlos macht ihn nicht
+    # diese Zeile, sondern was danach kommt: Der Lauf ist kontaminiert
+    # (``taints_context``), sendende Werkzeuge fallen aus dem Angebot, und ein
+    # Text, der nach Zugangsdaten aussieht, stuft den Lauf auf P3 — dann
+    # erreicht er nur noch ein lokales Modell.
+    model_visible_fields=["text"],
     forbidden_when_tainted=False,
     payload_inspectability=PayloadInspectability.STRUCTURED,
     outbound_fields=[],

@@ -5296,6 +5296,12 @@
               "title": "Finished At",
               "type": "string"
             },
+            "model_view": {
+              "default": "",
+              "maxLength": 8000,
+              "title": "Model View",
+              "type": "string"
+            },
             "ok": {
               "title": "Ok",
               "type": "boolean"
@@ -5678,6 +5684,12 @@
             "finished_at": {
               "format": "date-time",
               "title": "Finished At",
+              "type": "string"
+            },
+            "model_view": {
+              "default": "",
+              "maxLength": 8000,
+              "title": "Model View",
               "type": "string"
             },
             "ok": {
@@ -7388,6 +7400,12 @@
           "title": "Finished At",
           "type": "string"
         },
+        "model_view": {
+          "default": "",
+          "maxLength": 8000,
+          "title": "Model View",
+          "type": "string"
+        },
         "ok": {
           "title": "Ok",
           "type": "boolean"
@@ -8001,6 +8019,13 @@
           "default": false,
           "title": "Idempotent",
           "type": "boolean"
+        },
+        "model_visible_fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Model Visible Fields",
+          "type": "array"
         },
         "name": {
           "maxLength": 80,

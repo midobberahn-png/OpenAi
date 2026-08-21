@@ -31,6 +31,25 @@ class StepOutcome(BaseModel):
     seq: int = Field(ge=1)
     ok: bool
     summary: str = Field(max_length=2000)
+    """Für Menschen — die Anzeigezeile des Werkzeugs."""
+
+    model_view: str = Field(default="", max_length=8000)
+    """Für Modelle — der deklarierte, gekappte, ausgezeichnete Teil des
+    Ergebnisses.
+
+    Getrennt von ``summary``, weil die Empfänger verschieden sind: Die
+    Zusammenfassung sieht ein Mensch in der Oberfläche, diese Sicht ein Modell
+    im Prompt. Ein Feld für beide hieße, die Kappung für den einen am Bedarf
+    des anderen auszurichten.
+
+    **Warum das hier steht und nicht das rohe Ergebnis.** ``ToolResult.data``
+    fasst bei ``files.read`` bis 256.000 Bytes und ist untypisiert. Es je Lauf
+    in den Zustand zu schreiben, hieße unbegrenzte Fremddaten in die
+    Laufpersistenz zu legen — mit allem, was daran hängt: Sicherungen,
+    Löschfristen, Größe. Was hier liegt, ist bereits das, was ein Modell sehen
+    darf, und nicht mehr.
+    """
+
     finished_at: datetime
 
 

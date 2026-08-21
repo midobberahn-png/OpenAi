@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `91c1f43` auf `main`.** Dieses Dokument ist der
+> **Stand: 21.08.2026, Commit `f2ec2b3` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 54, Remote auf GitHub |
-| Tests | **1057** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
-| **Security Invariant Coverage** | **48/49** |
+| Commits | 56, Remote auf GitHub |
+| Tests | **1082** gesamt — **0 übersprungen**, aber nur mit Diensten: ohne Postgres und Redis werden 178 übersprungen, und das ist der Grund für `JARVIS_REQUIRE_SERVICES=1` |
+| **Security Invariant Coverage** | **49/50** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 9 Migrationen, bi-direktional geprüft |
@@ -85,6 +85,16 @@ einen Planschritt stand *hinter* der Wirkung: Sechs parallele `advance` auf
 denselben geplanten `calendar.create` ergaben sechs Termine. Verdeckt war das
 durch einen Zufall, der lehrreicher ist als der Befund selbst — dazu
 Abschnitt 7. Behoben durch `claim_step()`.
+
+**Werkzeugdaten fließen in den Modellkontext** (ADR-014). Der Alltagsfall
+liefert endlich etwas: „Lies X und fasse zusammen" nennt jetzt den Inhalt statt
+„ich kenne ihn nicht". Deklariert (`model_visible_fields`, Vorgabe leer),
+gekappt (8.000 Zeichen je Schritt), ausgezeichnet — und die Auszeichnung ist
+**Komfort, kein Schutz**, was im Quelltext so steht.
+
+Der Angriff ist damit schärfer geworden und scheitert weiterhin: Die
+untergeschobene Anweisung steht jetzt *wörtlich* im Prompt, das Modell folgt
+ihr, das Taint-Gate blockiert, der Kalender bleibt leer.
 
 **Die Ablaufsteuerung ist aus der Route gezogen** (`cf84edf`). `RunAdvancer`
 in `core/orchestrator/advance.py` führt einen Planschritt aus; `runs.py` ging
@@ -353,6 +363,7 @@ niemand zurück.
 | Werkzeugschritt | `api/routes/runs.py:execute_step` | Aufrufer nennt das Werkzeug; Policy → Gate → Registry |
 | Planschritt | `api/routes/runs.py:advance_run` | **Der Plan** nennt das Werkzeug; die Argumente kommen vom Aufrufer **oder vom Modell**. `llm`-Schritte laufen, `agent`-Schritte nicht |
 | Abschluss | `core/orchestrator/executor.py:finish` | Gegenstück zu `start()`; über die Übergangstabelle, nicht am Automaten vorbei |
+| Modellsicht | `core/orchestrator/plan_context.py:modellsicht` | Auswahl nach Deklaration, Kappung, Auszeichnung — an einer Stelle |
 | Schrittanspruch | `api/db/run_store.py:claim_step` | atomar, in **eigener** Transaktion, **vor** Modell und Werkzeug; liefert das Fencing-Token |
 | Ablaufsteuerung | `core/orchestrator/advance.py` | `RunAdvancer` — die Phasen ①–⑤ an einer Stelle, ohne HTTP |
 | Plan | `api/routes/runs.py:_planschritte` | Stand je Schritt bei jedem Abruf neu berechnet — Veralten wird sichtbar |
@@ -405,6 +416,8 @@ Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
   Adresse — **3 von 3 Versuchen**. Das Taint-Gate blockiert 3 von 3; der
   Kalender bleibt leer. Der Unterschied zum Punkt darüber ist der Urheber: Dort
   tat es eine Attrappe, weil der Test es ihr sagte
+- **Werkzeugdaten im Prompt**: nur deklarierte Felder, gekappt; die
+  untergeschobene Anweisung steht wörtlich im Kontext und bleibt folgenlos
 - **Fremder Aufräumer**: eine falsche Anspruchskennung gibt nichts frei; ein
   abgelaufener Anspruch schreibt sein Ergebnis nicht mehr (`RunStateConflict`)
 - **Fehler nach der Wirkung**: Handler legt den Termin an, `runs.save`
@@ -726,7 +739,7 @@ und muss beantworten, was mit einem Schritt geschieht, dessen Wirkung unklar
 ist. Das Token sorgt nur dafür, dass die Neuvergabe den alten Arbeiter
 aussperrt; *wann* neu vergeben wird, ist noch nicht entschieden.
 
-### 4. Werkzeugergebnisse in den Modellkontext — die heikelste Stelle
+### 4. Erledigt: Werkzeugergebnisse im Modellkontext (ADR-014)
 
 **Das ist jetzt der Engpass, und er ist beim Messen aufgefallen.** Der
 Durchstich oben lief technisch sauber und lieferte diese Antwort:
@@ -908,6 +921,7 @@ klären, indem der Fall ausgeführt wurde.
 | **Ein Vertragsfeld ohne Mechanismus ist eine Falschaussage** | `ToolSpec.supports_undo` speist `ActionPreview.reversible` — den Satz „das kannst du rückgängig machen", den ein Mensch vor der Bestätigung liest. Einen Einlöseweg für `undo_token` gibt es nicht. `calendar.create` steht deshalb auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
 | **Der Handler bekommt keine Identität — und das ist die Absicherung** | `registry.execute()` ruft `handler(**auth.arguments)`. Ein schreibendes Werkzeug braucht trotzdem einen Eigentümer. Ein Feld `user_id` in den Argumenten wäre dieselbe Lücke wie `user_id` im Request-Body, nur eine Schicht tiefer. Der Kalender wird deshalb **beim Verdrahten** aus `CurrentSession` gebunden; der Handler kann keinen fremden benennen, weil er es nicht kann — nicht, weil er es nicht darf. |
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
+| **pytest leitet `tmp_path` vom Testnamen ab** | Ein Test hieß `test_3_zugangsdaten_stufen_hoch`, der Pfad landete im Lauf-Input, und der Klassifikator sah „zugangsdaten" — der Test war **grün aus dem falschen Grund**, die geprüfte Hochstufung kam nicht vom Dateiinhalt. Wer Pfade in Eingaben schreibt, die ein Klassifikator liest, misst den Testnamen mit. |
 | **Ein Parameter, der nur in `IS NULL` vorkommt, braucht einen Cast** | `AND (:x IS NULL OR …)` bricht in PostgreSQL mit `AmbiguousParameterError` ab — der Typ lässt sich aus der Verwendung nicht herleiten. `CAST(:x AS text) IS NULL`. Kostet zwei Minuten, wenn man es weiß, und einen verwirrenden Testlauf, wenn nicht. |
 | **Ein Zustand, den niemand auflösen kann, gehört nicht behandelt, sondern verhindert** | Seit die Freigabe eines Planschrittes die Anspruchskennung verlangt, wäre ein `current_step` ohne `claim_id` für immer belegt. Statt einen Sonderweg dafür zu bauen, weist `RunState` den Zustand zurück. Drei Bestandstests bauten ihn und wurden nachgezogen — das war der Vertrag, der sich verschärft hat, nicht Rot, das grün gepatcht wurde. |
 | **Ein `except` um eine Wirkung herum ist eine Aussage über sie** | Ein `except BaseException`, das den halben Ablauf umschließt, sieht nach Sorgfalt aus und behauptet in Wahrheit: „hier ist nichts geschehen". Sobald ein Seiteneffekt darin liegt, ist das falsch. Die brauchbare Frage vor jedem breiten `except`: **Was kann in diesem Block bereits gewirkt haben — und nehme ich das mit der Aufräumzeile zurück?** |

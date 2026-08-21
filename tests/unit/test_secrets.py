@@ -82,3 +82,58 @@ class TestEinbahnstrasse:
             data_class_for_content("AKIAIOSFODNN7EXAMPLE", declared=DataClass.P1).cloud_allowed
             is False
         )
+
+
+class TestUmgebungsvariablenSchreibweise:
+    """Zugangsdaten in `NAME=WERT`-Form — der häufigste Fall in echten Dateien.
+
+    **Gefunden beim Abnahmetest zu ADR-014**, und zwar erst, nachdem ein grüner
+    Haken sich als falsch erwies: Der Testlauf meldete die erwartete
+    Hochstufung auf P3, aber sie kam vom *Klassifikator* — pytest leitet
+    ``tmp_path`` vom Testnamen ab, der Name enthielt „zugangsdaten", der Pfad
+    stand im Lauf-Input. Der Dateiinhalt war unbeteiligt.
+
+    Beim Nachmessen zeigte sich die eigentliche Lücke: Das allgemeine Muster
+    verlangte das Schlüsselwort **unmittelbar** vor ``=`` oder ``:``. Bei
+    ``AWS_SECRET_ACCESS_KEY="…"`` steht zwischen ``SECRET`` und ``=`` noch
+    ``_ACCESS_KEY`` — und damit fiel ein echter AWS-Schlüssel durch.
+
+    **Warum das jetzt mehr wiegt als vorher.** Seit Werkzeugdaten in den Prompt
+    fließen (ADR-014), entscheidet diese Heuristik mit, ob ein gelesener
+    Dateiinhalt ein Cloud-Modell erreichen darf. Solange nur Ollama existiert,
+    ist der Unterschied folgenlos — lokal bleibt lokal. Mit dem ersten
+    Cloud-Anbieter ist er es nicht mehr.
+
+    Die Heuristik bleibt eine Heuristik. Sie *entfernt* nichts, sie stuft ein;
+    was Zugangsdaten festhält, ist P3 — und P3 verlässt das Gerät nicht.
+    """
+
+    @pytest.mark.parametrize(
+        "zeile",
+        [
+            'AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"',
+            "DATABASE_PASSWORD=supergeheim123",
+            "MY_API_KEY_PROD: abcdefgh12345678",
+            "STRIPE_CLIENT_SECRET = 'sk_live_abcdefghijkl'",
+        ],
+    )
+    def test_umgebungsvariable_mit_schluesselwort_im_namen(self, zeile: str) -> None:
+        assert looks_like_secret(zeile), zeile
+
+    @pytest.mark.parametrize(
+        "zeile",
+        [
+            "Das Passwort habe ich vergessen.",
+            "Der Termin ist am Mittwoch um 10 Uhr.",
+            "secret: ok",
+            "api_key fehlt",
+        ],
+    )
+    def test_prosa_wird_nicht_hochgestuft(self, zeile: str) -> None:
+        """Die Gegenprobe, und sie ist die wichtigere Hälfte.
+
+        Eine Heuristik, die alles hochstuft, macht das lokale Modell zum
+        einzigen Gesprächspartner und die Stufe wertlos — genau das, wovor der
+        Modulkopf warnt.
+        """
+        assert not looks_like_secret(zeile), zeile

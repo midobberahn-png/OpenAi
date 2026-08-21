@@ -518,6 +518,24 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.db.run_store",
     ),
     Invariant(
+        id="tool-result-model-view-is-declared",
+        title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
+        statement=(
+            "Aus einem ``ToolResult`` erreicht ausschließlich das den Prompt, was "
+            "``ToolSpec.model_visible_fields`` benennt — gekappt auf eine feste Grenze. "
+            "Die Vorgabe ist leer."
+        ),
+        why=(
+            "``ToolResult.data`` ist ein ``dict[str, Any]`` ohne Grenze. Ohne Deklaration "
+            "entschiede jedes künftige Werkzeug stillschweigend mit, was in Prompts "
+            "landet, und in keinem Diff wäre es zu sehen. Die Kappung ist die zweite "
+            "Hälfte: Eine gelesene Datei fasst bis 256.000 Bytes und belegte sonst das "
+            "halbe Kontextfenster — bei jedem Folgeschritt erneut."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="contracts.tools",
+    ),
+    Invariant(
         id="tool-arguments-match-schema",
         title="Argumente werden gegen das Werkzeugschema geprüft",
         statement=(

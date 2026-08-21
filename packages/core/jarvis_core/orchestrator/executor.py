@@ -51,6 +51,7 @@ from jarvis_contracts import (
 )
 from jarvis_core.audit.chain import AuditEntry, AuditSink
 from jarvis_core.orchestrator.budget import BudgetTracker, utc_now
+from jarvis_core.orchestrator.plan_context import modellsicht
 from jarvis_core.policy.approval import ApprovalGateway, ExecutionDenied, ExecutionGrant
 from jarvis_core.policy.engine import PolicyEngine
 from jarvis_core.ports.invocations import InvocationStore
@@ -468,6 +469,12 @@ class ToolExecutor:
                         seq=seq,
                         ok=result.ok,
                         summary=result.display or spec.name,
+                        # Was ein Modell im nächsten Schritt lesen darf —
+                        # deklariert, gekappt, ausgezeichnet. Hier und nicht
+                        # beim Rendern, weil dafür sonst das rohe Ergebnis in
+                        # der Laufpersistenz liegen müsste: bei ``files.read``
+                        # bis 256.000 Bytes untypisierter Fremddaten je Lauf.
+                        model_view=modellsicht(spec, result),
                         finished_at=now,
                     )
                 ),

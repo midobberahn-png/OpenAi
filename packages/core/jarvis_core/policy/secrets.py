@@ -51,7 +51,18 @@ SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
     re.compile(
+        # Der Bezeichner darf das Schlüsselwort **umschließen**:
+        # ``AWS_SECRET_ACCESS_KEY=…`` trägt hinter ``SECRET`` noch
+        # ``_ACCESS_KEY``, und ohne die Umgebung fiel ein echter AWS-Schlüssel
+        # durch. Gefunden beim Abnahmetest zu ADR-014.
+        #
+        # Die Umgebung ist auf Bezeichnerzeichen begrenzt (kein ``\S``): Sonst
+        # zöge das Muster beliebigen Fließtext vor dem Schlüsselwort mit hinein
+        # und stufte Prosa hoch. Eine Heuristik, die alles hochstuft, macht das
+        # lokale Modell zum einzigen Gesprächspartner und die Stufe wertlos.
+        r"[A-Za-z0-9_.-]*"
         r"(?:password|passwort|secret|api[_-]?key|access[_-]?token|client[_-]?secret)"
+        r"[A-Za-z0-9_.-]*"
         r"\s*[=:]\s*['\"]?\S{8,}",
         re.IGNORECASE,
     ),

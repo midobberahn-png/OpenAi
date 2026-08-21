@@ -161,8 +161,49 @@ class ToolSpec(BaseModel):
     Beispiel: ``calendar.create`` → ``["attendees"]``.
     """
 
+    model_visible_fields: list[str] = Field(default_factory=list)
+    """Felder des Ergebnisses, die ein Modell im Prompt sehen darf.
+
+    **Die Vorgabe ist leer, und das ist die Zusage.** Wer nichts erklärt, gibt
+    nichts preis. Dieselbe Beweislast wie bei ``payload_inspectability`` und
+    ``forbidden_when_tainted``: Werkzeuge öffnen sich ausdrücklich, nicht
+    ausdrücklich zu.
+
+    Der Anlass: Ohne diese Deklaration wäre ``ToolResult.data`` — ein
+    ``dict[str, Any]`` ohne Grenze — der Weg, auf dem jedes künftige Werkzeug
+    stillschweigend mitentscheidet, was in einem Prompt landet. Sichtbar wäre
+    das in keinem Diff.
+
+    Gemeint ist **nicht**, was das Werkzeug zurückgibt (das steht in
+    ``returns``), sondern was ein Modell davon lesen soll. Für ``files.read``
+    ist das ``["text"]`` — ``bytes_read`` und ``truncated`` braucht ein Modell
+    nicht, und was es nicht sieht, kann es nicht zitieren.
+
+    **Was diese Deklaration nicht leistet:** Sie macht Fremdinhalt nicht
+    harmlos. Der gelesene Text bleibt Fremdinhalt, der Lauf bleibt
+    kontaminiert, und ein Modell kann einer darin untergeschobenen Anweisung
+    folgen — nachgemessen, dreimal von dreimal. Folgenlos macht das nicht diese
+    Liste, sondern das Taint-Gate.
+    """
+
     plugin: str | None = None
     """Herkunftsplugin, falls das Werkzeug nicht eingebaut ist."""
+
+    def model_visible(self, data: dict[str, Any] | None) -> dict[str, Any]:
+        """Der Teil eines Ergebnisses, den ein Modell sehen darf.
+
+        Reine Auswahl, keine Formatierung: *welche* Felder gehört zum Vertrag
+        des Werkzeugs, *wie sie im Prompt stehen* gehört zum Kontextbau. Zwei
+        Fragen, zwei Schichten.
+
+        Ein deklariertes Feld, das im konkreten Ergebnis fehlt, wird
+        übersprungen statt beanstandet: Ein Werkzeug darf im Fehlerfall weniger
+        liefern, und eine Ausnahme dafür wäre ein Absturz auf einem Weg, der
+        ohnehin schon schiefging.
+        """
+        if not data:
+            return {}
+        return {feld: data[feld] for feld in self.model_visible_fields if feld in data}
 
     @model_validator(mode="after")
     def _risk_consistency(self) -> ToolSpec:

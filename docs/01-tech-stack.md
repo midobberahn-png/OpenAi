@@ -208,6 +208,116 @@ In Produktion entpackt der API-Prozess deshalb **nicht selbst**: Er sendet den `
 
 **Alternativen:** Cloudflare Tunnel + Zero Trust (gut, aber Fremdanbieter im Pfad); Reverse Proxy mit mTLS (funktioniert, umständlicher auf Mobilgeräten).
 
+## ADR-014 — Werkzeugdaten im Modellkontext: deklariert, gekappt, ausgezeichnet
+
+**Stand:** entschieden am 21.08.2026.
+
+### Lage
+
+Der abschließende `llm`-Schritt sah nur Schritt*zusammenfassungen* — für
+`files.read` Pfad und Bytezahl. Gemessen über HTTP mit laufendem Ollama:
+
+> „Die Datei hatte eine Größe von 69 Byte. **Leider kann ich die Inhalte der
+> Datei nicht kennen**, da mir keine Werkzeuge zur Verfügung stehen."
+
+Damit war „lies X und fasse es zusammen" — der Alltagsfall, an dem sich diese
+Architektur entschieden hat — ausführbar und wertlos.
+
+Werkzeugdaten in den Prompt zu lassen heißt, Fremdinhalt in den Prompt zu
+lassen. Die Frage ist nicht ob, sondern **wie viel, welcher Teil, und wie
+gekennzeichnet**.
+
+### Was schon trug und deshalb nicht gebaut wurde
+
+* **Der Taint-Pfad.** Werkzeugabgeleiteter Text floss bereits (`StepOutcome.summary`);
+  `Message.is_untrusted` und `ModelGateway._kontaminiert` waren gebaut.
+  Der Unterschied ist ein Grad, kein Dammbruch.
+* **Die Datenklasse.** `files.read` klassifiziert seinen Inhalt
+  (`data_class_for_content`); der Lauf erbt über `escalate()`, und beide
+  Modellquellen reichen `run.data_class` ans Gateway. Ein Inhalt, der nach
+  Zugangsdaten aussieht, macht den Lauf P3 — und P3 erreicht nur ein lokales
+  Modell.
+
+### Entscheidung
+
+**A — Deklarierte Projektion.** `ToolSpec.model_visible_fields`, Vorgabe leer.
+Ein Werkzeug erklärt, welche Ergebnisfelder ein Modell sehen darf.
+
+*Verworfen:* `ToolResult.data` vollständig durchreichen. `data` ist
+`dict[str, Any]` ohne Grenze; jedes künftige Werkzeug entschiede
+stillschweigend mit, was in Prompts landet, und in keinem Diff wäre es zu
+sehen. Das ist die Bauart, aus der die bisherigen Befunde stammen.
+
+*Verworfen:* `ToolSpec.returns` umwidmen. Es beschreibt, was ein Werkzeug
+zurückgibt; „was darf ein Modell sehen" ist eine andere Frage. Zwei
+Bedeutungen in einem Feld sind das, was bei `current_step`/`claim_id` gerade
+auseinandergezogen wurde. (Dass `returns` deklariert ist und **nirgends**
+gelesen wird, bleibt ein offener Punkt — dritter Fall nach `parameters` und
+`supports_undo`.)
+
+**B — Kappung auf dem modellzugewandten Weg**, nicht im Werkzeug.
+`MAX_MODELLSICHT = 8.000` Zeichen je Schritt, Kürzung wird benannt.
+
+*Verworfen:* `MAX_BYTES` von `files.read` senken. Die 256 KB gehen an den
+**Eigentümer** über HTTP; ihn zu beschneiden, weil ein Modell mitliest,
+verschlechtert das Werkzeug für seinen eigentlichen Zweck. Zwei Verbraucher,
+zwei Grenzen.
+
+Die Größenordnung folgt aus dem Fenster: 128.000 Token ≈ 512.000 Zeichen. Eine
+einzige gelesene Datei könnte die Hälfte belegen — bei jedem Folgeschritt
+erneut, weil der Verlauf mitwächst.
+
+Gekappt wird beim **Persistieren** (`StepOutcome.model_view`) und nicht beim
+Rendern: Sonst müsste das rohe Ergebnis im Laufzustand liegen — unbegrenzte,
+untypisierte Fremddaten in der Persistenz, mit allem, was daran hängt
+(Sicherungen, Löschfristen, Größe).
+
+**C — Auszeichnung als Fremdinhalt, ausdrücklich als Komfort.** Ein eigener,
+markierter Block je Ergebnis, eigene Nachricht mit `is_untrusted=True`.
+
+> **Die Marke sichert nichts ab.** Ein Modell lässt sich aus einer Trennmarke
+> herausreden. Sie verbessert das Verhalten und ist kein Kontrollmechanismus.
+> Wer sie als Injection-Schutz führt, wiederholt den Fehler, der dieses Projekt
+> bei `supports_undo`, `parameters` und `returns` schon dreimal getroffen hat:
+> eine Zusage ohne Mechanismus.
+
+Folgenlos macht Fremdinhalt weiterhin, was es kann: Das Taint-Gate sperrt die
+sendenden Werkzeuge, die Datenklassifikation sperrt die Modelle.
+
+### Ausdrücklich nicht entschieden
+
+**Geheimnisse aus dem Prompt filtern.** Ein Filter macht aus „das Modell sieht
+es nicht" ein Versprechen, das an einer Regex hängt und beim ersten unbekannten
+Format still bricht. Die vorhandene Antwort ist besser: Der Inhalt wird P3, und
+P3 verlässt das Gerät strukturell nicht. **Confinement statt Filterung.**
+
+### Abnahme — gemessen, nicht behauptet
+
+| Kriterium | Ergebnis |
+|---|---|
+| „Lies X und fasse zusammen" liefert Inhalt | Antwort enthält Kickoff, Mittwoch, Nordlicht, September |
+| Untergeschobene Anweisung steht **wörtlich** im Prompt, Modell folgt ihr | Taint-Gate blockiert, **0 Kalendereinträge** |
+| Nicht deklarierte Felder erreichen den Prompt nicht | `bytes_read`, `truncated` fehlen |
+| Gegenprobe ohne Deklaration | Modellsicht ist leer |
+
+### Was die Abnahme nebenbei aufdeckte
+
+Der Test zur Datenklassen-Hochstufung war **grün aus dem falschen Grund**:
+pytest leitet `tmp_path` vom Testnamen ab, der Name enthielt „zugangsdaten",
+der Pfad stand im Lauf-Input — und der *Klassifikator* setzte P3. Der
+Dateiinhalt war unbeteiligt.
+
+Beim Nachmessen zeigte sich die eigentliche Lücke: `looks_like_secret` verlangte
+das Schlüsselwort **unmittelbar** vor `=` oder `:`. Bei
+`AWS_SECRET_ACCESS_KEY="…"` steht dazwischen noch `_ACCESS_KEY` — ein echter
+AWS-Schlüssel fiel durch. Das Muster erlaubt jetzt Bezeichnerzeichen um das
+Schlüsselwort herum, mit Gegenproben gegen Prosa.
+
+Diese Heuristik wiegt seit ADR-014 mehr als vorher: Sie entscheidet mit, ob ein
+gelesener Dateiinhalt ein Cloud-Modell erreichen darf. Solange nur Ollama
+existiert, ist der Unterschied folgenlos — mit dem ersten Cloud-Anbieter ist er
+es nicht mehr.
+
 ---
 
 ## Stack-Zusammenfassung
