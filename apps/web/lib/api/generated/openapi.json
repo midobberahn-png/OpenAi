@@ -103,6 +103,59 @@
         "title": "AdvanceRequest",
         "type": "object"
       },
+      "AuditRow": {
+        "description": "Ein Eintrag, wie ihn ein Mensch liest.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "entry_hash": {
+            "title": "Entry Hash",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          }
+        },
+        "required": [
+          "id",
+          "occurred_at",
+          "actor",
+          "action",
+          "resource",
+          "details",
+          "entry_hash"
+        ],
+        "title": "AuditRow",
+        "type": "object"
+      },
       "AuthenticationRequest": {
         "properties": {
           "challenge": {
@@ -163,6 +216,33 @@
           "challenge"
         ],
         "title": "CeremonyOptions",
+        "type": "object"
+      },
+      "ChainStatus": {
+        "description": "Das Ergebnis der Kettenprüfung.",
+        "properties": {
+          "breaks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Breaks",
+            "type": "array"
+          },
+          "checked": {
+            "title": "Checked",
+            "type": "integer"
+          },
+          "intact": {
+            "title": "Intact",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "intact",
+          "checked",
+          "breaks"
+        ],
+        "title": "ChainStatus",
         "type": "object"
       },
       "GrantView": {
@@ -915,6 +995,108 @@
         "summary": "Respond Action",
         "tags": [
           "approvals"
+        ]
+      }
+    },
+    "/audit": {
+      "get": {
+        "description": "Die jüngsten Einträge, neueste zuerst — das Aktivitätsprotokoll.\n\nZeigt **eigene** Einträge. Anders als die Kettenprüfung, die das ganze\nSystem betrifft: Hier geht es um Auskunft an einen Menschen darüber, was in\nseinem Namen geschehen ist.",
+        "operationId": "list_audit_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AuditRow"
+                  },
+                  "title": "Response List Audit Audit Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Audit",
+        "tags": [
+          "audit"
+        ]
+      }
+    },
+    "/audit/verify": {
+      "get": {
+        "description": "Rechnet die Kette nach.\n\n**Ohne ``limit`` wird alles geprüft**, und nur das beantwortet die Frage\n„ist irgendetwas verändert worden?\". Ein Ausschnitt beantwortet „ist seit\nEintrag N etwas verändert worden?\" — eine andere und schwächere Frage, die\nhier trotzdem angeboten wird, weil ein wachsendes Protokoll sonst irgendwann\nnur noch nachts prüfbar wäre.\n\n**Warum die Antwort nicht nach Nutzern getrennt ist.** Die Kette ist eine\nEigenschaft des Systems, nicht einer Person: Ein fremder Eintrag dazwischen\ngehört zur Kette und wird mitgerechnet. Dieses System hat einen Nutzer; wenn\nes mehrere bekommt, gehört diese Auskunft an eine Rolle und nicht an jede\nSitzung.",
+        "operationId": "verify_chain_endpoint_audit_verify_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 100000,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChainStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Chain Endpoint",
+        "tags": [
+          "audit"
         ]
       }
     },

@@ -632,6 +632,25 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.routes.permissions",
     ),
     Invariant(
+        id="audit-chain-records-what-happened",
+        title="Was geschieht, steht in der verketteten Spur",
+        statement=(
+            "Jede Werkzeugausführung, jede Bestätigung und jede Rechteänderung schreibt "
+            "einen Eintrag in das hash-verkettete Audit-Log — serialisiert, append-only "
+            "und mit einem Weg, die Kette nachzurechnen."
+        ),
+        why=(
+            "Die Kette war vollständig gebaut und wurde nirgends benutzt: "
+            "``ToolExecutor(audit=...)`` bekam in der ganzen Anwendung ``None``. Das ist "
+            "die unangenehmste Sorte Lücke, weil sie nach außen wie Vollständigkeit "
+            "aussieht — geprüft war die Mechanik, nicht ihr Betrieb. Und eine Spur, die "
+            "niemand nachrechnen kann, ist eine Behauptung: Der Bruch wird nicht dadurch "
+            "sichtbar, dass er existiert, sondern dadurch, dass jemand nachrechnet."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.db.audit_store",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(

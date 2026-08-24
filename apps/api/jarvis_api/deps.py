@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from jarvis_api.agents import agent_catalog
 from jarvis_api.auth import WebAuthnVerifier
 from jarvis_api.db.approval_store import PostgresApprovalStore
+from jarvis_api.db.audit_store import PostgresAuditSink
 from jarvis_api.db.calendar_store import PostgresCalendarStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.db.permission_store import PostgresPermissionStore
@@ -49,6 +50,8 @@ from jarvis_core.tools import ToolRegistry
 __all__ = [
     "Agents",
     "Approvals",
+    "Audit",
+    "AuditReader",
     "CurrentSession",
     "DbConnection",
     "DbEngine",
@@ -65,6 +68,7 @@ __all__ = [
     "Tools",
     "agent_step_source",
     "approval_gateway",
+    "audit_sink",
     "client_identifier",
     "current_session",
     "current_token",
@@ -136,6 +140,27 @@ def invocation_store(engine: DbEngine) -> PostgresInvocationStore:
 
 
 Invocations = Annotated[PostgresInvocationStore, Depends(invocation_store)]
+
+
+def audit_sink(engine: DbEngine) -> PostgresAuditSink:
+    """Das Audit-Log — die Engine, nicht die Request-Verbindung.
+
+    Ein Eintrag, der mit dem Request zurückgerollt wird, fehlt genau dann, wenn
+    der Request nach einer Wirkung nach außen scheitert. Die Richtung ist:
+    lieber ein Eintrag zu viel als einer zu wenig.
+    """
+    return PostgresAuditSink(engine)
+
+
+Audit = Annotated[PostgresAuditSink, Depends(audit_sink)]
+
+AuditReader = Annotated[PostgresAuditSink, Depends(audit_sink)]
+"""Derselbe Adapter, anderer Name — und der Name ist die Absicht.
+
+Wer ``Audit`` verlangt, schreibt; wer ``AuditReader`` verlangt, liest. Die
+Trennung kostet nichts und macht in jeder Signatur sichtbar, was ein Endpunkt
+mit dem Protokoll vorhat. Eine echte Trennung wären zwei Ports; die lohnt sich,
+sobald das Lesen woanders herkommt als das Schreiben."""
 
 
 def permission_store(engine: DbEngine) -> PostgresPermissionStore:
@@ -302,6 +327,7 @@ def agent_step_source(
     policy: Policy,
     invocations: Invocations,
     approvals: Approvals,
+    audit: Audit,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AgentStepSource:
     """Die Quelle für Planschritte der Art ``agent``.
@@ -317,7 +343,14 @@ def agent_step_source(
             tools=tools,
             policy=policy,
             executor=ToolExecutor(
-                registry=tools, policy=policy, gateway=approvals, invocations=invocations
+                registry=tools,
+                policy=policy,
+                gateway=approvals,
+                invocations=invocations,
+                # Ein Sub-Agent führt Werkzeuge aus wie jeder andere Weg — und
+                # er tut es, weil ein Modell es vorgeschlagen hat. Gerade
+                # dieser Weg gehört ins Protokoll.
+                audit=audit,
             ),
         ),
         agents=agent_catalog(),

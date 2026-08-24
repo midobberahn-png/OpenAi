@@ -35,6 +35,7 @@ from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.deps import (
     ActionStore,
     Approvals,
+    Audit,
     CurrentSession,
     Invocations,
     Policy,
@@ -278,6 +279,7 @@ async def respond_action(
     tools: Tools,
     policy: Policy,
     invocations: Invocations,
+    audit: Audit,
 ) -> RespondResult:
     """Erteilt oder verweigert eine Bestätigung — genau einmal.
 
@@ -310,7 +312,13 @@ async def respond_action(
         ergebnis,
         runs=runs,
         executor=ToolExecutor(
-            registry=tools, policy=policy, gateway=approvals, invocations=invocations
+            registry=tools,
+            policy=policy,
+            gateway=approvals,
+            invocations=invocations,
+            # Eine bestätigte Ausführung ist der Vorgang, den man im Protokoll
+            # sucht: Hier hat ein Mensch entschieden.
+            audit=audit,
         ),
     )
     if schritt is None:

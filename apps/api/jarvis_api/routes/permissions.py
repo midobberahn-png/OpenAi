@@ -45,8 +45,9 @@ import structlog
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, ValidationError
 
-from jarvis_api.deps import CurrentSession, Permissions
+from jarvis_api.deps import Audit, CurrentSession, Permissions
 from jarvis_contracts import PermissionGrant, PermissionMode, RiskLevel, constraints_for
+from jarvis_core.audit.chain import AuditEntry
 from jarvis_core.clock import utc_now
 
 __all__ = ["router"]
@@ -54,12 +55,14 @@ __all__ = ["router"]
 router = APIRouter(prefix="/permissions", tags=["permissions"])
 
 _log = structlog.get_logger(__name__)
-"""Jede Änderung wird protokolliert, und zwar mit *beiden* Modi.
+"""Für den Betrieb — lesbar, durchsuchbar, verlierbar.
 
-„Auf ``allow`` gesetzt" ist eine andere Auskunft als „von ``deny`` auf
-``allow`` gehoben". Die Audit-Kette (``jarvis_core.audit``) wäre der richtige
-Ort dafür; sie ist im Betrieb bislang nirgends verdrahtet, und bis dahin ist
-ein strukturiertes Protokoll besser als nichts. Der Nachtrag steht im Dossier."""
+Die verbindliche Spur ist die **Audit-Kette**: hash-verkettet, append-only per
+Trigger, damit ist eine nachträgliche Änderung erkennbar. Eine
+Rechteerweiterung ist genau der Vorgang, bei dem das zählt — wer sich Rechte
+erschleicht, räumt danach auf. „Auf ``allow`` gesetzt" ist dabei eine andere
+Auskunft als „von ``deny`` auf ``allow`` gehoben", und deshalb stehen beide
+Modi im Eintrag."""
 
 
 class ScopeView(BaseModel):
@@ -130,6 +133,7 @@ async def set_permission(
     payload: SetGrantRequest,
     session: CurrentSession,
     permissions: Permissions,
+    audit: Audit,
 ) -> GrantView:
     """Erteilt, ändert oder verweigert einen Scope — vollständig.
 
@@ -173,22 +177,37 @@ async def set_permission(
     )
     await permissions.upsert_grant(session.user_id, grant)
 
-    _log.info(
-        "berechtigung.gesetzt",
-        scope=scope,
-        user_id=str(session.user_id),
-        vorher=str(vorher.mode) if vorher else None,
-        nachher=str(grant.mode),
-        # Die Richtung ist die interessante Angabe: Erteilen öffnet, Zurücknehmen
-        # nicht. Wer ein Protokoll durchsieht, sucht die Erweiterungen.
-        erweitert=_erweitert(vorher, grant),
-        expires_at=grant.expires_at.isoformat() if grant.expires_at else None,
+    # Die Richtung ist die interessante Angabe: Erteilen öffnet, Zurücknehmen
+    # nicht. Wer ein Protokoll durchsieht, sucht die Erweiterungen — deshalb
+    # trägt schon der Name der Aktion sie mit.
+    erweitert = _erweitert(vorher, grant)
+    details: dict[str, Any] = {
+        "vorher": str(vorher.mode) if vorher else None,
+        "nachher": str(grant.mode),
+        "erweitert": erweitert,
+        "expires_at": grant.expires_at.isoformat() if grant.expires_at else None,
+    }
+    await audit.append(
+        AuditEntry(
+            occurred_at=utc_now(),
+            # ``user`` und nicht ``jarvis``: Diese Entscheidung trifft ein
+            # Mensch an der Kante. Ein Eintrag, der das System als Urheber
+            # führte, verschleierte genau das, worauf es hier ankommt.
+            actor="user",
+            action="permission.granted" if erweitert else "permission.set",
+            resource=scope,
+            details=details,
+            user_id=session.user_id,
+        )
     )
+    _log.info("berechtigung.gesetzt", scope=scope, user_id=str(session.user_id), **details)
     return _als_sicht(grant, utc_now())
 
 
 @router.delete("/{scope}", status_code=status.HTTP_204_NO_CONTENT)
-async def revoke_permission(scope: str, session: CurrentSession, permissions: Permissions) -> None:
+async def revoke_permission(
+    scope: str, session: CurrentSession, permissions: Permissions, audit: Audit
+) -> None:
     """Zieht eine Berechtigung zurück.
 
     ``204`` auch dann, wenn es nichts zurückzuziehen gab: Danach gilt in beiden
@@ -201,6 +220,16 @@ async def revoke_permission(scope: str, session: CurrentSession, permissions: Pe
     nicht mehr vor.
     """
     entfernt = await permissions.revoke_grant(session.user_id, scope)
+    await audit.append(
+        AuditEntry(
+            occurred_at=utc_now(),
+            actor="user",
+            action="permission.revoked",
+            resource=scope,
+            details={"vorhanden": entfernt},
+            user_id=session.user_id,
+        )
+    )
     _log.info(
         "berechtigung.zurueckgezogen",
         scope=scope,

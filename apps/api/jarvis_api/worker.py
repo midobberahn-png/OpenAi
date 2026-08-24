@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.agents import agent_catalog
 from jarvis_api.db.approval_store import PostgresApprovalStore
+from jarvis_api.db.audit_store import PostgresAuditSink
 from jarvis_api.db.calendar_store import PostgresCalendarStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.db.permission_store import PostgresPermissionStore
@@ -118,6 +119,9 @@ def worker_for(
                 policy=policy,
                 gateway=approvals,
                 invocations=invocations,
+                # Auch und gerade der Arbeiter: Er wirkt ohne Menschen davor,
+                # und ein Vorgang ohne Zeugen ist der, den man später sucht.
+                audit=PostgresAuditSink(engine),
             )
             katalog = agent_catalog()
             yield RunAdvancer(

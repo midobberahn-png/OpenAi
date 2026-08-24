@@ -40,6 +40,7 @@ from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.deps import (
     Agents,
     Approvals,
+    Audit,
     CurrentSession,
     Invocations,
     ModelArguments,
@@ -392,6 +393,7 @@ async def execute_step(
     policy: Policy,
     approvals: Approvals,
     invocations: Invocations,
+    audit: Audit,
 ) -> StepView:
     """Führt einen Werkzeugschritt aus — Glieder ⑤ bis ⑦ über HTTP.
 
@@ -430,6 +432,9 @@ async def execute_step(
         policy=policy,
         gateway=approvals,
         invocations=invocations,
+        # Ohne diese Zeile lief jede Werkzeugausführung ohne Protokoll — die
+        # Kette war gebaut und bekam nie einen Eintrag.
+        audit=audit,
     )
     tracker = BudgetTracker(lauf.budget, usage=lauf.usage)
 
@@ -547,6 +552,7 @@ async def advance_run(
     modell: ModelArguments,
     antworten: ModelResponse,
     agenten: Agents,
+    audit: Audit,
 ) -> StepView:
     """Führt den nächsten fälligen Schritt des Plans aus.
 
@@ -577,7 +583,13 @@ async def advance_run(
         tools=tools,
         policy=policy,
         executor=ToolExecutor(
-            registry=tools, policy=policy, gateway=approvals, invocations=invocations
+            registry=tools,
+            policy=policy,
+            gateway=approvals,
+            invocations=invocations,
+            # Ohne diese Zeile lief jede Werkzeugausführung ohne Protokoll —
+            # die Kette war gebaut und bekam nie einen Eintrag.
+            audit=audit,
         ),
         arguments=modell,
         responses=antworten,
