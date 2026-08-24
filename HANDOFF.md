@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `94a049d` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `d23ede2` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 68, Remote auf GitHub |
-| Tests | **1225** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **54/55** |
+| Commits | 69, Remote auf GitHub |
+| Tests | **1249** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **55/56** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
@@ -1021,6 +1021,33 @@ dieselbe Frage wie bei `release_step` und noch nicht entschieden.
 
 Chat, Statusleiste, Bestätigungsdialog, Permission Center. Ohne sie ist das
 System nicht bedienbar.
+
+**Eine Voraussetzung davon ist erledigt, und sie war ein Befund:** Es gab
+keinen Weg, eine Berechtigung zu erteilen. Der Speicher las nur, eine Route gab
+es nicht — jede Berechtigung entstand per `INSERT` von Hand, auch in jedem
+Test. Das Permission Center war damit nicht ungebaut, sondern **unbaubar**.
+`GET/PUT/DELETE /permissions` schließt das (`32c54c5`), und die Erteilung ist
+nach der gefährlichen Richtung geschnitten: eigener Port, Katalogprüfung,
+scope-eigene Einschränkungen, vollständiges Ersetzen, Protokoll mit Richtung.
+
+**Was jetzt zu entscheiden ist, bevor jemand anfängt:** Das UI-Dokument nennt
+Next.js, TanStack Query, react-three-fiber und einen eigenen GLSL-Shader. Das
+ist eine Werkzeugkette, die dieses Repository noch nicht hat — kein
+npm-Toolchain, kein JS-Testrunner, keine Vorstellung davon, wie eine
+Oberfläche in diesem Projekt geprüft wird. Wer hier anfängt, entscheidet das,
+und zwar für Monate. Die Frage gehört gestellt und nicht nebenbei beantwortet.
+
+Was **unabhängig** davon fehlt und jede Fassung braucht:
+
+* **Ein Ereignisstrom für Lauffortschritt.** Heute gibt es nur Polling über
+  `GET /runs/{id}`. Das UI-Dokument beschreibt WebSocket mit Sequenznummern
+  und Nachladen; nichts davon existiert.
+* **Die Audit-Kette ist im Betrieb nirgends verdrahtet.** `AuditSink` ist ein
+  Port, `ChainAudit` eine Implementierung im Kern — `ToolExecutor(audit=...)`
+  bekommt in der Anwendung durchgehend `None`. Jede Werkzeugausführung, jede
+  Bestätigung, jede Rechteänderung läuft ohne manipulationssicheres Protokoll.
+  Für ein System, dessen Leitkennzahl Sicherheitsinvarianten sind, ist das die
+  auffälligste Auslassung — und sie ist Backend-Arbeit, keine UI-Frage.
 
 ### 9. Weitere Provider
 
