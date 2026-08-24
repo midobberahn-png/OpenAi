@@ -380,17 +380,6 @@ class StepView(BaseModel):
     code: str | None
 
 
-def _naechste_schrittnummer(lauf: Run) -> int:
-    """Die nächste freie Schrittnummer.
-
-    ``len(completed_steps) + 1`` wäre naheliegend und falsch, sobald Plan- und
-    Einzelschritte gemischt werden: Lief zuerst Planschritt 2, ergäbe die Zahl
-    wieder 2 — und ``RunState`` weist doppelte Schrittnummern zurück. Das Maximum
-    ist die Zahl, die in beiden Fällen stimmt.
-    """
-    return max((s.seq for s in lauf.state.completed_steps), default=0) + 1
-
-
 @router.post("/{run_id}/steps", response_model=StepView)
 async def execute_step(
     run_id: UUID,
@@ -464,7 +453,11 @@ async def execute_step(
         tracker,
         tool_name=payload.tool,
         arguments=payload.arguments,
-        seq=_naechste_schrittnummer(lauf),
+        # Oberhalb des ganzen Plans und nicht bloß über den erledigten
+        # Schritten: Sonst belegte dieser Aufruf die Nummer des nächsten
+        # Planschrittes, und der gälte danach als erledigt, ohne gelaufen zu
+        # sein. Die Begründung steht bei ``Run.next_step_seq``.
+        seq=lauf.next_step_seq,
         session_id=session.id,
         channel=KANAL,
     )

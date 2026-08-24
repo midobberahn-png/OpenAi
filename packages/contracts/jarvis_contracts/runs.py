@@ -407,6 +407,30 @@ class Run(BaseModel):
             )
         return self
 
+    @property
+    def next_step_seq(self) -> int:
+        """Die nächste freie Schrittnummer — **oberhalb des ganzen Plans**.
+
+        ``completed_steps`` führt zweierlei: erledigte Planschritte und
+        Aufrufe, die jemand selbst ausgelöst hat (``POST /runs/{id}/steps``,
+        die Werkzeugaufrufe eines Agentenschrittes). Der Plan liest daraus, was
+        noch fällig ist, und unterscheidet nicht, woher eine Nummer stammt.
+
+        **Deshalb genügt ``max(erledigte) + 1`` nicht.** Gemessen: Plan aus
+        „① Termin anlegen ② Antwort formulieren"; nach ① ruft der Nutzer ein
+        Werkzeug selbst auf und bekommt die Nummer 2. Danach gilt Planschritt 2
+        als erledigt, ohne je gelaufen zu sein — der Lauf endet ohne Antwort.
+        Kein Fehler schlägt an; es fehlt nur etwas.
+
+        Die Nummer liegt deshalb über **beidem**: über allem, was erledigt ist,
+        und über allem, was der Plan überhaupt vergibt. Damit kann ein Aufruf
+        außerhalb des Plans keinen Planschritt mehr belegen — auch keinen, der
+        erst später fällig wird.
+        """
+        erledigt = max((s.seq for s in self.state.completed_steps), default=0)
+        geplant = max((s.seq for s in self.plan.steps), default=0) if self.plan else 0
+        return max(erledigt, geplant) + 1
+
     def with_taint(self, level: TaintLevel) -> Run:
         """Kontamination ist monoton — sie kann nur hinzukommen, nie verschwinden."""
         return self.model_copy(update={"taint_level": self.taint_level.merge(level)})

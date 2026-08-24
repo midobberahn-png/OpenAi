@@ -241,7 +241,11 @@ async def _ausfuehren_nach_bestaetigung(
         action_id=aktion.id,
         arguments=ergebnis.sanitized.arguments,
         tool_name=aktion.tool_name,
-        seq=len(lauf.state.completed_steps) + 1,
+        # Dieselbe Nummernvergabe wie überall sonst: oberhalb des ganzen
+        # Plans. ``len(completed_steps) + 1`` war hier doppelt falsch — es
+        # konnte eine Planschrittnummer belegen *und* eine bereits vergebene
+        # Nummer wiederholen, sobald ein Aufruf außerhalb der Reihe lief.
+        seq=lauf.next_step_seq,
     )
     try:
         await runs.save(schritt.run, erwarteter_status=erwartet)
