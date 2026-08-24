@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-__all__ = ["GrantConsumer"]
+__all__ = ["GrantConsumer", "UndoConsumer"]
 
 
 class GrantConsumer(Protocol):
@@ -58,5 +58,45 @@ class GrantConsumer(Protocol):
         Transaktion nicht sichtbar. Alle drei enden in derselben Abweisung,
         weil alle drei dasselbe bedeuten — und weil ein Aufrufer aus der
         Unterscheidung nichts machen könnte, das öffnen dürfte.
+        """
+        ...
+
+
+class UndoConsumer(Protocol):
+    """Löst eine **Rücknahme-Erlaubnis** ein — genau einmal.
+
+    Ein eigener Port neben ``GrantConsumer`` und nicht eine zweite Methode
+    darin: Die beiden sichern verschiedene Wirkungen an derselben Zeile. Der
+    Ausführungs-Grant wird verbraucht, bevor ein Werkzeug wirkt; dieser hier,
+    bevor eine Rücknahme wirkt. Eine gemeinsame Methode hieße, dass ein
+    verbrauchter Aufruf auch keine Rücknahme mehr zuließe — und das ist genau
+    verkehrt herum.
+
+    **Herkunft: externe Prüfung von ``61d4428``.** Der Anspruch am Gate
+    (``claim_undo``) sichert nur den Übergang *Aufruf → Erlaubnis*. Wer die
+    ausgestellte Erlaubnis behält, legt sie erneut vor: Typ, Nutzer und
+    Werkzeugname gelten unverändert. Dass ein zweites Löschen desselben Termins
+    folgenlos wäre, ist eine Eigenschaft von ``calendar.create`` und keine des
+    Weges — Undo ist als generischer Mechanismus gebaut.
+    """
+
+    async def consume_undo(self, invocation_id: UUID, *, now: datetime) -> bool:
+        """``True``, wenn dieser Aufruf die Rücknahme erwirkt hat.
+
+        Dieselben zwei Zusagen wie bei ``GrantConsumer.consume``, und aus
+        denselben Gründen:
+
+        **Atomar** — zwei gleichzeitige Vorlagen derselben Erlaubnis dürfen
+        nicht beide ``True`` liefern. Die Bedingung gehört in die
+        ``WHERE``-Klausel.
+
+        **Dauerhaft, bevor dieser Aufruf zurückkehrt** — eine persistente
+        Implementierung darf den Verbrauch nicht in einer Transaktion
+        hinterlassen, die der Aufrufer noch zurückrollen kann. Sonst rollt er
+        nach einem Absturz zurück, während der Seiteneffekt der Rücknahme
+        bleibt, und der nächste Versuch nimmt ein zweites Mal zurück.
+
+        ``False`` heißt „kein einlösbarer Anspruch" und ist bewusst nicht nach
+        Ursachen getrennt.
         """
         ...

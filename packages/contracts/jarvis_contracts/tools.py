@@ -350,16 +350,36 @@ class InvocationStatus(StrEnum):
     Unterschied zwischen *ja* und *auf keinen Fall*.
     """
 
-    UNDONE = "undone"
-    """Der Aufruf wurde ausgeführt und anschließend zurückgenommen.
+    UNDOING = "undoing"
+    """Eine Rücknahme ist beansprucht und ihr Ausgang steht noch nicht fest.
 
-    **Der Zustand sagt: Der Rückgängig-Weg ist verbraucht** — ein zweites Undo
-    trifft diese Zeile nicht mehr. Ob die Rücknahme auch gewirkt hat, steht im
-    Ergebnis: Ein Handler, der dabei scheitert, hinterlässt hier trotzdem
-    ``undone``, und das ist die unangenehme, aber richtige Auskunft. Der
-    Anspruch wird **vor** der Rücknahme verbraucht, aus demselben Grund wie
-    beim Grant: Zwei gleichzeitige Rücknahmen desselben Aufrufs dürfen nicht
-    beide durchgehen.
+    Der Zwischenzustand zwischen **Anspruch** und **Verbrauch** — dieselbe
+    Trennung wie beim Ausführungs-Grant, wo ``claim_execution()`` und
+    ``GrantConsumer.consume()`` zwei verschiedene Übergänge sichern:
+
+        executed → undoing   ein Anspruch je Aufruf (Zugehörigkeit, Frist)
+        undoing  → undone    ein Handler je Anspruch (vor der Wirkung)
+
+    **Warum zwei Übergänge und nicht einer.** Der erste verhindert, dass zwei
+    Anfragen zwei Rücknahme-Erlaubnisse bekommen. Der zweite verhindert, dass
+    **dieselbe** Erlaubnis zweimal einen Handler erreicht — und das ist ein
+    anderer Angriff, wie eine externe Prüfung zu ``61d4428`` gezeigt hat: Typ,
+    Nutzer und Werkzeugname eines ausgestellten Grants gelten beim zweiten Mal
+    unverändert.
+
+    Bleibt eine Zeile in diesem Zustand stehen, war eine Rücknahme unterwegs
+    und niemand weiß, was daraus wurde — dieselbe Auskunft wie
+    ``EFFECT_UNKNOWN`` und aus demselben Grund kein ``is_settled``.
+    """
+
+    UNDONE = "undone"
+    """Die Rücknahme ist eingelöst — der Weg ist verbraucht.
+
+    Ein zweites Undo trifft diese Zeile nicht mehr, weder über eine neue
+    Erlaubnis noch über eine wiedervorgelegte. Ob die Rücknahme auch **gewirkt**
+    hat, steht im Ergebnis: Der Verbrauch committet vor dem Handler, weil die
+    Reihenfolge andersherum zwei Rücknahmen zuließe. Das ist die gewollte
+    Richtung — lieber eine zu wenig als zwei.
     """
 
     EXPIRED = "expired"

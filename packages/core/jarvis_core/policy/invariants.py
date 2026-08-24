@@ -593,6 +593,26 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.policy.undo",
     ),
     Invariant(
+        id="undo-grant-single-use",
+        title="Eine ausgestellte Rücknahme-Erlaubnis nimmt höchstens einmal zurück",
+        statement=(
+            "Ein ``UndoGrant`` erreicht den Undo-Handler genau einmal. Der Verbrauch "
+            "liegt an der ``invocation_id``, ist atomar und committet, bevor der "
+            "Handler läuft — unabhängig davon, wie oft dasselbe Objekt oder eine Kopie "
+            "davon vorgelegt wird."
+        ),
+        why=(
+            "Der Anspruch am Gate (``claim_undo``) sichert nur den Übergang *Aufruf → "
+            "Erlaubnis*. Typ, Nutzer und Werkzeugname einer ausgestellten Erlaubnis "
+            "gelten bei der zweiten Vorlage unverändert — dasselbe Muster, das beim "
+            "Ausführungs-Grant bereits dreimal einen Schritt zu früh hing. Dass ein "
+            "zweites Löschen desselben Termins folgenlos wäre, ist eine Eigenschaft von "
+            "``calendar.create`` und keine des Weges; Undo ist generisch gebaut."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.tools.registry",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(

@@ -24,6 +24,16 @@ ein Mensch bestätigt hätte, und kein Scope beschreibt sie: Wer
 ``calendar.create`` darf, darf deswegen nicht ``calendar.delete`` — und wer sie
 über ein Undo bekäme, hätte das Löschrecht durch die Hintertür.
 
+**Zwei Übergänge, zwei Ansprüche.** Dieses Gate sichert den ersten:
+
+    protokollierter Aufruf → UndoGrant     ``claim_undo``   (hier)
+    UndoGrant → Undo-Handler               ``consume_undo`` (Registry)
+
+Der zweite fehlte in der ersten Fassung, und eine externe Prüfung zu
+``61d4428`` hat ihn benannt: Wer die ausgestellte Erlaubnis behält, legt sie
+erneut vor — Typ, Nutzer und Werkzeugname gelten unverändert. Der Anspruch am
+Gate trägt die *Ausstellung*, nicht die *Wiedervorlage*.
+
 **Die Antwort ist Verengung statt Erlaubnis.** Eine Rücknahme kann
 
 * nur einen **protokollierten, ausgeführten** Aufruf treffen,
@@ -131,6 +141,11 @@ class UndoGateway:
         gelöschten Termins folgenlos *wäre*, ist eine Eigenschaft dieses
         Werkzeugs und keine des Weges; ein Weg, der sich auf sie verließe,
         wäre beim nächsten Werkzeug falsch.
+
+        **Was dieser Anspruch nicht leistet:** Er endet mit der Ausstellung.
+        Die ausgestellte Erlaubnis ein zweites Mal vorzulegen verhindert erst
+        der Verbrauch in ``ToolRegistry.undo()`` — und zwar unmittelbar vor dem
+        Handler, aus demselben Grund wie beim Ausführungs-Grant.
 
         ``user_id`` kommt von der Kante aus der Sitzung. Sie geht **in die
         Abfrage** und nicht in eine Prüfung darüber: Eine Zugehörigkeit, die

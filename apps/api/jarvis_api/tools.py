@@ -29,6 +29,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.db.grant_store import PostgresGrantConsumer
+from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.settings import Settings
 from jarvis_core.ports.calendar import CalendarStore
 from jarvis_core.ports.files import FileReader
@@ -53,7 +54,17 @@ def tool_catalog(
     lässt sich der Katalog in einem Test mit einem anderen Dateizugriff
     aufbauen, ohne dass diese Funktion davon wüsste.
     """
-    registry = ToolRegistry(grants=PostgresGrantConsumer(engine))
+    registry = ToolRegistry(
+        grants=PostgresGrantConsumer(engine),
+        # Zwei Verbräuche an derselben Zeile, für zwei verschiedene Wirkungen:
+        # der eine vor einem Werkzeug, der andere vor einer Rücknahme. Ohne den
+        # zweiten wäre eine **ausgestellte** Rücknahme-Erlaubnis beliebig oft
+        # einlösbar — der Befund aus der externen Prüfung zu ``61d4428``.
+        #
+        # Beide Übergänge der Rücknahme stehen im Werkzeugprotokoll, weil beide
+        # dieselbe Zeile fortschreiben: ``executed → undoing → undone``.
+        undo_grants=PostgresInvocationStore(engine),
+    )
     registry.register(FILES_READ, files_read_handler(files))
     registry.register(
         CALENDAR_CREATE,

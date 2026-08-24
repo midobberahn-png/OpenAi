@@ -110,7 +110,7 @@ fest. Ein späteres Fortschreiben des Status verschiebt ihn nicht."""
 _CLAIM_UNDO = text(
     """
     UPDATE tool_invocations AS i
-       SET status = 'undone'
+       SET status = 'undoing'
       FROM runs AS r
      WHERE i.id = :id
        AND r.id = i.run_id
@@ -129,7 +129,14 @@ Nutzer vergleichen, dann schreiben — wäre bei zwei gleichzeitigen Anfragen
 wieder das bekannte Muster.
 
 ``i.status = 'executed'`` ist zugleich der Einmaligkeitsanspruch: Nach dem
-ersten Treffer steht dort ``undone``, und die Bedingung gilt nicht mehr.
+ersten Treffer steht dort ``undoing``, und die Bedingung gilt nicht mehr.
+
+**Warum ``undoing`` und nicht gleich ``undone``.** Dieser Schritt sichert den
+Übergang *Aufruf → Erlaubnis*. Der zweite — *Erlaubnis → Handler* — steht in
+``_CONSUME_UNDO`` und ist ein anderer Angriff: Wer die ausgestellte Erlaubnis
+behält, legt sie erneut vor, und Typ, Nutzer und Werkzeugname gelten
+unverändert. Ein einziger Zustandswechsel für beide Übergänge deckte den
+zweiten nicht ab; gemeldet von einer externen Prüfung zu ``61d4428``.
 
 ``executed_at > CAST(:now AS timestamptz) - :frist`` ist die Frist. Der
 ``CAST`` ist kein Zierrat: Ohne ihn hält PostgreSQL den Parameter für
@@ -142,6 +149,38 @@ Zeit gehört zum Vorgang. Wer sie fälschte, säße bereits im Prozess.
 ``RETURNING`` liefert, was die Rücknahme braucht: welches Werkzeug und woran.
 Beides aus der Zeile und nicht aus dem Request — das ist der Unterschied
 zwischen einer Rücknahme und einem Löschrecht."""
+
+
+_CONSUME_UNDO = text(
+    """
+    UPDATE tool_invocations
+       SET status = 'undone',
+           result = COALESCE(result, '{}'::jsonb)
+                    || jsonb_build_object('undone_at', CAST(:now AS text))
+     WHERE id = :id
+       AND status = 'undoing'
+    RETURNING id
+    """
+)
+"""Löst die **ausgestellte** Rücknahme-Erlaubnis ein — genau einmal.
+
+Der Gegenpart zu ``_CLAIM_UNDO`` und dieselbe Bauart wie ``_CONSUME`` beim
+Ausführungs-Grant: Die Einmaligkeit steht in der ``WHERE``-Klausel, und der
+Verbrauch committet, bevor der Handler läuft.
+
+``AND status = 'undoing'`` ist die ganze Zusage: Nach dem ersten Treffer steht
+dort ``undone``, und jede weitere Vorlage derselben Erlaubnis findet nichts.
+Zwei gleichzeitige Vorlagen — genau einer gewinnt.
+
+Ohne Zugehörigkeitsprüfung, und das ist kein Versehen: Sie ist beim Anspruch
+bereits gefallen, und die Erlaubnis, die hier vorgelegt wird, gibt es nur aus
+dem Gate. Eine zweite Prüfung wäre die zweite Wahrheit über dieselbe Frage.
+
+``undone_at`` im Ergebnis statt in einer eigenen Spalte: Die Zeit ist Auskunft
+und keine Bedingung — geprüft wird an ``status``, und ein Feld, an dem nichts
+hängt, braucht keine Migration. Der ``CAST`` darum ist nötig, weil
+``jsonb_build_object`` den Typ eines nackten Parameters nicht herleiten kann;
+ohne ihn bricht PostgreSQL mit ``IndeterminateDatatypeError`` ab."""
 
 
 _SPALTEN = (
@@ -281,6 +320,21 @@ class PostgresInvocationStore:
         if zeile is None:
             return None
         return UndoClaim(tool_name=zeile.tool_name, undo_token=zeile.undo_token)
+
+    async def consume_undo(self, invocation_id: UUID, *, now: datetime) -> bool:
+        """Löst die ausgestellte Rücknahme-Erlaubnis ein — eigene Transaktion.
+
+        Der Aufruf kehrt erst zurück, wenn der Verbrauch committed ist. Danach
+        — und erst danach — ruft die Registry den Handler. Ohne diese
+        Reihenfolge rollte ein Absturz den Verbrauch zurück, während die
+        Löschung bereits geschehen wäre, und der nächste Versuch nähme ein
+        zweites Mal zurück.
+        """
+        async with self._engine.begin() as conn:
+            treffer = await conn.execute(
+                _CONSUME_UNDO, {"id": invocation_id, "now": now.isoformat()}
+            )
+            return treffer.first() is not None
 
     async def mark(
         self,

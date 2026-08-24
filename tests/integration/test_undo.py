@@ -306,3 +306,86 @@ class TestFuenfVerengungen:
         antwort = await client.post(f"/invocations/{uuid.uuid4()}/undo")
 
         assert antwort.status_code == 409, antwort.text
+
+
+class TestZweiUebergaengeGegenEchteDatenbank:
+    """**Herkunft: externe Prüfung von ``61d4428``.**
+
+    Der Anspruch am Gate sichert *Aufruf → Erlaubnis*. Der Bericht zeigte, dass
+    der zweite Übergang offen war: *Erlaubnis → Handler*. Wer die ausgestellte
+    Erlaubnis behält, legt sie erneut vor — Typ, Nutzer und Werkzeugname gelten
+    unverändert.
+
+    Die Unit-Suite misst das am Handler-Zähler; hier steht die persistente
+    Hälfte. Gemessen wird an der Zeile, weil nur sie über Prozessgrenzen und
+    Abstürze hinweg gilt.
+    """
+
+    @pytest.mark.invariant("undo-grant-single-use")
+    async def test_der_zustand_wandert_ueber_zwei_stufen(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        from jarvis_api.db.invocation_store import PostgresInvocationStore
+        from jarvis_core.orchestrator import utc_now
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+        _, invocation_id = await _termin_anlegen(client)
+        speicher = PostgresInvocationStore(engine)
+
+        assert await _status(engine, invocation_id) == "executed"
+        anspruch = await speicher.claim_undo(
+            uuid.UUID(invocation_id), user_id=user_id, now=utc_now()
+        )
+        assert anspruch is not None
+        assert await _status(engine, invocation_id) == "undoing", (
+            "Nach dem Anspruch, vor dem Verbrauch: Eine Rücknahme ist unterwegs, "
+            "und ihr Ausgang steht noch nicht fest."
+        )
+
+        assert await speicher.consume_undo(uuid.UUID(invocation_id), now=utc_now()) is True
+        assert await _status(engine, invocation_id) == "undone"
+
+    @pytest.mark.invariant("undo-grant-single-use")
+    async def test_dieselbe_erlaubnis_zweimal_verbraucht_nur_einer(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        from jarvis_api.db.invocation_store import PostgresInvocationStore
+        from jarvis_core.orchestrator import utc_now
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+        _, invocation_id = await _termin_anlegen(client)
+        speicher = PostgresInvocationStore(engine)
+        await speicher.claim_undo(uuid.UUID(invocation_id), user_id=user_id, now=utc_now())
+
+        erste = await speicher.consume_undo(uuid.UUID(invocation_id), now=utc_now())
+        zweite = await speicher.consume_undo(uuid.UUID(invocation_id), now=utc_now())
+
+        assert (erste, zweite) == (True, False)
+
+    @pytest.mark.invariant("undo-grant-single-use")
+    async def test_sechs_gleichzeitige_vorlagen_und_genau_eine_gewinnt(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Der Fall, an dem ein ``if verbraucht:`` durchfällt.
+
+        Sechs Aufgaben, dieselbe Erlaubnis, eine Datenbank — die Zusage liegt
+        in der ``WHERE``-Klausel und nicht in einer Prüfung davor.
+        """
+        import asyncio
+
+        from jarvis_api.db.invocation_store import PostgresInvocationStore
+        from jarvis_core.orchestrator import utc_now
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_kalenderrecht(engine, user_id=user_id)
+        _, invocation_id = await _termin_anlegen(client)
+        speicher = PostgresInvocationStore(engine)
+        await speicher.claim_undo(uuid.UUID(invocation_id), user_id=user_id, now=utc_now())
+
+        ergebnisse = await asyncio.gather(
+            *[speicher.consume_undo(uuid.UUID(invocation_id), now=utc_now()) for _ in range(6)]
+        )
+
+        assert sum(ergebnisse) == 1, f"{sum(ergebnisse)} Vorlagen haben gewonnen."

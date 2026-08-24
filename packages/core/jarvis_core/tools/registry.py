@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from jarvis_contracts import RiskLevel, ToolResult, ToolSpec
-from jarvis_core.ports.grants import GrantConsumer
+from jarvis_core.ports.grants import GrantConsumer, UndoConsumer
 
 if TYPE_CHECKING:  # nur für die Typprüfung — zur Laufzeit ein lokaler Import
     from jarvis_core.policy.approval import ExecutionGrant
@@ -109,10 +109,22 @@ class UnguardedExecution(Exception):
 class ToolRegistry:
     """Katalog aller verfügbaren Werkzeuge."""
 
-    def __init__(self, *, grants: GrantConsumer | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        grants: GrantConsumer | None = None,
+        undo_grants: UndoConsumer | None = None,
+    ) -> None:
         self._specs: dict[str, ToolSpec] = {}
         self._handlers: dict[str, ToolHandler] = {}
         self._undo: dict[str, UndoHandler] = {}
+        self._undo_grants = undo_grants
+        """Der Verbrauch der Rücknahme-Erlaubnis — neben dem Grant-Verbrauch
+        und nicht statt seiner. Dieselbe Zeile, zwei verschiedene Wirkungen:
+        Der eine wird verbraucht, bevor ein Werkzeug wirkt, der andere, bevor
+        eine Rücknahme wirkt. ``None`` weist die Rücknahme ab — ein fehlender
+        Sicherheitskontext muss schließen."""
+
         self._grants = grants
         """Der Grant-Verbrauch. ``None`` ist zulässig, solange nur der Katalog
         gelesen wird — für ``execute()`` nicht. Die Registry wird an vielen
@@ -296,7 +308,21 @@ class ToolRegistry:
         sondern im Gate: Er *ist* der Anspruch — die Zeile wechselt auf
         ``undone``, bevor dieser Aufruf überhaupt beginnt.
 
-        Was bleibt: Herkunft (nominal), Nutzer und Implementierung.
+        **Vier Prüfungen, und die vierte hat gefehlt.** Die erste Fassung
+        verließ sich darauf, dass der Anspruch am Gate genügt — er sichert
+        aber nur den Übergang *Aufruf → Erlaubnis*. Wer die ausgestellte
+        Erlaubnis behält, legt sie erneut vor: Typ, Nutzer und Werkzeugname
+        gelten unverändert, und der Handler lief ein zweites Mal. Gemeldet von
+        einer externen Prüfung zu ``61d4428``, nachgemessen in
+        ``tests/unit/test_undo_replay.py`` — vier von fünf Tests schlugen fehl.
+
+        Dasselbe Muster wie beim Ausführungs-Grant, dieselbe Reparatur: ein
+        Verbrauch an der ``invocation_id``, als **letzter** Schritt vor dem
+        Handler.
+
+        Was hier weiterhin **nicht** steht, ist ein Hash-Vergleich: Eine
+        Rücknahme hat keine Argumente, die ein Mensch bestätigt hätte, sondern
+        genau einen Rücknahmepunkt, den das Werkzeug selbst notiert hat.
         """
         from jarvis_core.policy.undo import UndoGrant as _UndoGrant
 
@@ -320,6 +346,20 @@ class ToolRegistry:
                 "protokolliert als zurücknehmbar, dieser Prozess kann es nicht — ein "
                 "Konfigurationsfehler und kein Berechtigungsproblem."
             )
+
+        if self._undo_grants is None:
+            raise UnguardedExecution(
+                f"Für die Rücknahme von {auth.tool_name!r} ist kein Verbrauch "
+                "eingerichtet. Ohne ihn wäre dieselbe Erlaubnis beliebig oft einlösbar; "
+                "die Rücknahme wird abgebrochen."
+            )
+        if not await self._undo_grants.consume_undo(auth.invocation_id, now=datetime.now(tz=UTC)):
+            raise GrantAlreadyUsed(
+                f"Die Rücknahme von {auth.tool_name!r} ließ sich nicht einlösen: Sie "
+                "wurde bereits eingelöst, oder es gibt keinen beanspruchten Vorgang, zu "
+                "dem sie gehört. Eine Erlaubnis nimmt höchstens einmal zurück."
+            )
+
         return await handler(auth.undo_token)
 
     def names(self) -> set[str]:

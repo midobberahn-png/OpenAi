@@ -7590,6 +7590,7 @@
             "executed",
             "failed",
             "effect_unknown",
+            "undoing",
             "undone",
             "expired",
             "blocked"
