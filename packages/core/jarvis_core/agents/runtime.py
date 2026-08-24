@@ -92,6 +92,7 @@ class AgentSession:
         tools: Callable[[Run], Awaitable[frozenset[str]]],
         session_id: UUID | None,
         channel: ApprovalChannel = "ui",
+        plan_step_seq: int | None = None,
     ) -> None:
         self._executor = executor
         self._run = run
@@ -103,6 +104,19 @@ class AgentSession:
         # Set würde in der nächsten Runde das Angebot von vorhin anbieten — und
         # genau darauf zielt ein Angreifer, der eine Mail unterschiebt.
         self._tools = tools
+        self._plan_step_seq = plan_step_seq
+        """Zu welchem **Planschritt** die Aufrufe dieser Sitzung gehören.
+
+        Der Anker der Wiederaufnahme, und er fehlte hier zuerst. Ein Sub-Agent
+        führt mehrere Werkzeuge aus; ohne diese Angabe stünden sie im Protokoll
+        ohne Zuordnung. Bleibt ein Agentenschritt hängen, fragt die
+        Wiederaufnahme ``for_step(run_id, seq)`` — und bekäme „kein Aufruf",
+        also „nachweislich nichts geschehen". Sie vergäbe den Schritt neu, und
+        der zweite Durchgang führte die Werkzeuge des ersten erneut aus.
+
+        ``None`` bleibt richtig, wo ein Agent außerhalb eines Plans läuft.
+        """
+
         self._session_id = session_id
         """``None`` heißt: kein Bestätigungskanal — der Arbeiter, der einen
         hängengebliebenen Lauf fortsetzt, hat keine Sitzung. Ein Vorschlag, der
@@ -161,6 +175,7 @@ class AgentSession:
             session_id=self._session_id,
             channel=self._channel,
             agent_name=self._chain.current.name,
+            plan_step_seq=self._plan_step_seq,
         )
         self._run = outcome.run
         return outcome
@@ -240,6 +255,7 @@ class AgentRuntime:
         session_id: UUID | None,
         context: ContextBundle | None = None,
         budget: RunBudget | None = None,
+        plan_step_seq: int | None = None,
     ) -> DelegationOutcome:
         """Delegiert an einen Sub-Agenten und führt die Folgen nach oben zurück."""
         caller = chain.current
@@ -283,6 +299,7 @@ class AgentRuntime:
             # er *jetzt* ist, nicht wie er beim Start war.
             tools=lambda aktueller: self.effective_tools(extended, aktueller),
             session_id=session_id,
+            plan_step_seq=plan_step_seq,
         )
         result = await behaviour.act(session, request)
 

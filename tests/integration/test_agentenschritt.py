@@ -198,6 +198,53 @@ class TestDerSchrittLaeuft:
         assert aufrufe == 1, "Der Aufruf des Agenten steht im Werkzeugprotokoll wie jeder andere."
 
 
+class TestDerAnkerDerWiederaufnahme:
+    @pytest.mark.invariant("invocation-is-recovery-anchor")
+    async def test_ein_werkzeugaufruf_des_agenten_gehoert_zu_seinem_planschritt(
+        self, client: AsyncClient, engine: AsyncEngine, tmp_path: Path, monkeypatch, drehbuch
+    ) -> None:
+        """**Ein Loch, das der Agentenschritt selbst aufgerissen hat.**
+
+        Ein Sub-Agent führt mehrere Werkzeuge aus. Stünden sie im Protokoll
+        ohne Zuordnung (``step_seq = NULL``), fragte die Wiederaufnahme bei
+        einem hängengebliebenen Agentenschritt ``for_step(run, seq)`` und
+        bekäme „kein Aufruf" — also *nachweislich nichts geschehen*. Sie
+        vergäbe den Schritt neu, und der zweite Durchgang führte die Werkzeuge
+        des ersten erneut aus.
+
+        Der Anker ist deshalb die Schrittnummer des **Plans**, nicht die
+        laufende Nummer des Aufrufs.
+        """
+        wurzel = tmp_path / "unterlagen"
+        wurzel.mkdir()
+        (wurzel / "stand.md").write_text("Alles ruhig.", encoding="utf-8")
+        monkeypatch.setenv("FILES_ALLOWED_ROOTS", str(wurzel))
+        get_settings.cache_clear()
+
+        user_id = await _angemeldet(client, engine)
+        await _mit_dateirecht(engine, user_id=user_id, wurzel=wurzel)
+        drehbuch(
+            _ruft("files.read", {"path": str(wurzel / "stand.md")}),
+            CompletionResult(text="Gelesen."),
+        )
+        run_id = await _agentenlauf(client)
+
+        await client.post(f"/runs/{run_id}/advance", json={})
+
+        async with engine.begin() as conn:
+            zeilen = (
+                await conn.execute(
+                    text("SELECT tool_name, step_seq FROM tool_invocations WHERE run_id = :r"),
+                    {"r": uuid.UUID(run_id)},
+                )
+            ).all()
+        assert zeilen, "Ohne Protokolleintrag prüft dieser Test nichts."
+        assert all(zeile.step_seq == 1 for zeile in zeilen), (
+            f"Aufrufe ohne Zuordnung zum Planschritt: {zeilen}. Eine Wiederaufnahme "
+            "hielte den Schritt damit für folgenlos."
+        )
+
+
 class TestDasAngebotIstDieGrenze:
     @pytest.mark.invariant("agent-chain-preserves-capability-binding")
     async def test_ein_werkzeug_ausserhalb_der_kette_wirkt_nicht(

@@ -160,6 +160,12 @@ class AgentStepSource:
                 behaviour=verhalten,
                 session_id=session_id,
                 context=self._kontext(run),
+                # Der Anker der Wiederaufnahme: Jeder Werkzeugaufruf dieses
+                # Agenten gehört zu *diesem* Planschritt. Ohne die Angabe
+                # stünde er ohne Zuordnung im Protokoll — und ein
+                # hängengebliebener Agentenschritt gälte als „nachweislich
+                # nichts geschehen", obwohl er bereits gewirkt hat.
+                plan_step_seq=step.seq,
             )
         except DelegationDenied as abgelehnt:
             # Strukturell unzulässig: keine Delegationserlaubnis, Rekursion,
