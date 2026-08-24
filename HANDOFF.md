@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `1eb6d95` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `dab8584` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 73, Remote auf GitHub |
-| Tests | **1277** Python + 10 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **56/57** |
+| Commits | 74, Remote auf GitHub |
+| Tests | **1299** Python + 12 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **57/58** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
@@ -1062,15 +1062,31 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
 
 **Was als Nächstes ansteht:**
 
-* **Der Ereignisstrom.** Die Oberfläche pollt alle drei Sekunden. Das ist die
-  ehrliche Fassung, solange es nichts anderes gibt — was es nicht kann, ist den
-  Moment zeigen, in dem etwas passiert. Das UI-Dokument beschreibt WebSocket
-  mit Sequenznummern und Nachladen über `GET /runs/{id}/steps`; nichts davon
-  existiert. **Das ist der nächste Backend-Block**, und der Chat hängt daran.
+* ~~Der Ereignisstrom.~~ **Erledigt** (`2b74b18`, ADR-016): SSE statt
+  WebSocket — der ausschlaggebende Grund ist die Anmeldung, denn `EventSource`
+  schickt das `HttpOnly`-Cookie mit, während ein WebSocket-Handshake aus dem
+  Browser keine Header setzen kann. Der Strom trägt **Hinweise**, keine
+  Zustände; `seq` kommt aus Redis.
+
+  Zwei Befunde am vorhandenen Protokoll: `ActionPending` trägt die ganze
+  `PendingAction` samt **Nonce** — über einen nutzerweiten Kanal wäre das die
+  Verteilung eines sitzungsgebundenen Geheimnisses an alle Geräte (jetzt
+  `ActionWaiting`). Und `seq` stand bereits mit Begründung im Vertrag; meine
+  erste Fassung des ADR argumentierte dagegen und lag falsch.
+
+  **Und der Browsertest hat einen Stillstand gefunden, der lange dalag:** Die
+  Sitzungsprüfung schreibt `last_seen_at` in der Transaktion des Requests. Bei
+  kurzen Requests war das ein Kuriosum — bei einem Strom, der nie endet, hielt
+  die Zeilensperre jeden weiteren Aufruf derselben Sitzung an. `touch()` läuft
+  jetzt in eigener Transaktion.
 * **Kein Endpunkt liest den Kalender.** Aufgefallen beim Browsertest der
   Rücknahme: Ob ein Termin danach weg ist, kann die Oberfläche nicht sehen.
   Solange niemand einen Kalender *anzeigen* will, ist das folgenlos — beim
   ersten Versuch nicht mehr.
+* **Der Chat.** Jetzt möglich: Der Strom trägt die Änderungen, die Oberfläche
+  lädt nach. Was fehlt, ist die Token-Ausgabe — `TokenDelta` steht im
+  Protokoll, und der Weg dorthin führt über einen Modellaufruf, der streamt.
+  Das ist der nächste sichtbare Schritt.
 * **Kein Router in der Oberfläche.** Zwei Bereiche und ein Laufdetail kommen
   mit einem Zustand aus. Sobald ein Laufdetail eine Adresse braucht, die sich
   weitergeben und neu laden lässt, ist das die Gelegenheit für einen — dann mit
