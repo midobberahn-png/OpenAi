@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `f271cac` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `94a049d` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 65, Remote auf GitHub |
-| Tests | **1212** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **53/54** |
+| Commits | 68, Remote auf GitHub |
+| Tests | **1225** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **54/55** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
@@ -79,6 +79,27 @@ Zwei Dinge daran sind wichtiger als die Verdrahtung selbst:
    Das ist der Unterschied zu allem davor: Bisher war dieser Ablauf an
    Attrappen belegt, und die Attrappe tat, was der Test ihr sagte. Jetzt tut
    es ein echtes Modell aus eigenem Antrieb.
+
+**Eine fünfte Prüfrunde, und sie hat wieder das bekannte Muster gefunden**
+(`e04186a`, `94a049d`). Der Undo-Weg war eine Woche alt, und der Bericht nennt
+den Befund beim Namen: „wieder genau das bekannte Muster ‚Einmaligkeit hängt
+einen Übergang zu früh' — nur diesmal im gerade neu hinzugefügten Undo-Pfad."
+
+Er trifft zu. `claim_undo()` sicherte *Aufruf → Erlaubnis*; der Übergang
+*Erlaubnis → Handler* war offen. Derselbe `UndoGrant` seriell, zehnfach
+parallel, als `copy`, `deepcopy` und `model_copy` — jedes Mal erreichte er die
+Rücknahme. Vier von fünf neuen Tests schlugen vor der Reparatur fehl.
+
+Das ist inzwischen **das fünfte Mal** dasselbe: Nonce, Autorisierung,
+Ausstellung, Planschritt — und jetzt die Rücknahme. Wer hier etwas Neues baut,
+das eine Wirkung erlaubt, prüfe zuerst: *Sichert der Anspruch die Ausstellung
+oder die Einlösung?* Es sind zwei Übergänge, und beide brauchen einen.
+
+Dazu drei kleinere Befunde derselben Runde: Die Ablaufzeit einer Bestätigung
+fiel nicht in den finalen Anspruch (sie konnte **während** eines Durchlaufs
+verstreichen); der Identitäts-Strukturtest übersah indirekte Vererbung; der
+Rate-Limit-Strukturtest bewies ein Vorkommen und keine Form — der Laufzeit-
+beweis (`429`) steht jetzt daneben.
 
 **Die Wiederaufnahme steht** (`44738f6`, `a3474a4`) — zwei Blöcke, und der
 Zuschnitt kam beide Male aus einer Messung.
@@ -984,7 +1005,13 @@ heißt „der Eintrag verschwindet", nicht „es ist nichts passiert" — das st
 in `calendar.py`, weil eine Vorschau nicht mehr versprechen darf als der Weg
 hält.
 
-**Offen geblieben:** Scheitert der Undo-Handler nach dem Anspruch, ist der Weg
+Seit der fünften Prüfrunde wandert der Zustand über **zwei** Übergänge:
+`executed → undoing → undone`. Der erste ist der Anspruch (ein Grant je
+Aufruf), der zweite der Verbrauch (ein Handler je Grant, committed vor der
+Wirkung). Bleibt eine Zeile in `undoing` stehen, war eine Rücknahme unterwegs
+und niemand weiß, was daraus wurde.
+
+**Offen geblieben:** Scheitert der Undo-Handler nach dem Verbrauch, ist der Weg
 verbraucht und der Termin steht möglicherweise noch. Die Alternative — erst
 wirken, dann vermerken — ließe zwei gleichzeitige Rücknahmen beide durch. Ein
 zweiter Versuch bräuchte einen Anspruch, der sich zurückgeben lässt; das ist
@@ -1001,6 +1028,27 @@ Anthropic und OpenAI, dieselbe Form wie Ollama. Dabei mitzunehmen, was aus dem
 Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch
 verhindert einen zweiten Versuch — er kann nicht verhindern, dass ein
 Provider-Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen.
+
+### Offen und betrieblich: `main` ist nicht geschützt
+
+Aus derselben Prüfrunde, und es ist kein Codebefund: `main` hat weder Branch
+Protection noch Required Status Checks. Die CI läuft auf `main` und auf PRs,
+prüft Ruff, mypy, alle Testebenen, Migrationen und Gitleaks — aber **CI nach
+einem direkten Push ist kein Merge-Gate.** Ein fehlerhafter Commit ist bereits
+`main`, bevor die CI ihn ablehnt.
+
+Für ein Projekt, dessen Leitkennzahl eine Invariantenabdeckung ist, ist das die
+schwächste Stelle der Kette. Der Schutz lässt sich nicht aus dem Repository
+heraus setzen; es braucht einen authentifizierten `gh`-Zugang:
+
+```bash
+gh api -X PUT repos/midobberahn-png/OpenAi/branches/main/protection \
+  -f 'required_status_checks[strict]=true' \
+  -F 'required_status_checks[contexts][]=gate' \
+  -F 'enforce_admins=true' \
+  -F 'required_pull_request_reviews=null' \
+  -F 'restrictions=null'
+```
 
 ### Bewusst aufgeschoben: Token-Rotation
 
