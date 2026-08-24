@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `c883311` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `HEAD` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -43,8 +43,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 76, Remote auf GitHub |
-| Tests | **1302** Python + 15 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **57/58** |
+| Tests | **1323** Python + 16 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **58/59** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
@@ -579,13 +579,13 @@ verlorengeht. Meine ist es.
 
 ## 7. Security Invariant Coverage — und ihre Grenze
 
-**Testabdeckung ist für diesen Kern die falsche Kennzahl.** Stattdessen: 47
+**Testabdeckung ist für diesen Kern die falsche Kennzahl.** Stattdessen: 59
 benannte Invarianten in `core/policy/invariants.py`. Tests binden sich per
 `@pytest.mark.invariant("<id>")`; ein Meta-Test schlägt fehl, wenn eine
 `ENFORCED`-Invariante ohne Test dasteht oder ein Test sich auf eine unbekannte
 Kennung beruft.
 
-**Stand 46/47.** Offen: `session-token-rotation` (bewusst, siehe Abschnitt 8).
+**Stand 58/59.** Offen: `session-token-rotation` (bewusst, siehe Abschnitt 8).
 
 ### Die wichtigste Lektion dieses Projekts
 
@@ -848,25 +848,52 @@ Ein Befund beim Messen: `stale_runs` filterte zuerst auf `status = 'executing'`
 und fand **nichts**. Der Anspruch entsteht *vor* dem Übergang nach `executing`;
 der unterscheidende Marker ist der Anspruch, nicht der Status.
 
-### 3b. Offen: Wer entscheidet, wenn die Wirkung unklar ist
+### 3b. Erledigt: Wer entscheidet, wenn die Wirkung unklar ist (ADR-017)
 
-Der Rest von 3a, und er ist keine Zeile Code, sondern eine Entscheidung. Ein
-Schritt mit unklarer Wirkung wird übernommen und **gehalten**: Der Lauf ist
-gesperrt, absichtlich. Was ein Mensch daraus macht — den Schritt als erledigt
-verbuchen, ihn freigeben, den Lauf abbrechen —, ist heute nicht ausdrückbar.
-Das Material liegt bereit (`ToolInvocation` mit Argumenten, Zeit und Zustand);
-es fehlen der Endpunkt und die Antwort darauf, wer so etwas entscheiden darf.
+Der Rest von 3a — und er war eine **Sackgasse**, nicht bloß eine fehlende
+Funktion: Ein Schritt mit unklarer Wirkung wurde übernommen und **gehalten**,
+absichtlich, und es gab keinen Übergang heraus. Jetzt gibt es genau drei:
+als erledigt verbuchen, noch einmal versuchen, den Lauf abbrechen
+(`POST /runs/{id}/resolve`, `core/orchestrator/resolution.py`).
 
-**Was ausdrücklich nicht fehlt: ein Automat, der es allein löst.** Ein Termin,
-der vielleicht im Kalender steht, ist keine Lage, die sich durch Nachdenken
-auflöst — es muss jemand nachsehen.
+**Die Auflösung ist selbst eine Sicherheitsgrenze**, und zwar die einzige, die
+einen Schutz *aufhebt*: Eigentümer aus der Sitzung, Vermerk vorhanden, Bindung
+an das aktuelle Fencing-Token, Prüfung in derselben Anweisung, die schreibt.
+Neue Invariante `uncertain-effect-resolved-only-by-owner` mit adversarialen
+Tests (fremder Nutzer *mit dem richtigen Token*, veraltetes Token, laufender
+Schritt, zweimal entscheiden, gleichzeitig entscheiden).
 
-Zwei kleinere Nachträge aus diesem Block:
+**Zwei Befunde beim Bauen, beide an derselben Stelle.** `take_over` fragte
+zuerst das Protokoll und ging bei möglicher Wirkung zurück, **ohne** die
+Datenbank anzusprechen:
+
+* Ein *laufender* Schritt sah aus wie ein hängender — der Protokolleintrag
+  entsteht vor dem Handler, und `pending` ist nicht wiederholbar. Ohne Ausgang
+  war das eine irreführende Meldung; mit Ausgang wäre es die Einladung gewesen,
+  einen gesunden Schritt zu wiederholen.
+* Die Frist wurde nie erneuert, also fand der Arbeiter denselben Lauf **in
+  jedem Durchgang** wieder — im Minutentakt (`DEFAULT_INTERVALL` = 1 min),
+  dauerhaft. Nur der seltenere Pfad ③ (Wirkung erscheint *zwischen* Urteil und
+  Übernahme) erneuerte sie.
+
+Jetzt gilt: **erst übernehmen, dann urteilen.** Die Datenbank entscheidet über
+die Frist — sie liest dieselbe Uhr, die den Anspruch gesetzt hat. Und ein Lauf
+mit Vermerk fällt aus der Suche des Arbeiters heraus: Sonst vergäbe jeder
+Durchgang ein neues Token und entwertete die Seite, auf der die Entscheidung
+gerade gelesen wird.
+
+**Die Evidenzfrage ist beantwortet, nicht gelöst.** Der Mensch bekommt, was es
+gibt: die Absicht aus dem Plan, den Versuch aus dem Protokoll — und den
+Vorbehalt als Satz vom Server (`UnresolvedView.caveat`), damit ihn kein Client
+weglassen kann. Ein lesender Kalenderzugriff existiert weiterhin nicht; der
+benannte Ausweg steht in ADR-017.
+
+Zwei kleinere Nachträge aus 3a stehen **weiter offen**:
 
 * **Der Arbeiter hinterlässt keine Audit-Zeile.** Eine Übernahme steht im
   Laufzustand und im Werkzeugprotokoll, aber `Recovery` schreibt nicht ins
-  Aktivitätsprotokoll. Wer wissen will, wann ein Automat einen Anspruch
-  übernommen hat, liest heute Zustände statt Ereignisse.
+  Aktivitätsprotokoll. Die *Entscheidung* eines Menschen steht jetzt dort
+  (`run.step_resolved`) — die Übernahme durch den Automaten nicht.
 * **Es gibt keinen Endpunkt, der den Arbeiter beobachtbar macht.** Sein Bericht
   geht ins Log.
 
@@ -1101,6 +1128,12 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
 
 **Was in der Oberfläche als Nächstes ansteht:**
 
+* ~~Ein unklarer Schritt hat keinen Ausgang.~~ **Erledigt** (ADR-017, Abschnitt
+  3b). Die Karte steht **über** dem Plan, weil der Lauf ohne sie nicht
+  weitergeht; die Übersicht trägt eine Marke „Entscheidung nötig", weil dort
+  sonst nur `executing` stünde — für immer. Ein Bildschirm, den niemand findet,
+  ist keine Auflösung, und genau das prüft der Browserdurchstich: Er beginnt in
+  der Übersicht.
 * **Markdown im Chat.** Heute ist die Antwort Text mit erhaltenen Umbrüchen.
   `react-markdown` + `remark-gfm` **ohne** `rehype-raw` ist der dokumentierte
   Weg (docs/10-ui.md §5); die Regel „kein rohes HTML aus Modellausgaben" gilt
@@ -1267,6 +1300,9 @@ klären, indem der Fall ausgeführt wurde.
 | `docs/19-fremdprojekte.md` | Vergleich mit microsoft/JARVIS und OpenJarvis: was übernommen ist, wo wir strenger sind, wo Vorarbeit Zeit spart |
 | `docs/18-angriffskette.md` | **Jeder Übergang von HTTP bis zur Ausführung — und welcher noch nicht über HTTP geprüft ist** |
 | `tests/integration/test_ollama_live.py` | Der Adapter gegen ein laufendes Ollama. Braucht `JARVIS_REQUIRE_OLLAMA=1`, um bei fehlendem Dienst zu scheitern statt zu überspringen |
+| `docs/20-oberflaeche-adr.md` | ADR-015: Vite + React als ausgelieferte SPA |
+| `docs/21-ereignisstrom-adr.md` | ADR-016: SSE statt WebSocket, Hinweise statt Zustände |
+| `docs/22-entscheidung-adr.md` | ADR-017: **Der Ausgang aus einem Schritt mit unklarer Wirkung** — drei Entscheidungen, Fencing, und die Grenze der Evidenz |
 | `docs/generated/` | Scope-Katalog und Invariantentabelle — **generiert, nicht bearbeiten** |
 
 Artifact mit der Architekturübersicht:

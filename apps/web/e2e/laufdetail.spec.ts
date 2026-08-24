@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { angemeldet } from "./system";
+import { angemeldet, haengenLassen } from "./system";
 
 const TERMIN = {
   title: "Fokuszeit aus dem Browser",
@@ -99,4 +99,49 @@ test("Eine zweite Rücknahme wird nicht angeboten", async ({ page }) => {
   await expect(
     page.getByTestId("aufrufliste").getByRole("button", { name: "Rückgängig" }),
   ).toHaveCount(0);
+});
+
+/**
+ * **Der Weg aus der Sackgasse — und die Frage, die nur der Browser beantwortet.**
+ *
+ * Ob die Grenze hält, prüft die Integrationssuite (Eigentümer, Fencing,
+ * Doppelentscheidung, Gleichzeitigkeit). Hier geht es um das andere Ende:
+ * Findet ein Mensch überhaupt heraus, dass etwas von ihm erwartet wird — und
+ * kommt der Lauf danach weiter? Ein Bildschirm, den niemand entdeckt, ist
+ * keine Auflösung.
+ *
+ * Deshalb beginnt der Test in der **Übersicht**: Dort steht sonst nur
+ * „executing", und zwar für immer.
+ */
+test("Ein unklarer Schritt lässt sich entscheiden", async ({ page }) => {
+  await angemeldet(page);
+  await page.getByTestId("zu-rechten").click();
+  await page.getByTestId("modus-calendar.create").selectOption("allow");
+  await expect(page.getByTestId("modus-calendar.create")).toHaveValue("allow");
+
+  const lauf = await page.request.post("/runs", {
+    data: { input: "Blockier mir eine Stunde am Dienstag" },
+  });
+  const laufId = (await lauf.json()).id as string;
+
+  // Der Absturz zwischen Anspruch und Abschluss — nachgestellt, nicht simuliert.
+  haengenLassen(laufId);
+  // Der nächste Schritt scheitert daran, und **die Wiederaufnahme** setzt den
+  // Vermerk. Ohne diesen Aufruf gäbe es nichts zu entscheiden.
+  const abgewiesen = await page.request.post(`/runs/${laufId}/advance`, { data: {} });
+  expect(abgewiesen.status()).toBe(409);
+
+  await page.getByTestId("zu-laeufen").click();
+  await expect(page.getByTestId("marke-entscheidung").first()).toBeVisible();
+
+  await page.getByTestId("lauf").first().click();
+  await expect(page.getByTestId("entscheidung")).toBeVisible();
+  await expect(page.getByTestId("entscheidung-vorbehalt")).toContainText(
+    "nicht, was daraus geworden ist",
+  );
+
+  await page.getByTestId("entscheidung-verbuchen").click();
+
+  await expect(page.getByTestId("entscheidung")).toBeHidden();
+  await expect(page.getByTestId("schrittstand-1")).toHaveText("done");
 });

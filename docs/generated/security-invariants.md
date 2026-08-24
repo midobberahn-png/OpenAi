@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 57/58**
+**Security Invariant Coverage: 58/59**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -71,6 +71,7 @@ nicht nachträglich passend machen.
 | `file-access-confined-to-roots` | Ein Dateizugriff verlässt die freigegebenen Wurzeln nicht | files.read gibt nur Inhalte heraus, deren Pfad **nach Auflösung** unterhalb einer konfigurierten Wurzel liegt und die eine reguläre Datei bezeichnen; eine Abweisung verrät nicht, wohin der Pfad zeigte. | `integrations.localfs` |
 | `resource-ownership-checked-once` | Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen | Jeder Endpunkt, der eine Ressourcenkennung entgegennimmt, prüft die Zugehörigkeit zum angemeldeten Nutzer über genau eine Funktion; ein fremdes Objekt ist von einem nicht existierenden nicht unterscheidbar. | `api.routes` |
 | `run-state-compare-and-set` | Ein Lauf wird nur aus dem erwarteten Status fortgeschrieben | save() schreibt nur, wenn der Lauf noch in dem Status steht, den der Schreiber vorzufinden erwartet; sonst wird abgewiesen und nichts geändert. | `api.db.run_store` |
+| `uncertain-effect-resolved-only-by-owner` | Einen unklaren Schritt löst nur sein Eigentümer auf — gegen den aktuellen Anspruch | Ein Schritt mit möglicher, aber unbestätigter Wirkung bleibt gesperrt, bis der Eigentümer des Laufs eine von genau drei benannten Entscheidungen trifft; sie gilt nur gegen das Fencing-Token des gehaltenen Anspruchs und wird in derselben Anweisung geprüft, die schreibt. | `core.orchestrator.resolution` |
 | `layering-contracts-independent` | Verträge hängen von nichts ab | packages/contracts importiert nichts aus dem Projekt. | `repo` |
 | `layering-no-provider-sdk-in-core` | Kein Provider-SDK im Kern | Weder core noch contracts importieren Anbieter-SDKs oder Agenten-Frameworks. | `repo` |
 

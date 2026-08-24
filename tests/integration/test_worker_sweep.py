@@ -265,6 +265,35 @@ class TestWenSuchtDerArbeiterUeberhaupt:
 
         assert uuid.UUID(run_id) not in {lauf.id for lauf in gefunden}
 
+    async def test_ein_lauf_in_menschenhand_ist_nicht_mehr_dabei(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """**Ein Vorgang, über den ein Mensch entscheidet, gehört keinem Arbeiter.**
+
+        Ohne diese Bedingung greift ihn jeder Durchgang nach Ablauf der Frist
+        erneut auf: Er urteilt wieder ``ENTSCHEIDUNG NÖTIG``, vergibt ein
+        **neues** Fencing-Token und meldet erneut ``step-unresolved``. Zwei
+        Folgen, und die zweite ist die ärgerlichere — die Seite, auf der jemand
+        gerade die Entscheidung liest, hält danach ein veraltetes Token und
+        wird abgewiesen.
+
+        Verloren geht dabei nichts: Der Arbeiter kann diesen Zustand ohnehin
+        nicht auflösen. Genau deshalb gibt es ihn.
+        """
+        user_id = await _angemeldet(client, engine)
+        await _kalenderrecht(engine, user_id=user_id, mode="allow")
+        run_id = await _lauf_mit_terminschritt(client, engine)
+        speicher = PostgresRunStore(engine)
+        anspruch = await speicher.claim_step(
+            uuid.UUID(run_id), 1, erwarteter_status=RunStatus.QUEUED
+        )
+        assert anspruch is not None
+        assert await speicher.mark_unresolved(uuid.UUID(run_id), 1, anspruch)
+
+        gefunden = await speicher.stale_runs(frist=timedelta(0), idle=timedelta(0), limit=20)
+
+        assert uuid.UUID(run_id) not in {lauf.id for lauf in gefunden}
+
 
 class TestEinLiegengebliebenerLauf:
     """**Der Befund, und er ist die Kehrseite einer richtigen Entscheidung.**

@@ -122,6 +122,29 @@ class RunState(BaseModel):
     diese Entscheidung, und ohne sie gibt es keine.
     """
 
+    unresolved_step: int | None = None
+    """Gesetzt, wenn ein Mensch entscheiden muss, wie es mit diesem Schritt
+    weitergeht — die Frist ist abgelaufen und der Schritt hat **möglicherweise
+    gewirkt**.
+
+    **Warum das persistiert wird und nicht bei Bedarf errechnet.** Aus der
+    Zeile allein ist der Zustand nicht ablesbar: Ein Schritt, der gerade läuft,
+    trägt denselben Protokolleintrag wie einer, der mitten in der Wirkung
+    abgestürzt ist — der Eintrag entsteht *vor* dem Handler. Unterscheidbar
+    macht sie allein die Frist, und die rechnet die Datenbank in derselben
+    Anweisung, die übernimmt. Der Befund gehört deshalb dorthin, wo er
+    festgestellt wurde, und nicht in eine Vermutung des Lesers.
+
+    Gesetzt wird er ausschließlich nach einer **erfolgreichen Übernahme**
+    (``Recovery.take_over``). Das ist die Bedingung, die ihn tragfähig macht:
+    Wer ihn sieht, weiß, dass die Frist abgelaufen *war* und dass der Anspruch
+    daneben **uns** gehört — und nur gegen dieses Fencing-Token ist eine
+    Entscheidung sicher.
+
+    Ein Automat räumt ihn nicht ab. Er fällt mit der Entscheidung eines
+    Menschen (``jarvis_core.orchestrator.resolution``) oder gar nicht.
+    """
+
     awaiting_action_id: UUID | None = None
     """Gesetzt, solange auf eine Bestätigung gewartet wird."""
 
@@ -176,6 +199,19 @@ class RunState(BaseModel):
         # ``claim_id`` steht.
         if self.claimed_at is not None and self.claim_id is None:
             self.claimed_at = None
+        # ``unresolved_step`` hängt am Anspruch, gegen den entschieden wird.
+        # Ohne ihn — oder an einem anderen Schritt — ist der Vermerk veraltet
+        # und wird fallen gelassen, aus demselben Rollout-Grund wie oben.
+        #
+        # **Und die Richtung stimmt.** Ein verlorener Vermerk heißt: Die
+        # Oberfläche bietet keine Entscheidung an, und der Schritt bleibt
+        # gesperrt. Das ist die unbequeme Seite, nicht die gefährliche — die
+        # gefährliche wäre ein Vermerk, der einen fremden oder längst
+        # abgelösten Anspruch auflösen ließe.
+        if self.unresolved_step is not None and (
+            self.claim_id is None or self.unresolved_step != self.current_step
+        ):
+            self.unresolved_step = None
         return self
 
     @property
@@ -196,6 +232,7 @@ class RunState(BaseModel):
                 "current_step": None,
                 "claim_id": None,
                 "claimed_at": None,
+                "unresolved_step": None,
             }
         )
 

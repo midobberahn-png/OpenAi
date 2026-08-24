@@ -901,6 +901,29 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.db.run_store",
     ),
     Invariant(
+        id="uncertain-effect-resolved-only-by-owner",
+        title="Einen unklaren Schritt löst nur sein Eigentümer auf — gegen den aktuellen Anspruch",
+        statement=(
+            "Ein Schritt mit möglicher, aber unbestätigter Wirkung bleibt gesperrt, bis "
+            "der Eigentümer des Laufs eine von genau drei benannten Entscheidungen "
+            "trifft; sie gilt nur gegen das Fencing-Token des gehaltenen Anspruchs und "
+            "wird in derselben Anweisung geprüft, die schreibt."
+        ),
+        why=(
+            "Die Sperre verhindert den doppelten Seiteneffekt: Ist die Frist abgelaufen "
+            "und schließt das Werkzeugprotokoll eine Wirkung nicht aus, darf kein Automat "
+            "wiederholen. Wer sie aufhebt, hebt genau diesen Schutz auf — deshalb ist die "
+            "Auflösung selbst eine Grenze und keine Schaltfläche. Ohne die Bindung an das "
+            "aktuelle Token entschiede eine Browserseite mit veraltetem Zustand über einen "
+            "Vorgang, den der nächste Wiederaufnahmedurchgang längst neu übernommen hat; "
+            "ohne die Prüfung in der schreibenden Anweisung gewännen zwei gleichzeitige "
+            "Entscheidungen beide. Ein allgemeines 'setze den Status auf X' wäre bequemer "
+            "und die Abschaffung des Zustandsautomaten."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.orchestrator.resolution",
+    ),
+    Invariant(
         id="layering-contracts-independent",
         title="Verträge hängen von nichts ab",
         statement="packages/contracts importiert nichts aus dem Projekt.",

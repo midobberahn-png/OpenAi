@@ -29,6 +29,26 @@ export function frischesSystem(): void {
 }
 
 /**
+ * Lässt einen Lauf hängen — Anspruch gesetzt, Wirkung unklar, Frist abgelaufen.
+ *
+ * Der Zustand entsteht im Betrieb durch einen **Absturz** zwischen Anspruch und
+ * Abschluss; es gibt keinen Endpunkt dafür, und es soll keinen geben. Ein Weg,
+ * einen fremden Lauf von außen in eine Sperre zu versetzen, wäre ein
+ * Denial-of-Service mit Ansage.
+ *
+ * Den **Vermerk** setzt dieses Skript ausdrücklich nicht: Ihn schreibt die
+ * Wiederaufnahme, sobald der nächste Schritt daran scheitert. Der Test löst ihn
+ * also selbst aus und prüft damit den Weg statt der Abkürzung.
+ */
+export function haengenLassen(runId: string): void {
+  execFileSync("uv", ["run", "python", "scripts/e2e_haengenlassen.py", runId], {
+    cwd: WURZEL,
+    stdio: "pipe",
+    env: { ...process.env, JARVIS_E2E_RESET: "1" },
+  });
+}
+
+/**
  * Ein virtueller Authenticator über das Chrome DevTools Protocol.
  *
  * **Warum das keine Attrappe der Sicherheitsprüfung ist.** Nachgestellt wird

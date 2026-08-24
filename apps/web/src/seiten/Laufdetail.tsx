@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api, ApiFehler } from "../api/client";
 import type { Aufruf, LaufZeile } from "../api/typen";
+import { Entscheidung } from "../teile/Entscheidung";
 
 /**
  * Ein einzelner Lauf: was vorgesehen war und was tatsächlich geschah.
@@ -78,6 +79,13 @@ export function Laufdetail({ lauf, zurueck }: { lauf: LaufZeile; zurueck: () => 
           </span>
         )}
       </div>
+
+      {/* **Ganz oben, vor dem Plan.** Ein Vorgang, der auf einen Menschen
+          wartet, ist das Einzige auf dieser Seite, das ohne ihn nicht
+          weitergeht — und der Lauf steht, bis er entschieden ist. */}
+      {stand.unresolved != null && (
+        <Entscheidung runId={stand.id} vorgang={stand.unresolved} erledigt={laden} />
+      )}
 
       <div className="karte">
         <h2>Plan{stand.goal !== null && <span className="gedaempft"> · {stand.goal}</span>}</h2>

@@ -125,3 +125,9 @@ th { color: var(--gedaempft); font-weight: 500; font-size: 0.8rem; letter-spacin
    mit. Gerendert wird er als **Text** — kein HTML, keine Ausnahme. */
 .wortwechsel .geantwortet { white-space: pre-wrap; }
 button.klein { font-size: 0.75rem; padding: 0.15rem 0.5rem; margin-top: 0.5rem; }
+
+/* Die Entscheidungskarte hebt sich ab, weil der Lauf ohne sie nicht
+   weitergeht — und weil die Wahl Folgen hat, die niemand zurücknimmt. */
+.karte.entscheidung { border-color: var(--warnung); }
+.karte.entscheidung h2 { color: var(--warnung); }
+.warnung { color: var(--warnung); }

@@ -70,6 +70,7 @@ from jarvis_contracts import (
     TokenDelta,
     ToolInvocation,
 )
+from jarvis_core.audit.chain import AuditEntry
 from jarvis_core.orchestrator import (
     AdvanceRejected,
     BudgetTracker,
@@ -82,6 +83,12 @@ from jarvis_core.orchestrator import (
     route,
     utc_now,
 )
+from jarvis_core.orchestrator.resolution import (
+    Resolution,
+    ResolutionDenied,
+    StepResolver,
+)
+from jarvis_core.ports.invocations import InvocationStore
 from jarvis_core.ports.runs import RunStateConflict
 from jarvis_core.tools import ToolRegistry
 
@@ -148,11 +155,82 @@ class RunView(BaseModel):
     Bei ``GET /runs`` bewusst leer, wie der Plan: Eine Übersicht über zwanzig
     Läufe soll nicht zwanzig Antworttexte übertragen."""
 
+    needs_decision: bool = False
+    """Wartet dieser Lauf auf einen Menschen?
+
+    **Auch in der Übersicht**, anders als ``unresolved`` — und der Grund ist,
+    dass es nichts kostet: Der Vermerk steht im Zustand, der ohnehin geladen
+    ist. Ohne dieses Feld sähe ein Nutzer in der Liste nur ``executing``, und
+    zwar für immer; der einzige Weg zu der Entscheidung wäre, jeden Lauf
+    einzeln zu öffnen. Eine Sperre, die niemand findet, ist so gut wie keine
+    Auflösung."""
+
+    unresolved: UnresolvedView | None = None
+    """Gesetzt, solange ein Schritt auf eine menschliche Entscheidung wartet.
+
+    Nur beim einzelnen Lauf und nicht in der Übersicht — wie Plan und
+    Antworttext, und aus demselben Grund: Die Auskunft kostet eine Abfrage im
+    Werkzeugprotokoll."""
+
     plan: list[PlanStepView] = []
     """Leer, solange kein Plan existiert — und bei ``GET /runs`` bewusst nicht
     befüllt: Der Status jedes Schrittes kostet eine Berechtigungsabfrage, und
     eine Übersicht über zwanzig Läufe wäre damit zwanzig Abfragen. Wer den
     Plan sehen will, ruft den einzelnen Lauf ab."""
+
+
+class UnresolvedView(BaseModel):
+    """Ein Schritt, über den ein Mensch entscheiden muss — und woran er das tut.
+
+    **Die Frage, die diese Sicht ehrlich beantworten muss, ist nicht „was ist
+    passiert", sondern „woran erkenne ich es".** Das System kann die erste
+    nicht beantworten: Es weiß, was es *versucht* hat, und hat keinen Weg,
+    beim Zielsystem nachzusehen (ein lesender Kalenderzugriff existiert nicht,
+    siehe Dossier). Eine Sicht, die das verschweigt, lädt zu einer Entscheidung
+    ein, die auf nichts beruht.
+
+    Deshalb steht hier, was es tatsächlich gibt:
+
+    * **Was gemeint war** — die Beschreibung aus dem Plan. Sie ist der Satz, den
+      der Nutzer selbst veranlasst hat, und damit das brauchbarste Stück: Wer
+      „Zahnarzttermin Dienstag 14 Uhr eintragen" liest, weiß, wonach er im
+      Kalender sucht.
+    * **Was versucht wurde** — Werkzeug, Zeitpunkt und Protokollzustand. Nicht
+      die Argumente: Sie können Fremdinhalt tragen, und der Weg, Fremdinhalt
+      einem Menschen zur Prüfung vorzulegen, ist die Vorschau (docs/10-ui.md
+      §5) und nicht ein Nebenfeld in einer Statusansicht.
+    * **Was das System nicht weiß** — ausdrücklich, als Satz.
+
+    ``caveat`` steht bewusst hier und nicht in der Oberfläche. Es ist die
+    einzige Fassung, die auch für den nächsten Client gilt: Eine Sprachausgabe,
+    die die drei Möglichkeiten vorliest, muss denselben Vorbehalt nennen, und
+    eine Zeichenkette im React-Code steht ihr nicht zur Verfügung.
+    """
+
+    step_seq: int
+    claim_id: str
+    """Das Fencing-Token des gehaltenen Anspruchs — und der Bezug, gegen den
+    entschieden wird.
+
+    Es steht hier, weil eine Entscheidung ohne Bezug auf **diesen** Vorgang
+    keine Entscheidung über ihn wäre: Läuft die Frist erneut ab, übernimmt der
+    nächste Durchgang den Schritt und vergibt ein neues Token. Eine
+    Browserseite, die das alte schickt, entscheidet dann über eine Lage, die es
+    nicht mehr gibt — und wird abgewiesen.
+
+    Eine Fähigkeit ist es nicht: Es gilt nur zusammen mit einer Sitzung, der
+    der Lauf gehört, und ausschließlich an diesem einen Endpunkt."""
+
+    description: str
+    """Was der Plan an dieser Stelle vorsah — die verlässlichste Auskunft."""
+
+    tool: str | None
+    attempted_at: datetime | None
+    attempts: list[str]
+    """Die Protokollzustände zu diesem Schritt, ältester zuerst — etwa
+    ``effect_unknown``."""
+
+    caveat: str
 
 
 class PlanStepView(BaseModel):
@@ -248,6 +326,7 @@ def _view(lauf: Run) -> RunView:
         # geladen ist. Ohne sie zeigt ein Gesprächsverlauf nicht, was gesagt
         # wurde.
         goal=lauf.plan.goal if lauf.plan else None,
+        needs_decision=lauf.state.unresolved_step is not None,
     )
 
 
@@ -355,7 +434,12 @@ async def list_runs(session: CurrentSession, runs: Runs) -> list[RunView]:
 
 @router.get("/{run_id}", response_model=RunView)
 async def read_run(
-    run_id: UUID, session: CurrentSession, runs: Runs, tools: Tools, policy: Policy
+    run_id: UUID,
+    session: CurrentSession,
+    runs: Runs,
+    tools: Tools,
+    policy: Policy,
+    invocations: Invocations,
 ) -> RunView:
     """Ein einzelner eigener Lauf — mit dem Plan und seinem jetzigen Stand."""
     lauf = await _eigener_lauf(run_id, session, runs)
@@ -366,7 +450,40 @@ async def read_run(
             "goal": lauf.plan.goal if lauf.plan else None,
             "output": lauf.state.partial_output,
             "plan": await _planschritte(lauf, angebot=angebot),
+            "unresolved": await _offener_vorgang(lauf, invocations),
         }
+    )
+
+
+async def _offener_vorgang(lauf: Run, invocations: InvocationStore) -> UnresolvedView | None:
+    """Der vermerkte Schritt samt Material — oder ``None``.
+
+    **Der Vermerk wird gelesen und nicht errechnet.** Ob ein Schritt hängt,
+    entscheidet die Frist, und die rechnet die Datenbank in der Anweisung, die
+    übernimmt (``Recovery.take_over``). Hier nachzurechnen, ob ``claimed_at``
+    lange genug her ist, wäre eine zweite Uhr und eine zweite Antwort — und die
+    Oberfläche böte eine Entscheidung für Schritte an, die gerade in Ordnung
+    laufen.
+    """
+    seq = lauf.state.unresolved_step
+    if seq is None or lauf.state.claim_id is None:
+        return None
+
+    schritt = next((s for s in lauf.plan.steps if s.seq == seq), None) if lauf.plan else None
+    eintraege = await invocations.for_step(lauf.id, seq)
+    return UnresolvedView(
+        step_seq=seq,
+        claim_id=str(lauf.state.claim_id),
+        description=schritt.description if schritt else f"Schritt {seq}",
+        tool=schritt.target if schritt and schritt.kind == "tool" else None,
+        attempted_at=eintraege[0].created_at if eintraege else lauf.state.claimed_at,
+        attempts=[str(eintrag.status) for eintrag in eintraege],
+        caveat=(
+            "JARVIS weiß, was es versucht hat — nicht, was daraus geworden ist. "
+            "Der Vorgang wurde unterbrochen, nachdem er begonnen hatte; ob er nach "
+            "außen gewirkt hat, lässt sich von hier aus nicht feststellen. Sieh dort "
+            "nach, bevor du entscheidest."
+        ),
     )
 
 
@@ -804,4 +921,135 @@ async def advance_run(
         data_class=(str(ausgang.result.produced_data_class) if ausgang.result else None),
         action_id=str(ausgang.pending.id) if ausgang.pending else None,
         code=ausgang.code,
+    )
+
+
+# --------------------------------------------------------------------------
+# Die Entscheidung über einen unklaren Schritt
+# --------------------------------------------------------------------------
+
+
+class ResolveRequest(BaseModel):
+    """Eine von genau drei Entscheidungen — und der Vorgang, für den sie gilt.
+
+    **Kein Zielstatus.** Ein Feld ``status`` wäre der bequemere Entwurf und die
+    Abschaffung des Zustandsautomaten: Wer von außen einen Zielzustand nennen
+    darf, umgeht die Übergänge, die ihn tragen. Hier stehen drei benannte
+    Entscheidungen, und jede hat genau einen Übergang.
+
+    **``claim_id`` ist Pflicht und stammt aus der Ansicht**, in der der
+    Vorgang gezeigt wurde. Ohne diesen Bezug entschiede eine Browserseite mit
+    veraltetem Zustand über eine Lage, die es nicht mehr gibt — läuft die
+    Frist erneut ab, übernimmt der nächste Durchgang und vergibt ein neues
+    Token.
+    """
+
+    decision: Literal["completed", "retry", "abort"]
+    claim_id: UUID
+
+
+class ResolveResult(BaseModel):
+    """Was aus der Entscheidung geworden ist."""
+
+    resolution: str
+    step_seq: int
+    run_status: str
+    detail: str
+
+
+@router.post("/{run_id}/resolve", response_model=ResolveResult)
+async def resolve_run_step(
+    run_id: UUID,
+    payload: ResolveRequest,
+    session: CurrentSession,
+    runs: Runs,
+    audit: Audit,
+    events: Events,
+) -> ResolveResult:
+    """Löst einen Schritt auf, dessen Wirkung unklar ist.
+
+    **Der einzige Weg aus ``ENTSCHEIDUNG NÖTIG`` heraus** — und deshalb selbst
+    eine Sicherheitsgrenze. Der Entscheidende hebt eine Sperre auf, die einen
+    doppelten Seiteneffekt verhindert; vier Bedingungen tragen sie, und drei
+    davon stehen bereits vor der ersten Zeile Logik:
+
+    * **Eigentümer** — ``_eigener_lauf`` wie überall. Ein fremder Lauf ist 404,
+      nicht 403: Sonst wäre aus der Antwort zu lernen, dass es ihn gibt.
+    * **Identität aus der Sitzung** — die Kante nimmt keine Nutzerkennung
+      entgegen (``identity-derives-from-session``).
+    * **Fencing und Vermerk** — beide prüft ``StepResolver`` gegen den
+      geladenen Lauf, und das entscheidende ``UPDATE`` prüft den Anspruch
+      **noch einmal** in derselben Anweisung, die schreibt. Zwei gleichzeitige
+      Entscheidungen ergeben deshalb eine, nicht zwei.
+
+    **409 für alle Ablehnungen**, mit demselben Satz: kein Vermerk, fremdes
+    Token, schon entschieden. Die Unterscheidung nach außen zu tragen hieße,
+    aus der Ablehnung eine Auskunft über den Zustand zu machen — dieselbe
+    Überlegung wie bei der Rücknahme.
+    """
+    lauf = await _eigener_lauf(run_id, session, runs)
+    entscheidung = Resolution(payload.decision)
+
+    try:
+        ausgang = await StepResolver(runs=runs).resolve(
+            lauf,
+            decision=entscheidung,
+            # Aus dem Request und nicht aus dem geladenen Lauf: Ein Vergleich
+            # eines Wertes mit sich selbst prüft nichts.
+            claim_id=payload.claim_id,
+            now=utc_now(),
+        )
+    except ResolutionDenied as abgelehnt:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(abgelehnt)
+        ) from abgelehnt
+    except RunStateConflict as konflikt:
+        # Der Anspruch galt beim Laden noch und beim Schreiben nicht mehr —
+        # genau das Rennen, gegen das das Fencing steht. Nach außen dieselbe
+        # Antwort: Die Lage hat sich geändert.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Für diesen Schritt steht keine Entscheidung (mehr) an. Neu laden und "
+                "nachsehen, was daraus geworden ist."
+            ),
+        ) from konflikt
+
+    # **Diese Entscheidung gehört in die Spur, und zwar mehr als die meisten.**
+    # Sie ist der Punkt, an dem ein Mensch eine Sperre aufhebt, die vor einem
+    # doppelten Seiteneffekt schützt. Wer später fragt, warum ein Termin
+    # zweimal im Kalender steht, findet hier die Antwort — mit Zeitpunkt,
+    # Person und Entscheidung.
+    await audit.append(
+        AuditEntry(
+            occurred_at=utc_now(),
+            actor="user",
+            action="run.step_resolved",
+            resource=str(lauf.id),
+            details={
+                "decision": str(ausgang.resolution),
+                "step_seq": str(ausgang.seq),
+                "run_status": str(ausgang.run_status),
+            },
+            user_id=session.user_id,
+        )
+    )
+
+    await _melden(
+        events,
+        session,
+        StepFinished(
+            seq=0,
+            run_id=lauf.id,
+            step_seq=ausgang.seq,
+            status=str(ausgang.resolution),
+            latency_ms=0,
+        ),
+    )
+
+    return ResolveResult(
+        resolution=str(ausgang.resolution),
+        step_seq=ausgang.seq,
+        run_status=str(ausgang.run_status),
+        detail=ausgang.detail,
     )

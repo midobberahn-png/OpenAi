@@ -29,6 +29,25 @@ export interface PlanSchritt {
   status: "done" | "ready" | "waiting" | "blocked";
 }
 
+export interface OffenerVorgang {
+  step_seq: number;
+  /** Das Fencing-Token des gehaltenen Anspruchs — der Bezug, gegen den
+   * entschieden wird. Es geht unverändert zurück an den Server; läuft die
+   * Frist erneut ab und übernimmt der nächste Durchgang, gilt es nicht mehr
+   * und die Entscheidung wird abgewiesen. Genau das soll es. */
+  claim_id: string;
+  /** Was der Plan an dieser Stelle vorsah — die verlässlichste Auskunft, weil
+   * sie aus der Absicht des Nutzers stammt und nicht aus einem Ergebnis. */
+  description: string;
+  tool: string | null;
+  attempted_at: string | null;
+  attempts: string[];
+  /** Der Satz, der die Grenze benennt: Das System weiß, was es versucht hat,
+   * nicht, was daraus geworden ist. Er kommt vom Server, damit ihn kein
+   * Client weglassen kann. */
+  caveat: string;
+}
+
 export interface LaufZeile {
   id: string;
   status: LaufStatus;
@@ -48,6 +67,13 @@ export interface LaufZeile {
   /** Bei ``GET /runs`` leer — der Plan kostet je Schritt eine
    * Berechtigungsabfrage und wird nur für einen einzelnen Lauf gefüllt. */
   plan: PlanSchritt[];
+  /** Wartet dieser Lauf auf einen Menschen? Auch in der Übersicht — der
+   * Vermerk steht im Zustand, der ohnehin geladen ist, und kostet nichts. */
+  needs_decision: boolean;
+  /** Gesetzt, solange ein Schritt auf eine menschliche Entscheidung wartet.
+   * Nur beim einzelnen Lauf, nicht in der Übersicht: Das Material dafür
+   * kostet eine Abfrage im Werkzeugprotokoll. */
+  unresolved?: OffenerVorgang | null;
 }
 
 export interface VorschauFeld {

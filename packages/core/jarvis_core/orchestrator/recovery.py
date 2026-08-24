@@ -207,64 +207,85 @@ class Recovery:
         )
 
     async def take_over(self, run: Run) -> StepAssessment:
-        """Übernimmt den Schritt, wenn Frist und Protokoll es hergeben.
+        """Übernimmt den Schritt, wenn die Frist es hergibt — und urteilt danach.
 
-        Die Reihenfolge ist die eigentliche Aussage dieser Methode:
+        **Die Reihenfolge ist die Aussage dieser Methode, und sie war einmal
+        andersherum.** Zuerst wurde das Protokoll gefragt und bei einer
+        möglichen Wirkung sofort zurückgegangen; die Datenbank kam in diesem
+        Fall gar nicht vor. Das ist an zwei Stellen falsch, und beide fallen
+        erst auf, seit ein Mensch den Zustand zu sehen bekommt:
 
-        1. **Beurteilen** — schließt das Protokoll eine Wirkung aus?
-        2. **Übernehmen** — atomar, mit der Frist in derselben Anweisung. Erst
-           hier ist der alte Arbeiter ausgesperrt.
-        3. **Erneut beurteilen** — denn zwischen ① und ② vergeht Zeit, und in
-           dieser Zeit kann der alte Arbeiter den Handler betreten haben. Sein
-           Protokolleintrag steht dann bereits, weil er *vor* der Wirkung
-           geschrieben wird.
+        * **Ein laufender Schritt sah aus wie ein hängender.** Der
+          Protokolleintrag entsteht *vor* dem Handler; ``pending`` ist nicht
+          wiederholbar. Am Protokoll allein sind die beiden nicht zu
+          unterscheiden — unterscheidbar macht sie allein die Frist.
+        * **Die Frist wurde nie erneuert.** Wer nicht übernimmt, lässt
+          ``claimed_at`` alt stehen, und der Arbeiter findet denselben Lauf in
+          jedem Durchgang wieder. Für immer.
 
-        Ohne ③ wäre ① eine Momentaufnahme, auf die sich ② beruft, obwohl sie
-        veraltet sein kann — dasselbe ``load()`` … ``entscheiden`` …
-        ``schreiben``, gegen das an vier anderen Stellen dieses Projekts ein
-        bedingtes ``UPDATE`` steht.
+        Jetzt gilt:
 
-        Fällt ③ ungünstig aus, **bleibt der Anspruch beim Übernehmer**. Er
-        freizugeben wäre die schlechtere Wahl: Der Schritt stünde dem nächsten
-        Anwärter offen, während unklar ist, ob er bereits gewirkt hat.
+        1. **Übernehmen** — atomar, mit der Frist in derselben Anweisung. Die
+           Datenbank entscheidet, ob überhaupt etwas hängt; sie liest dieselbe
+           Uhr, die den Anspruch gesetzt hat. Gelingt es nicht, läuft die
+           Frist noch: *in Arbeit*.
+        2. **Beurteilen** — jetzt, mit dem Anspruch in der Hand. Was das
+           Protokoll sagt, gilt für den Zustand *nach* der Übernahme, und
+           genau darauf kommt es an: Zwischen einer Beurteilung davor und der
+           Übernahme verginge Zeit, in der der alte Arbeiter den Handler
+           betreten haben kann.
+
+        Fällt ② ungünstig aus, **bleibt der Anspruch beim Übernehmer** und der
+        Schritt bekommt einen Vermerk. Ihn freizugeben wäre die schlechtere
+        Wahl: Der Schritt stünde dem nächsten Anwärter offen, während unklar
+        ist, ob er bereits gewirkt hat. Der Vermerk ist die Gegenrichtung dazu
+        — ohne ihn wäre „gehalten" von „gesperrt" nicht zu unterscheiden, und
+        der Lauf hätte keinen Ausgang mehr.
+
+        **Übernehmen heißt hier nicht wiederholen.** Der Anspruch wird
+        gehalten, nicht verbraucht; gewirkt wird nichts. Das bleibt der
+        Grundsatz dieses Moduls: Wer entscheidet, führt nicht aus.
         """
-        urteil = await self.assess(run)
-        if urteil.verdict is not RecoveryVerdict.NEU_VERGEBBAR:
-            return urteil
+        seq = run.state.current_step
+        if seq is None:
+            return StepAssessment(
+                RecoveryVerdict.NICHT_BEANSPRUCHT, None, "Kein Schritt ist beansprucht."
+            )
+        if run.state.claimed_at is None:
+            # Ein Anspruch ohne Frist. ``_RECLAIM`` gibt ihn ohnehin nicht her,
+            # aber die Auskunft darüber soll die richtige sein: Er wird nicht
+            # übernommen, und der Grund gehört genannt.
+            return await self.assess(run)
 
-        assert urteil.seq is not None  # NEU_VERGEBBAR gibt es nur mit Schritt.
         kennung = await self._runs.reclaim_step(
-            run.id,
-            urteil.seq,
-            erwarteter_status=run.status,
-            frist=self._lease,
+            run.id, seq, erwarteter_status=run.status, frist=self._lease
         )
         if kennung is None:
             return StepAssessment(
                 RecoveryVerdict.IN_ARBEIT,
-                urteil.seq,
-                f"Schritt {urteil.seq} wurde nicht übernommen: Die Frist läuft noch, "
+                seq,
+                f"Schritt {seq} wurde nicht übernommen: Die Frist läuft noch, "
                 "oder ein anderer war schneller.",
-                urteil.invocations,
             )
 
-        nachher = await self._protokoll(run, urteil.seq)
-        wirkung = self._wirkung_moeglich(run, urteil.seq, nachher)
+        eintraege = await self._protokoll(run, seq)
+        wirkung = self._wirkung_moeglich(run, seq, eintraege)
         if wirkung is not None:
+            await self._runs.mark_unresolved(run.id, seq, kennung)
             return StepAssessment(
                 RecoveryVerdict.ENTSCHEIDUNG_NOETIG,
-                urteil.seq,
+                seq,
                 f"{wirkung} Der Anspruch wurde übernommen und wird gehalten — der "
-                "Schritt bleibt gesperrt, bis jemand nachgesehen hat.",
-                nachher,
+                "Schritt bleibt gesperrt, bis jemand entschieden hat, wie es weitergeht.",
+                eintraege,
                 claim_id=kennung,
             )
 
         return StepAssessment(
             RecoveryVerdict.NEU_VERGEBBAR,
-            urteil.seq,
-            f"Schritt {urteil.seq} war hängengeblieben und ist übernommen.",
-            nachher,
+            seq,
+            f"Schritt {seq} war hängengeblieben und ist übernommen.",
+            eintraege,
             claim_id=kennung,
         )
 

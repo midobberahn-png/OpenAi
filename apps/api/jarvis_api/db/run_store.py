@@ -86,6 +86,14 @@ _UEBERFAELLIG = text(
     SELECT {_SPALTEN}
       FROM runs
      WHERE status IN ('queued', 'executing')
+       -- **Was in Menschenhand liegt, sucht kein Arbeiter.** Ein Vermerk sagt:
+       -- Die Frist war abgelaufen, das Protokoll schließt eine Wirkung nicht
+       -- aus, und es entscheidet jemand. Ein Durchgang, der solche Läufe
+       -- weiter aufgriffe, urteilte in jeder Runde dasselbe, vergäbe dabei ein
+       -- **neues** Fencing-Token — und entwertete damit genau die Seite, auf
+       -- der die Entscheidung gerade gelesen wird. Auflösen kann er sie
+       -- ohnehin nicht; dafür gibt es diesen Zustand.
+       AND (state ->> 'unresolved_step') IS NULL
        AND (
              (
                -- ① Überfällig beansprucht: jemand hat begonnen und ist nicht
@@ -277,6 +285,31 @@ gleichgültig, wem der Anspruch inzwischen gehört. Deshalb ist die Frist eine
 Obergrenze für die Dauer eines Schrittes und kein Timeout. Was daraus folgt —
 nämlich nachzusehen, was der Schritt schon bewirkt hat —, entscheidet der
 Kern (``jarvis_core.orchestrator.recovery``), nicht dieser Speicher."""
+
+_MARK_UNRESOLVED = text(
+    """
+    UPDATE runs
+       SET state = state || jsonb_build_object('unresolved_step', CAST(:seq AS integer))
+     WHERE id = :id
+       AND (state ->> 'claim_id') = :claim_id
+       AND (state ->> 'current_step')::integer = :seq
+    RETURNING id
+    """
+)
+"""Der Vermerk „hier muss jemand nachsehen" — gegen den gehaltenen Anspruch.
+
+``(state ->> 'claim_id') = :claim_id`` ist dieselbe Bedingung wie in
+``_RELEASE`` und aus demselben Grund: Vermerkt wird gegen **den** Anspruch, den
+der Vermerkende hält. Ein Vermerk auf einem fremden wäre schlimmer als keiner —
+er lüde einen Menschen ein, über einen Vorgang zu entscheiden, der inzwischen
+einem anderen Übernehmer gehört.
+
+``current_step = :seq`` dazu, weil der Vermerk einen *bestimmten* Schritt
+meint. Er steht getrennt daneben und nicht anstelle des Anspruchs: Der
+Schrittvergleich sagt **worüber**, das Fencing sagt **wessen**.
+
+Ohne Statusbedingung: Übernommen wird nur in ``executing``, und was der
+Anspruch nicht deckt, deckt kein Status."""
 
 _UPDATE = text(
     """
@@ -486,6 +519,21 @@ class PostgresRunStore:
                 },
             )
             return kennung if treffer.first() is not None else None
+
+    async def mark_unresolved(self, run_id: UUID, seq: int, claim_id: UUID) -> bool:
+        """Eigene Transaktion, aus demselben Grund wie der Anspruch selbst.
+
+        Der Vermerk ist die einzige Spur, die aus einem übernommenen und
+        gehaltenen Anspruch wieder herausführt. Läge er in der Transaktion des
+        Aufrufers, nähme ein Absturz danach genau ihn mit — und zurück bliebe
+        ein Lauf mit gehaltenem Anspruch, den niemand mehr auflösen kann, weil
+        ihm der Vermerk fehlt. Das ist die Sackgasse, gegen die er gebaut ist.
+        """
+        async with self._engine.begin() as conn:
+            treffer = await conn.execute(
+                _MARK_UNRESOLVED, {"id": run_id, "seq": seq, "claim_id": str(claim_id)}
+            )
+            return treffer.first() is not None
 
     async def release_step(self, run_id: UUID, claim_id: UUID) -> None:
         """Gibt den Anspruch zurück — ebenfalls in eigener Transaktion.

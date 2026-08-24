@@ -114,6 +114,19 @@ export function Laeufe() {
                 >
                   <td>
                     <span className={`punkt ${lauf.status}`} /> {lauf.status}
+                    {/* Ohne diese Marke stünde hier „executing" — und zwar für
+                        immer. Der Lauf wartet auf einen Menschen, und der
+                        einzige Weg dorthin wäre gewesen, jeden Lauf einzeln zu
+                        öffnen. */}
+                    {lauf.needs_decision === true && (
+                      <span
+                        className="marke tainted"
+                        title="Dieser Lauf wartet auf deine Entscheidung"
+                        data-test="marke-entscheidung"
+                      >
+                        Entscheidung nötig
+                      </span>
+                    )}
                   </td>
                   <td>{lauf.goal ?? <span className="gedaempft">—</span>}</td>
                   <td>

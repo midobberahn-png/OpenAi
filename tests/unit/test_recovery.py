@@ -84,12 +84,17 @@ class LaufSpeicherAttrappe:
     def __init__(self, *, uebernahme_gelingt: bool = True) -> None:
         self.uebernahme_gelingt = uebernahme_gelingt
         self.uebernahmen: list[tuple[UUID, int, timedelta]] = []
+        self.vermerke: list[tuple[UUID, int, UUID]] = []
 
     async def reclaim_step(
         self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus, frist: timedelta
     ) -> UUID | None:
         self.uebernahmen.append((run_id, seq, frist))
         return uuid.uuid4() if self.uebernahme_gelingt else None
+
+    async def mark_unresolved(self, run_id: UUID, seq: int, claim_id: UUID) -> bool:
+        self.vermerke.append((run_id, seq, claim_id))
+        return True
 
 
 def _lauf_mit_anspruch(*, seq: int = 1, mit_frist: bool = True, werkzeug: str = "mail.send") -> Run:
@@ -207,7 +212,12 @@ class TestProtokollEntscheidet:
         urteil = await recovery.take_over(lauf)
 
         assert urteil.verdict is RecoveryVerdict.ENTSCHEIDUNG_NOETIG
-        assert speicher.uebernahmen == [], "Wo eine Wirkung möglich ist, wird nicht übernommen."
+        assert speicher.uebernahmen, (
+            "Übernommen wird trotzdem — die Frist entscheidet, ob überhaupt etwas hängt, "
+            "und sie steht in der Datenbank. Übernehmen heißt nicht wiederholen: Der "
+            "Anspruch wird gehalten, gewirkt wird nichts."
+        )
+        assert speicher.vermerke, "Ohne Vermerk hätte der Lauf keinen Ausgang mehr."
         assert str(status) in urteil.reason
 
     async def test_idempotentes_werkzeug_darf_auch_bei_unklarer_wirkung(self) -> None:
@@ -311,4 +321,69 @@ class TestNachDerUebernahme:
             "Der Anspruch bleibt beim Übernehmer. Ihn freizugeben öffnete den Schritt "
             "für den nächsten Anwärter, während unklar ist, ob er schon gewirkt hat."
         )
-        assert len(protokoll.abfragen) == 2, "Vor der Übernahme und danach."
+        assert len(protokoll.abfragen) == 1, (
+            "Genau einmal — und zwar **nach** der Übernahme. Eine Abfrage davor "
+            "beantwortete die Frage für einen Zustand, den die Übernahme gleich "
+            "ändert; der Eintrag des alten Arbeiters entsteht genau dazwischen."
+        )
+
+
+class TestDieFristEntscheidetZuerst:
+    """Wer beurteilt, bevor er die Frist prüft, urteilt über einen Laufenden.
+
+    Bis hierher fragte ``take_over`` **erst** das Protokoll und ging bei einer
+    möglichen Wirkung sofort zurück — ohne die Datenbank je anzusprechen. Das
+    ist an zwei Stellen falsch, und beide fallen erst auf, seit es eine
+    Oberfläche gibt, die den Zustand anzeigt.
+    """
+
+    async def test_ein_laufender_schritt_ist_in_arbeit_und_nicht_unklar(self) -> None:
+        """**Der wichtigere der beiden Fälle.**
+
+        Ein Werkzeugschritt, der gerade läuft, hat einen Protokolleintrag — er
+        wird *vor* dem Handler geschrieben, und ``pending`` ist nicht
+        wiederholbar. Von „hängengeblieben und möglicherweise gewirkt" ist er
+        am Protokoll allein **nicht** zu unterscheiden; unterscheidbar macht sie
+        allein die Frist, und die rechnet die Datenbank.
+
+        Solange niemand auf das Urteil hin handelt, ist die Verwechslung nur
+        eine irreführende Fehlermeldung. Mit einem Weg aus ``ENTSCHEIDUNG
+        NÖTIG`` heraus wird sie gefährlich: Die Oberfläche böte „noch einmal
+        versuchen" für einen Schritt an, der gerade in Ordnung läuft.
+        """
+        lauf = _lauf_mit_anspruch()
+        # Die Frist läuft noch — die Datenbank gibt den Anspruch nicht her.
+        recovery, speicher = _recovery(
+            lauf, [_eintrag(lauf, 1, InvocationStatus.PENDING)], uebernahme_gelingt=False
+        )
+
+        urteil = await recovery.take_over(lauf)
+
+        assert speicher.uebernahmen, (
+            "Es wurde gar nicht erst versucht zu übernehmen — das Urteil erging "
+            "allein aus dem Protokoll, und das kennt die Frist nicht."
+        )
+        assert urteil.verdict is RecoveryVerdict.IN_ARBEIT
+
+    async def test_eine_unklare_wirkung_wird_uebernommen_und_die_frist_erneuert(self) -> None:
+        """Sonst findet der Arbeiter denselben Lauf in jedem Durchgang wieder.
+
+        Der Fund geht über ``claimed_at``. Wer nicht übernimmt, erneuert die
+        Frist nicht — und der nächste Durchgang eine Minute später sieht
+        denselben abgelaufenen Anspruch, urteilt erneut ``ENTSCHEIDUNG NÖTIG``
+        und schreibt erneut ``step-unresolved`` ins Protokoll. Für immer.
+
+        Übernehmen heißt hier nicht wiederholen: Der Anspruch wird gehalten,
+        nicht verbraucht. Er ist danach **unser** Fencing-Token, und genau
+        daran hängt später die Entscheidung eines Menschen.
+        """
+        lauf = _lauf_mit_anspruch()
+        recovery, speicher = _recovery(lauf, [_eintrag(lauf, 1, InvocationStatus.EFFECT_UNKNOWN)])
+
+        urteil = await recovery.take_over(lauf)
+
+        assert urteil.verdict is RecoveryVerdict.ENTSCHEIDUNG_NOETIG
+        assert speicher.uebernahmen, "Ohne Übernahme bleibt die Frist alt."
+        assert urteil.claim_id is not None, (
+            "Ohne Fencing-Token gibt es nichts, woran eine spätere Entscheidung hängt."
+        )

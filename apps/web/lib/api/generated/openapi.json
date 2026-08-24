@@ -476,6 +476,60 @@
         "title": "RegistrationRequest",
         "type": "object"
       },
+      "ResolveRequest": {
+        "description": "Eine von genau drei Entscheidungen — und der Vorgang, für den sie gilt.\n\n**Kein Zielstatus.** Ein Feld ``status`` wäre der bequemere Entwurf und die\nAbschaffung des Zustandsautomaten: Wer von außen einen Zielzustand nennen\ndarf, umgeht die Übergänge, die ihn tragen. Hier stehen drei benannte\nEntscheidungen, und jede hat genau einen Übergang.\n\n**``claim_id`` ist Pflicht und stammt aus der Ansicht**, in der der\nVorgang gezeigt wurde. Ohne diesen Bezug entschiede eine Browserseite mit\nveraltetem Zustand über eine Lage, die es nicht mehr gibt — läuft die\nFrist erneut ab, übernimmt der nächste Durchgang und vergibt ein neues\nToken.",
+        "properties": {
+          "claim_id": {
+            "format": "uuid",
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "completed",
+              "retry",
+              "abort"
+            ],
+            "title": "Decision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision",
+          "claim_id"
+        ],
+        "title": "ResolveRequest",
+        "type": "object"
+      },
+      "ResolveResult": {
+        "description": "Was aus der Entscheidung geworden ist.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "resolution": {
+            "title": "Resolution",
+            "type": "string"
+          },
+          "run_status": {
+            "title": "Run Status",
+            "type": "string"
+          },
+          "step_seq": {
+            "title": "Step Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "resolution",
+          "step_seq",
+          "run_status",
+          "detail"
+        ],
+        "title": "ResolveResult",
+        "type": "object"
+      },
       "RespondRequest": {
         "description": "Die Antwort des Menschen. Führt weder Nutzer noch Sitzung noch Kanal.",
         "properties": {
@@ -644,6 +698,11 @@
             "title": "Is Multi Step",
             "type": "boolean"
           },
+          "needs_decision": {
+            "default": false,
+            "title": "Needs Decision",
+            "type": "boolean"
+          },
           "output": {
             "default": "",
             "title": "Output",
@@ -677,6 +736,16 @@
           "trigger": {
             "title": "Trigger",
             "type": "string"
+          },
+          "unresolved": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UnresolvedView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -931,6 +1000,68 @@
           "tool_name"
         ],
         "title": "UndoResult",
+        "type": "object"
+      },
+      "UnresolvedView": {
+        "description": "Ein Schritt, über den ein Mensch entscheiden muss — und woran er das tut.\n\n**Die Frage, die diese Sicht ehrlich beantworten muss, ist nicht „was ist\npassiert\", sondern „woran erkenne ich es\".** Das System kann die erste\nnicht beantworten: Es weiß, was es *versucht* hat, und hat keinen Weg,\nbeim Zielsystem nachzusehen (ein lesender Kalenderzugriff existiert nicht,\nsiehe Dossier). Eine Sicht, die das verschweigt, lädt zu einer Entscheidung\nein, die auf nichts beruht.\n\nDeshalb steht hier, was es tatsächlich gibt:\n\n* **Was gemeint war** — die Beschreibung aus dem Plan. Sie ist der Satz, den\n  der Nutzer selbst veranlasst hat, und damit das brauchbarste Stück: Wer\n  „Zahnarzttermin Dienstag 14 Uhr eintragen\" liest, weiß, wonach er im\n  Kalender sucht.\n* **Was versucht wurde** — Werkzeug, Zeitpunkt und Protokollzustand. Nicht\n  die Argumente: Sie können Fremdinhalt tragen, und der Weg, Fremdinhalt\n  einem Menschen zur Prüfung vorzulegen, ist die Vorschau (docs/10-ui.md\n  §5) und nicht ein Nebenfeld in einer Statusansicht.\n* **Was das System nicht weiß** — ausdrücklich, als Satz.\n\n``caveat`` steht bewusst hier und nicht in der Oberfläche. Es ist die\neinzige Fassung, die auch für den nächsten Client gilt: Eine Sprachausgabe,\ndie die drei Möglichkeiten vorliest, muss denselben Vorbehalt nennen, und\neine Zeichenkette im React-Code steht ihr nicht zur Verfügung.",
+        "properties": {
+          "attempted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempted At"
+          },
+          "attempts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Attempts",
+            "type": "array"
+          },
+          "caveat": {
+            "title": "Caveat",
+            "type": "string"
+          },
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "step_seq": {
+            "title": "Step Seq",
+            "type": "integer"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          }
+        },
+        "required": [
+          "step_seq",
+          "claim_id",
+          "description",
+          "tool",
+          "attempted_at",
+          "attempts",
+          "caveat"
+        ],
+        "title": "UnresolvedView",
         "type": "object"
       },
       "ValidationError": {
@@ -1879,6 +2010,60 @@
           }
         },
         "summary": "List Invocations",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/resolve": {
+      "post": {
+        "description": "Löst einen Schritt auf, dessen Wirkung unklar ist.\n\n**Der einzige Weg aus ``ENTSCHEIDUNG NÖTIG`` heraus** — und deshalb selbst\neine Sicherheitsgrenze. Der Entscheidende hebt eine Sperre auf, die einen\ndoppelten Seiteneffekt verhindert; vier Bedingungen tragen sie, und drei\ndavon stehen bereits vor der ersten Zeile Logik:\n\n* **Eigentümer** — ``_eigener_lauf`` wie überall. Ein fremder Lauf ist 404,\n  nicht 403: Sonst wäre aus der Antwort zu lernen, dass es ihn gibt.\n* **Identität aus der Sitzung** — die Kante nimmt keine Nutzerkennung\n  entgegen (``identity-derives-from-session``).\n* **Fencing und Vermerk** — beide prüft ``StepResolver`` gegen den\n  geladenen Lauf, und das entscheidende ``UPDATE`` prüft den Anspruch\n  **noch einmal** in derselben Anweisung, die schreibt. Zwei gleichzeitige\n  Entscheidungen ergeben deshalb eine, nicht zwei.\n\n**409 für alle Ablehnungen**, mit demselben Satz: kein Vermerk, fremdes\nToken, schon entschieden. Die Unterscheidung nach außen zu tragen hieße,\naus der Ablehnung eine Auskunft über den Zustand zu machen — dieselbe\nÜberlegung wie bei der Rücknahme.",
+        "operationId": "resolve_run_step_runs__run_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Run Step",
         "tags": [
           "runs"
         ]

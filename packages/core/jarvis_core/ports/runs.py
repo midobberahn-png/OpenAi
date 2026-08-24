@@ -245,6 +245,29 @@ class RunStore(Protocol):
         """
         ...
 
+    async def mark_unresolved(self, run_id: UUID, seq: int, claim_id: UUID) -> bool:
+        """Vermerkt, dass dieser Schritt nur noch ein Mensch auflösen kann.
+
+        Der Gegenstand ist ein **Befund** und keine Absicht: Die Frist war
+        abgelaufen, der Anspruch ist übernommen, und das Werkzeugprotokoll
+        schließt eine Wirkung nicht aus. Wer das errechnen wollte, bekäme es
+        nicht hin — ein laufender Schritt sieht im Protokoll genauso aus, weil
+        der Eintrag *vor* dem Handler entsteht. Nur wer die Frist geprüft hat,
+        kann die beiden trennen, und geprüft wird sie in der Datenbank.
+
+        ``claim_id`` ist das Fencing und nicht Buchhaltung: Vermerkt wird gegen
+        **den Anspruch, den der Vermerkende hält**. Ohne diese Bedingung
+        setzte ein langsamer Übernehmer den Vermerk auf einen Anspruch, der
+        inzwischen einem anderen gehört — und ein Mensch entschiede später
+        gegen einen Vorgang, den es so nicht mehr gibt.
+
+        Rückgabe ``False``, wenn der Anspruch nicht mehr gilt. Keine Ausnahme:
+        Das ist der Ausgang, den das Fencing herbeiführen soll, und der
+        Aufrufer kann daraus nur eines schließen — die Lage hat sich geändert,
+        und sein Urteil ist veraltet.
+        """
+        ...
+
     async def release_step(self, run_id: UUID, claim_id: UUID) -> None:
         """Gibt den Anspruch zurück, ohne den Schritt als erledigt zu führen.
 
