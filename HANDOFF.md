@@ -6,7 +6,9 @@
 > zu tun ist.
 >
 > **Erstes, was zu tun ist:** `git log --oneline -1` und mit der Zeile oben
-> vergleichen. Zwei externe Prüfberichte bewerteten einen Stand, der zum
+> vergleichen. **`main` ist seit dem 25.08.2026 geschützt** — direkte Pushes
+> werden abgewiesen, der Weg geht über einen Branch und `gh pr merge --auto`
+> (Abschnitt 8). Zwei externe Prüfberichte bewerteten einen Stand, der zum
 > Zeitpunkt des Berichts mehrere Blöcke alt war — beide Male, weil `main`
 > hinterherhinkte. Wer hier weiterarbeitet, pusht nach `main`, nicht nur auf
 > einen Themenbranch.
@@ -48,7 +50,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
-| CI | GitHub Actions mit Postgres und Redis als Dienste |
+| CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
 
 ### Was seit dem letzten Dossier geschah
 
@@ -1185,26 +1187,47 @@ Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch
 verhindert einen zweiten Versuch — er kann nicht verhindern, dass ein
 Provider-Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen.
 
-### Offen und betrieblich: `main` ist nicht geschützt
+### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
-Aus derselben Prüfrunde, und es ist kein Codebefund: `main` hat weder Branch
-Protection noch Required Status Checks. Die CI läuft auf `main` und auf PRs,
-prüft Ruff, mypy, alle Testebenen, Migrationen und Gitleaks — aber **CI nach
-einem direkten Push ist kein Merge-Gate.** Ein fehlerhafter Commit ist bereits
-`main`, bevor die CI ihn ablehnt.
+Der Schutz steht (`enforce_admins: true`, keine Force-Pushes, keine Löschung,
+`strict: true`, erforderlich sind **Lint, Typen, Tests** und **Secret-Scan**).
+Beim Vorbereiten fiel der eigentliche Befund an:
 
-Für ein Projekt, dessen Leitkennzahl eine Invariantenabdeckung ist, ist das die
-schwächste Stelle der Kette. Der Schutz lässt sich nicht aus dem Repository
-heraus setzen; es braucht einen authentifizierten `gh`-Zugang:
+**CI war 45 Läufe lang rot — kein einziger grüner, kein einziger ausgeführter
+Test.** `UV_VERSION` stand seit dem *ersten* Commit auf `0.16.3`, einer Nummer,
+die uv nie hatte; `setup-uv` lädt direkt vom Release-Tag, bekam 404 und brach
+im Einrichten ab. Das Dossier führte „CI mit Postgres und Redis als Dienste" —
+richtig konfiguriert, und nie gelaufen.
+
+**Warum das über 45 Läufe niemandem auffiel:** Das lokale Gate war grün, und
+niemand hatte einen Grund, auf GitHub nachzusehen. Ein Fehlschlag im
+*Einrichten* sieht außerdem aus wie ein Infrastrukturproblem und nicht wie ein
+Befund — genau die Sorte Rot, die man wegzuklicken lernt. Und ohne
+erforderliche Prüfungen hatte das Rot keine Folge: Es blockierte nichts.
+
+Das ist die schärfere Fassung der Lektion aus Abschnitt 7: *Eine Prüfung, die
+niemand liest, ist keine Prüfung.* Sie galt bisher für Invarianten ohne Test;
+sie gilt genauso für eine CI ohne Leser. **Beim Anheften einer Version gehört
+die Frage dazu, ob es sie gibt.**
+
+**Was sich für die Arbeitsweise ändert.** Ein direkter Push nach `main` wird
+jetzt abgewiesen — die erforderlichen Prüfungen sind auf dem neuen Commit noch
+nicht gelaufen. Der Weg ist ab jetzt:
 
 ```bash
-gh api -X PUT repos/midobberahn-png/OpenAi/branches/main/protection \
-  -f 'required_status_checks[strict]=true' \
-  -F 'required_status_checks[contexts][]=gate' \
-  -F 'enforce_admins=true' \
-  -F 'required_pull_request_reviews=null' \
-  -F 'restrictions=null'
+git switch -c block/<name>
+git push -u origin block/<name>
+gh pr create --fill && gh pr merge --squash --auto
 ```
+
+`--auto` merged, sobald beide Prüfungen grün sind. Reviews sind **nicht**
+verlangt (`required_pull_request_reviews: null`) — bei einem Entwickler wäre
+das eine Zeremonie ohne Prüfer; verlangt ist die CI.
+
+**Was CI weiterhin nicht prüft: die Browserdurchstiche.** `make gate` führt sie
+(`gate-web`), die Workflow-Datei nicht. Solange das so ist, ist ein grünes CI
+eine schwächere Zusage als ein grünes lokales Gate — und das gehört gewusst,
+bevor sich jemand darauf verlässt.
 
 ### Bewusst aufgeschoben: Token-Rotation
 
@@ -1263,6 +1286,7 @@ klären, indem der Fall ausgeführt wurde.
 | **Der Handler bekommt keine Identität — und das ist die Absicherung** | `registry.execute()` ruft `handler(**auth.arguments)`. Ein schreibendes Werkzeug braucht trotzdem einen Eigentümer. Ein Feld `user_id` in den Argumenten wäre dieselbe Lücke wie `user_id` im Request-Body, nur eine Schicht tiefer. Der Kalender wird deshalb **beim Verdrahten** aus `CurrentSession` gebunden; der Handler kann keinen fremden benennen, weil er es nicht kann — nicht, weil er es nicht darf. |
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
 | **pytest leitet `tmp_path` vom Testnamen ab** | Ein Test hieß `test_3_zugangsdaten_stufen_hoch`, der Pfad landete im Lauf-Input, und der Klassifikator sah „zugangsdaten" — der Test war **grün aus dem falschen Grund**, die geprüfte Hochstufung kam nicht vom Dateiinhalt. Wer Pfade in Eingaben schreibt, die ein Klassifikator liest, misst den Testnamen mit. |
+| **Eine angeheftete Version, die es nicht gibt, scheitert vor dem Testen** | `UV_VERSION: "0.16.3"` — uv hatte diese Nummer nie. `setup-uv` bekam 404 und brach im *Einrichten* ab: **45 CI-Läufe, kein einziger grüner, kein einziger ausgeführter Test**, seit dem ersten Commit. Aufgefallen ist es nicht, weil das lokale Gate grün war, ein Fehlschlag im Einrichten wie ein Infrastrukturproblem aussieht — und weil ohne erforderliche Prüfungen niemand ein Interesse hatte, hinzusehen. Wer eine Version anheftet, prüft, ob es sie gibt. |
 | **`git commit --amend` macht einen notierten Hash ungültig** | Der Dossierkopf trug `f2ec2b3` — ich hatte `git rev-parse HEAD` gelesen, die Zeile geschrieben und **danach** amendiert. Der Hash lebte nur noch in meinem lokalen Objektspeicher; im Prüfcheckout gab es ihn nicht, und ein Prüfer hat ihn zu Recht als tot gemeldet. Ausgerechnet an der Stelle, die selbst verlangt, den Commit zu vergleichen. **Der Kopf nennt den letzten gepushten Commit** — nie einen, der noch amendiert werden könnte, und nie den eigenen. |
 | **Eine Zahl im Dossier veraltet, eine Bedingung nicht** | „ohne Dienste werden 178 übersprungen" war nach zwei Blöcken falsch (202). Wo eine Zahl nur eine Bedingung illustriert, gehört die Bedingung hin. |
 | **Ein Anspruch in einem Dokument, das andere im Ganzen schreiben, ist kein Anspruch** | Der Schrittanspruch lag in `RunState`, und `save()` schreibt das **ganze** `state`-Dokument. Die Fencing-Bedingung im `WHERE` schützte nur den, der sich auf den Anspruch *berief* — der anspruchslose Pfad (`/steps`) ging daran vorbei und wischte ihn weg. Gemessen: danach war der Schritt wieder frei, obwohl sein Inhaber noch arbeitete, und derselbe doppelte Seiteneffekt stand über eine andere Tür wieder offen. Behoben mit einem `CASE`, der die Anspruchsfelder aus der Zeile übernimmt, wenn kein Anspruch vorgelegt wird. **Sauberer wären eigene Spalten** — das braucht eine Migration und steht aus. |
