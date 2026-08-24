@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `dab8584` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `7f3365f` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,8 +42,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 74, Remote auf GitHub |
-| Tests | **1299** Python + 12 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| Commits | 75, Remote auf GitHub |
+| Tests | **1300** Python + 15 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
 | **Security Invariant Coverage** | **57/58** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
@@ -1083,10 +1083,36 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   Rücknahme: Ob ein Termin danach weg ist, kann die Oberfläche nicht sehen.
   Solange niemand einen Kalender *anzeigen* will, ist das folgenlos — beim
   ersten Versuch nicht mehr.
-* **Der Chat.** Jetzt möglich: Der Strom trägt die Änderungen, die Oberfläche
-  lädt nach. Was fehlt, ist die Token-Ausgabe — `TokenDelta` steht im
-  Protokoll, und der Weg dorthin führt über einen Modellaufruf, der streamt.
-  Das ist der nächste sichtbare Schritt.
+* ~~Der Chat.~~ **Erledigt** (`c17d112`). Und wieder fehlte der Weg in der
+  Mitte: Der Ollama-Adapter konnte streamen, der Vertrag kannte `StreamChunk`
+  und `TokenDelta` — das **Gateway** nicht. Wer Tokens fließen sehen wollte,
+  hätte an der Prüfung vorbeigemusst, ob dieses Modell diese Datenklasse sehen
+  darf. `ModelGateway.stream()` prüft jetzt **vor dem ersten Stück**.
+
+  Der Chat zeigt Gesagtes und Geantwortetes aus dem Lauf; die Textstücke sind
+  Anzeige und kein Zustand. Der Antworttext wird als **Text** dargestellt — ein
+  Browsertest legt `<img src=x onerror=…>` vor und prüft, dass kein Element
+  entsteht.
+
+  Zwei Folgen: Der Antwortschritt streamt jetzt **immer**, und die
+  Test-Attrappe konnte es nicht (vier Tests schlugen zu Recht fehl). Und `goal`
+  fehlte in der Laufübersicht — ohne es zeigt ein Gesprächsverlauf nicht, was
+  gesagt wurde.
+
+**Was in der Oberfläche als Nächstes ansteht:**
+
+* **Markdown im Chat.** Heute ist die Antwort Text mit erhaltenen Umbrüchen.
+  `react-markdown` + `remark-gfm` **ohne** `rehype-raw` ist der dokumentierte
+  Weg (docs/10-ui.md §5); die Regel „kein rohes HTML aus Modellausgaben" gilt
+  unverändert.
+* **Ein Lauf läuft nicht von allein zu Ende.** Der Chat stößt genau einen
+  Schritt an. Ein mehrschrittiger Plan bleibt danach stehen, bis der Arbeiter
+  ihn aufgreift oder jemand `advance` schickt — sichtbar, aber unfertig.
+* **Ein Flackern im Browsertest.** Einmal in etwa dreißig Durchgängen scheiterte
+  die Anmeldung in `laufdetail.spec.ts` („nicht angemeldet" nach 20 s). Die
+  Ursache ist nicht gefunden; ein Retry wäre die falsche Antwort (die
+  Konfiguration führt bewusst `retries: 0`). Wer es wiedersieht, hat mehr
+  Material als ich.
 * **Kein Router in der Oberfläche.** Zwei Bereiche und ein Laufdetail kommen
   mit einem Zustand aus. Sobald ein Laufdetail eine Adresse braucht, die sich
   weitergeben und neu laden lässt, ist das die Gelegenheit für einen — dann mit
