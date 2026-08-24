@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `ddd7ecd` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `1eb6d95` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,8 +42,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 72, Remote auf GitHub |
-| Tests | **1277** Python + 3 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| Commits | 73, Remote auf GitHub |
+| Tests | **1277** Python + 10 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
 | **Security Invariant Coverage** | **56/57** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
@@ -1049,15 +1049,32 @@ Schlüsseln, und die Registrierung verlangte keinen. In der pytest-Suite war das
 unsichtbar, weil die Attrappe auf jede Anfrage antwortet. Genau dafür gibt es
 den Durchstich im Browser.
 
+**Permission Center, Laufdetail und Rücknahme stehen** (`1eb6d95`). Das
+Permission Center kam zuerst, und zwar mit Grund: Sein Bildschirm setzt die
+Rechte, die der Undo-Durchstich braucht — sonst arbeitete der Browsertest an
+der Oberfläche vorbei und prüfte sie nur halb. Neu dafür in der API:
+`GET /runs/{id}/invocations` (ohne `arguments`, die können Fremdinhalt tragen).
+
+Und wieder hat der Browsertest etwas gefunden: Die **Rücknahme hinterließ keine
+Spur in der Audit-Kette** — eine Woche nach dem Commit, der „was geschieht,
+steht in der verketteten Spur" behauptet. Der Undo-Weg geht direkt über die
+Registry und lief am Executor vorbei, der sonst protokolliert.
+
 **Was als Nächstes ansteht:**
 
-* **Laufdetail und Undo.** Die Liste zeigt Zustände; der Plan eines einzelnen
-  Laufs, seine Schritte und die Rücknahme eines ausgeführten Aufrufs fehlen
-  noch in der Oberfläche — die API kann beides.
-* **Permission Center.** Die API steht seit `32c54c5`, die Oberfläche dazu
-  nicht.
-* **Chat.** Braucht den Ereignisstrom (siehe unten); bis dahin wäre es
-  Polling mit einem Eingabefeld.
+* **Der Ereignisstrom.** Die Oberfläche pollt alle drei Sekunden. Das ist die
+  ehrliche Fassung, solange es nichts anderes gibt — was es nicht kann, ist den
+  Moment zeigen, in dem etwas passiert. Das UI-Dokument beschreibt WebSocket
+  mit Sequenznummern und Nachladen über `GET /runs/{id}/steps`; nichts davon
+  existiert. **Das ist der nächste Backend-Block**, und der Chat hängt daran.
+* **Kein Endpunkt liest den Kalender.** Aufgefallen beim Browsertest der
+  Rücknahme: Ob ein Termin danach weg ist, kann die Oberfläche nicht sehen.
+  Solange niemand einen Kalender *anzeigen* will, ist das folgenlos — beim
+  ersten Versuch nicht mehr.
+* **Kein Router in der Oberfläche.** Zwei Bereiche und ein Laufdetail kommen
+  mit einem Zustand aus. Sobald ein Laufdetail eine Adresse braucht, die sich
+  weitergeben und neu laden lässt, ist das die Gelegenheit für einen — dann mit
+  Grund.
 
 Was **unabhängig** davon fehlt und jede Fassung braucht:
 
