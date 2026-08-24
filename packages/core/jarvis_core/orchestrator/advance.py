@@ -153,7 +153,7 @@ class RunAdvancer:
         self,
         lauf: Run,
         *,
-        session_id: UUID,
+        session_id: UUID | None,
         vorgegeben: dict[str, Any] | None,
     ) -> AdvanceOutcome:
         """Ein Schritt weiter.
@@ -162,6 +162,13 @@ class RunAdvancer:
         Absicht: *Wem* ein Lauf gehört, entscheidet die Kante aus der Sitzung —
         eine ``user_id`` als Parameter wäre dieselbe Lücke wie eine im
         Request-Body, nur eine Schicht tiefer.
+
+        ``session_id=None`` ist der Arbeiter: ein Lauf, ein Eigentümer, **keine
+        Sitzung**. Ein Schritt, der eine Bestätigung braucht, wird dann nicht
+        ausgeführt und erzeugt auch keine — dazu ``ToolExecutor.execute_tool``.
+        Die Zugehörigkeit ist damit nicht schwächer geprüft, sondern anders
+        begründet: Der Arbeiter greift keinen Lauf auf, den ihm jemand genannt
+        hat, sondern nur solche, die er selbst gefunden hat.
         """
         plan, schritt = self._faelliger_schritt(lauf)
         await self._pruefe_durchfuehrbar(lauf, schritt, vorgegeben)
@@ -315,7 +322,7 @@ class RunAdvancer:
         schritt: PlanStep,
         status_vorher: RunStatus,
         vorgegeben: dict[str, Any] | None,
-        session_id: UUID,
+        session_id: UUID | None,
         anspruch: UUID,
     ) -> AdvanceOutcome:
         """Die Grenze in der Mitte dieser Methode ist die ganze Zusage."""

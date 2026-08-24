@@ -101,6 +101,35 @@ class RunStore(Protocol):
         """
         ...
 
+    async def stale_runs(self, *, frist: timedelta, limit: int = 20) -> list[Run]:
+        """Läufe, deren beanspruchter Schritt überfällig ist — **über alle Nutzer**.
+
+        Die einzige Signatur dieses Ports ohne ``user_id``, und sie braucht
+        eine Begründung, weil ``list_for_user`` ausdrücklich das Gegenteil tut:
+        Dort ist der Eigentümer Pflicht, damit eine Übersicht nicht eine Zeile
+        Code davon entfernt ist, fremde Läufe zu zeigen.
+
+        Hier geht es nicht um eine Übersicht. Ein Arbeiter, der hängende Läufe
+        fortsetzt, **kann** keinen Nutzer nennen: Wessen Lauf abgestürzt ist,
+        weiß er erst, nachdem er gesucht hat. Die Einschränkung liegt deshalb
+        woanders — nicht auf dem Eigentümer, sondern auf dem Zustand: Geliefert
+        wird ausschließlich, was überfällig beansprucht ist. Ein Lauf, an dem
+        gerade gearbeitet wird, erscheint nicht, ein wartender nicht, ein
+        abgeschlossener nicht.
+
+        **Und die Auskunft berechtigt zu nichts.** Sie sagt, wo nachzusehen
+        ist; ob übernommen werden darf, entscheidet die Frist in
+        ``reclaim_step``, und ob gewirkt werden darf, das Werkzeugprotokoll.
+        Der Eigentümer bleibt gebunden, wo er gebraucht wird: Der
+        Werkzeugkatalog des Arbeiters wird an ``run.user_id`` gebunden, damit
+        ein Handler gar nicht in einen fremden Kalender schreiben kann.
+
+        ``limit`` ist Pflicht mit Vorgabe: Ein Durchgang, der beliebig viele
+        Läufe aufgreift, hält die Datenbank fest und macht die Dauer eines
+        Durchgangs unvorhersehbar.
+        """
+        ...
+
     async def save(
         self, run: Run, *, erwarteter_status: RunStatus, claim_id: UUID | None = None
     ) -> None:

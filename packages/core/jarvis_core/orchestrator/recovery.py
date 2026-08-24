@@ -308,7 +308,19 @@ def ist_haengend(run: Run) -> bool:
 
     Bewusst großzügig und ohne Frist: Ob die Frist abgelaufen ist, entscheidet
     die Datenbank. Diese Funktion beantwortet nur, ob es sich überhaupt lohnt
-    nachzusehen — ein Lauf, der auf eine Bestätigung wartet, steht nicht in
-    ``executing`` und ist deshalb keiner.
+    nachzusehen.
+
+    **Der Anspruch ist der Marker, nicht der Status.** ``queued`` gehört dazu,
+    weil ein Anspruch *vor* dem Übergang nach ``executing`` entsteht: Ein
+    Arbeiter, der dazwischen abstürzt, hinterlässt einen beanspruchten Lauf in
+    ``queued``. Wer hier nur ``executing`` gelten ließe, übersähe genau den
+    Fall, für den die Wiederaufnahme gebaut ist — gemessen an einem
+    Durchgang, der nichts fand.
+
+    Ein Lauf ohne Anspruch ist dagegen keiner: Niemand hat begonnen, und ihn
+    von sich aus anzustoßen wäre etwas anderes als eine Wiederaufnahme.
     """
-    return run.status is RunStatus.EXECUTING and run.state.current_step is not None
+    return run.state.current_step is not None and run.status in {
+        RunStatus.QUEUED,
+        RunStatus.EXECUTING,
+    }

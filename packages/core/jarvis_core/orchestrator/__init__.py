@@ -41,6 +41,7 @@ from .router import (
     RoutingPreferences,
     route,
 )
+from .worker import RunWorker, SweepReport, SweepResult
 
 __all__ = [
     "DEFAULT_LEASE",
@@ -62,9 +63,12 @@ __all__ = [
     "ResponseUnavailable",
     "RoutingPreferences",
     "RunAdvancer",
+    "RunWorker",
     "StepAssessment",
     "StepExecution",
     "StepStatus",
+    "SweepReport",
+    "SweepResult",
     "ToolExecutor",
     "classify",
     "ist_haengend",

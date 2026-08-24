@@ -556,6 +556,24 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.orchestrator.recovery",
     ),
     Invariant(
+        id="unattended-step-has-no-approval-channel",
+        title="Ein Schritt ohne Sitzung erzeugt keine Bestätigung",
+        statement=(
+            "Ein Werkzeugschritt, der ohne Sitzung ausgeführt wird, legt bei einer "
+            "CONFIRM-Entscheidung **keine** Bestätigungsanfrage an. Er wird abgewiesen, "
+            "der Lauf bleibt stehen, und der Protokolleintrag führt ihn als wiederholbar."
+        ),
+        why=(
+            "Eine Bestätigung ist an die Sitzung gebunden, in der ihre Vorschau erschien "
+            "(``ApprovalGateway.respond``). Eine ohne Sitzung könnte niemand einlösen: "
+            "Sie stünde in der Übersicht des Nutzers, ließe sich nicht beantworten und "
+            "den Lauf endgültig stehen — das Gegenteil dessen, wofür der Arbeiter gebaut "
+            "ist, der hängende Läufe fortsetzt."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.orchestrator.executor",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(

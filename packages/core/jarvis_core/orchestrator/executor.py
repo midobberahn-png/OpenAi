@@ -82,6 +82,17 @@ gilt ihre Ausnahme als möglicherweise gewirkt, und das ist der sichere
 Vorgabewert."""
 
 
+_OHNE_KANAL = (
+    "Dieser Vorgang braucht eine Bestätigung, und es gibt niemanden, der sie geben "
+    "könnte: Der Schritt läuft ohne Sitzung. Er bleibt unerledigt, bis ihn jemand "
+    "angemeldet anstößt."
+)
+"""Ein Satz für Menschen — er steht in der Ablehnung und im Protokolleintrag.
+
+Beide Male derselbe Wortlaut, damit die Zeile im Protokoll und das, was der
+Nutzer liest, nicht auseinanderlaufen."""
+
+
 StepStatus = Literal[
     "executed",
     "awaiting_confirmation",
@@ -144,12 +155,25 @@ class ToolExecutor:
         tool_name: str,
         arguments: dict[str, Any],
         seq: int,
-        session_id: UUID,
+        session_id: UUID | None,
         channel: ApprovalChannel = "ui",
         agent_name: str | None = None,
         plan_step_seq: int | None = None,
     ) -> StepExecution:
         """Ein Werkzeugschritt: fragen, gegebenenfalls bestätigen lassen, ausführen.
+
+        ``session_id=None`` heißt **es gibt keinen Bestätigungskanal** — niemand
+        ist da, den man fragen könnte. Der Fall entsteht mit dem Arbeiter, der
+        hängengebliebene Läufe fortsetzt: Er hat einen Lauf und dessen
+        Eigentümer, aber keine Sitzung.
+
+        Warum das ein eigener Wert sein muss und keine erfundene Kennung: Eine
+        Bestätigung wird an die Sitzung gebunden, in der ihre Vorschau
+        erschienen ist (``ApprovalGateway.respond`` prüft das). Eine Anfrage
+        mit einer Sitzung, die es nicht gibt, wäre deshalb eine Bestätigung,
+        die **niemand jemals einlösen kann** — sie stünde in der Übersicht des
+        Nutzers und ließe den Lauf endgültig stehen. Der Typ sagt es hier
+        stattdessen aus: kein Kanal, keine Anfrage.
 
         ``plan_step_seq`` ist getrennt von ``seq``, und das ist bedeutungstragend:
         ``seq`` nummeriert den Schritt **in diesem Lauf** und wird auch für
@@ -417,13 +441,35 @@ class ToolExecutor:
         spec: ToolSpec,
         arguments: dict[str, Any],
         decision: PolicyDecision,
-        session_id: UUID,
+        session_id: UUID | None,
         channel: ApprovalChannel,
         invocation_id: UUID,
         now: datetime,
     ) -> StepExecution:
         if decision.preview is None:  # pragma: no cover - vom Vertrag ausgeschlossen
             raise RuntimeError("CONFIRM ohne Vorschau — der Vertrag schließt das aus.")
+
+        if session_id is None:
+            # Kein Kanal, keine Anfrage. **Und ausdrücklich ``BLOCKED`` und
+            # nicht ``FAILED``:** Es ist nichts geschehen, und der Vertrag
+            # führt diesen Zustand als wiederholbar (``may_retry``). Das ist
+            # hier keine Feinheit, sondern der ganze Zweck — der Nutzer soll
+            # denselben Schritt später mit einer Sitzung anstoßen können, und
+            # die Wiederaufnahme soll ihn nicht für „möglicherweise gewirkt"
+            # halten.
+            #
+            # Der Lauf bleibt, wo er ist: **kein** Übergang nach
+            # ``awaiting_confirmation``. Dieser Zustand hieße „es wartet eine
+            # Bestätigung", und es wartet keine.
+            await self._mark(invocation_id, InvocationStatus.BLOCKED, _OHNE_KANAL)
+            await self._log(run, "tool.confirmation_unavailable", spec.name, {}, now)
+            return StepExecution(
+                status="blocked",
+                run=self._with_usage(run, tracker),
+                reason=f"{decision.reason} {_OHNE_KANAL}",
+                decision=decision,
+                code="no-approval-channel",
+            )
 
         pending = await self._gateway.request(
             spec=spec,

@@ -81,6 +81,49 @@ _LISTE = text(
 Einschränkung auf den Eigentümer soll nicht weglassbar sein. Der Index
 ``ix_runs_user_started`` bedient genau diese Reihenfolge."""
 
+_UEBERFAELLIG = text(
+    f"""
+    SELECT {_SPALTEN}
+      FROM runs
+     WHERE status IN ('queued', 'executing')
+       AND (state ->> 'claim_id') IS NOT NULL
+       AND (state ->> 'claimed_at')::timestamptz < now() - CAST(:frist AS interval)
+     ORDER BY (state ->> 'claimed_at')::timestamptz
+     LIMIT :limit
+    """
+)
+"""Die Suche des Arbeiters: Läufe, deren Anspruch überfällig ist.
+
+Der Statusfilter bedient ``ix_runs_resumable`` — den Teilindex, der seit dem
+ersten Schema für genau diesen Arbeiter existiert und bis hierher keinen Leser
+hatte.
+
+**Der unterscheidende Marker ist der Anspruch, nicht der Status.** Das war
+zuerst andersherum gebaut (``status = 'executing'``) und beim Messen
+durchgefallen: Der Anspruch entsteht **vor** dem Übergang nach ``executing``,
+weil er vor allem Weiteren gelten muss. Ein Arbeiter, der zwischen Anspruch und
+erstem Schritt abstürzt, hinterlässt deshalb einen Lauf in ``queued`` — genau
+den Fall, den eine Wiederaufnahme sucht, und genau den hätte sie nie gefunden.
+
+``(state ->> 'claim_id') IS NOT NULL`` trägt die Unterscheidung, auf die es
+ankommt: *begonnen und stehengeblieben* gegen *nie begonnen*. Ein Lauf ohne
+Anspruch ist keine Wiederaufnahme — ihn von sich aus anzustoßen hieße, bei
+einem Lauf zu handeln, den der Nutzer vielleicht liegen gelassen hat.
+
+``awaiting_confirmation`` fehlt in der Liste, obwohl der Index ihn führt: Dort
+wartet ein Mensch, und auf den zu warten ist der Zweck des Zustands und kein
+Fehler. Ein Anspruch steht dort ohnehin nicht offen — er fällt mit dem
+Schreiben, das die Bestätigung anfordert.
+
+``ORDER BY claimed_at``: Der am längsten hängende zuerst. Bei einem ``LIMIT``
+entscheidet die Reihenfolge, wer liegen bleibt, und das soll nicht der Zufall
+der Einfügereihenfolge sein.
+
+Ohne ``FOR UPDATE SKIP LOCKED``: Die Zeilen werden hier nur *gefunden*.
+Ausgewählt wird genau einer durch ``_RECLAIM`` — ein bedingtes UPDATE, das
+zwei gleichzeitige Arbeiter ohnehin trennt. Ein Lock über die Suche hinweg
+verspräche eine Exklusivität, die schon eine Zeile weiter nicht mehr gälte."""
+
 _CLAIM = text(
     """
     UPDATE runs
@@ -328,6 +371,19 @@ class PostgresRunStore:
         async with self._engine.connect() as conn:
             zeilen = (
                 (await conn.execute(_LISTE, {"user_id": user_id, "limit": limit})).mappings().all()
+            )
+        return [Run.model_validate(dict(z)) for z in zeilen]
+
+    async def stale_runs(self, *, frist: timedelta, limit: int = 20) -> list[Run]:
+        """Überfällig beanspruchte Läufe, der älteste zuerst.
+
+        Lesend und folgenlos — deshalb ``connect()`` und nicht ``begin()``.
+        """
+        async with self._engine.connect() as conn:
+            zeilen = (
+                (await conn.execute(_UEBERFAELLIG, {"frist": frist, "limit": limit}))
+                .mappings()
+                .all()
             )
         return [Run.model_validate(dict(z)) for z in zeilen]
 
