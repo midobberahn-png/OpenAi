@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `7f3365f` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `c883311` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,8 +42,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 75, Remote auf GitHub |
-| Tests | **1300** Python + 15 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| Commits | 76, Remote auf GitHub |
+| Tests | **1302** Python + 15 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
 | **Security Invariant Coverage** | **57/58** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
@@ -1105,9 +1105,18 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   `react-markdown` + `remark-gfm` **ohne** `rehype-raw` ist der dokumentierte
   Weg (docs/10-ui.md §5); die Regel „kein rohes HTML aus Modellausgaben" gilt
   unverändert.
-* **Ein Lauf läuft nicht von allein zu Ende.** Der Chat stößt genau einen
-  Schritt an. Ein mehrschrittiger Plan bleibt danach stehen, bis der Arbeiter
-  ihn aufgreift oder jemand `advance` schickt — sichtbar, aber unfertig.
+* ~~Ein Lauf läuft nicht von allein zu Ende.~~ **Erledigt** (`ddcad4d`), und
+  dabei fiel die Hälfte auf, die niemand sieht: Ein Lauf **mitten im Plan** hat
+  keinen Anspruch — er wird nach jedem Schritt freigegeben. Wer den Browser
+  schließt, während Schritt zwei von vier fällig ist, hinterließ einen Lauf,
+  den niemand aufgriff. Die Kehrseite einer richtigen Entscheidung: „Ein Lauf
+  ohne Anspruch ist keine Wiederaufnahme" stimmt für einen, in dem noch nichts
+  geschehen ist — nicht für einen halb erledigten Auftrag.
+
+  `stale_runs` sucht jetzt zwei Lagen, mit **zwei Fristen**: `DEFAULT_LEASE`
+  (wie lange darf ein Schritt dauern) und `DEFAULT_IDLE` (wie lange darf ein
+  Lauf stillstehen). Die Gegenprobe ist der wichtigere Test — ein Lauf, den die
+  Oberfläche gerade treibt, bleibt unberührt.
 * **Ein Flackern im Browsertest.** Einmal in etwa dreißig Durchgängen scheiterte
   die Anmeldung in `laufdetail.spec.ts` („nicht angemeldet" nach 20 s). Die
   Ursache ist nicht gefunden; ein Retry wäre die falsche Antwort (die
