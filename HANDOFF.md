@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `a3474a4` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `130d5c5` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 58, Remote auf GitHub |
-| Tests | **1137** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **51/52** |
+| Commits | 60, Remote auf GitHub |
+| Tests | **1164** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **52/53** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
@@ -260,6 +260,17 @@ anschlägt — der Katalog beschreibt das Deployment, er misst es nicht.
 - **Python 3.12 ist gepinnt.** Das System-Python ist 3.14.6; für MediaPipe,
   CTranslate2 und openWakeWord gibt es dort keine Wheels (ADR-001).
 - `timeout` existiert auf diesem macOS nicht — nicht in Skripten verwenden.
+
+### Der zweite Prozess
+
+```bash
+uv run python scripts/worker.py     # setzt hängengebliebene Läufe fort
+```
+
+Für die Entwicklung nicht nötig — für einen Betrieb schon: Ohne ihn läuft ein
+Lauf, dessen Arbeiter abgestürzt ist, erst weiter, wenn zufällig jemand
+denselben Lauf noch einmal anfasst. `JARVIS_WORKER_INTERVAL` (Sekunden, Vorgabe
+60) und `JARVIS_WORKER_LEASE` (Sekunden, Vorgabe 900) stellen Takt und Frist.
 
 ### Vollständiges Gate
 
@@ -790,27 +801,53 @@ Beide Fragen sind beantwortet: Die Frist (`RunState.claimed_at`, Vorgabe 15
 Minuten) sagt *wann*, das Werkzeugprotokoll sagt *ob*. Was offen bleibt, steht
 in Abschnitt 4a — nicht die Entscheidung, sondern ihr Antrieb.
 
-### 3a. Offen: Wer stößt die Wiederaufnahme an, und wer entscheidet den Rest
+### 3a. Erledigt: Der Arbeiter — und die Identität, die er nicht hat
 
-Die Mechanik steht und hat einen einzigen Aufrufer: `POST /runs/{id}/advance`.
-Wer denselben Lauf noch einmal anfasst, bekommt ihn zurück. Wer es nicht tut,
-hat einen Lauf, der bis in alle Ewigkeit in `executing` steht — **niemand sieht
-nach.** Zwei Lücken, und beide brauchen eine Entscheidung, keine Zeile Code:
+`scripts/worker.py` sucht überfällig beanspruchte Läufe und ruft für jeden
+`advance`. Er orchestriert nicht selbst; die Reihenfolge steht weiterhin an
+genau einer Stelle.
 
-* **Ein Antrieb.** Ein Arbeiter, der `ist_haengend()` über die Läufe eines
-  Nutzers laufen lässt, wäre die naheliegende Fassung. Er ist derselbe
-  Arbeiter, den die Agentenschleife braucht (Abschnitt 6) — deshalb gehört die
-  Entscheidung darüber dorthin und nicht hierher.
-* **Ein Weg für `ENTSCHEIDUNG_NOETIG`.** Ein Schritt, dessen Wirkung unklar
-  ist, wird übernommen und **gehalten**: Der Lauf ist damit gesperrt, und zwar
-  absichtlich. Was ein Mensch daraus macht — den Schritt als erledigt
-  verbuchen, ihn freigeben, den Lauf abbrechen —, ist heute nicht ausdrückbar.
-  Das Material dafür liegt bereit (`ToolInvocation` mit Argumenten, Zeit und
-  Zustand); es fehlt der Endpunkt und die Frage, wer so etwas entscheiden darf.
+**Die eigentliche Frage war nicht die Schleife, sondern die Identität.** Ein
+Prozess ohne Sitzung, der Werkzeuge mit Außenwirkung ausführt, ist eine neue
+Fläche:
+
+* Der **Eigentümer kommt aus dem Lauf** — `worker.py` bindet den
+  Werkzeugkatalog an `run.user_id`, dieselbe Bindung, die in `deps.py` aus der
+  Sitzung entsteht.
+* Es gibt **keinen Bestätigungskanal**, und der Typ sagt es: `session_id` ist
+  `UUID | None`. Bei `None` entsteht auf eine CONFIRM-Entscheidung hin **keine**
+  Anfrage — eine ohne Sitzung könnte niemand einlösen. Der Protokolleintrag
+  steht auf `blocked` (`may_retry`), der Schritt bleibt für den angemeldeten
+  Nutzer wiederholbar.
+* Er **wirkt trotzdem**, wo ein Schritt auch unter Aufsicht durchginge. Der
+  Gegenentwurf (jeden Arbeiterschritt als unbeaufsichtigt behandeln) klingt
+  strenger und machte die Wiederaufnahme wertlos.
+
+Ein Befund beim Messen: `stale_runs` filterte zuerst auf `status = 'executing'`
+und fand **nichts**. Der Anspruch entsteht *vor* dem Übergang nach `executing`;
+der unterscheidende Marker ist der Anspruch, nicht der Status.
+
+### 3b. Offen: Wer entscheidet, wenn die Wirkung unklar ist
+
+Der Rest von 3a, und er ist keine Zeile Code, sondern eine Entscheidung. Ein
+Schritt mit unklarer Wirkung wird übernommen und **gehalten**: Der Lauf ist
+gesperrt, absichtlich. Was ein Mensch daraus macht — den Schritt als erledigt
+verbuchen, ihn freigeben, den Lauf abbrechen —, ist heute nicht ausdrückbar.
+Das Material liegt bereit (`ToolInvocation` mit Argumenten, Zeit und Zustand);
+es fehlen der Endpunkt und die Antwort darauf, wer so etwas entscheiden darf.
 
 **Was ausdrücklich nicht fehlt: ein Automat, der es allein löst.** Ein Termin,
 der vielleicht im Kalender steht, ist keine Lage, die sich durch Nachdenken
 auflöst — es muss jemand nachsehen.
+
+Zwei kleinere Nachträge aus diesem Block:
+
+* **Der Arbeiter hinterlässt keine Audit-Zeile.** Eine Übernahme steht im
+  Laufzustand und im Werkzeugprotokoll, aber `Recovery` schreibt nicht ins
+  Aktivitätsprotokoll. Wer wissen will, wann ein Automat einen Anspruch
+  übernommen hat, liest heute Zustände statt Ereignisse.
+* **Es gibt keinen Endpunkt, der den Arbeiter beobachtbar macht.** Sein Bericht
+  geht ins Log.
 
 ### 4. Erledigt: Werkzeugergebnisse im Modellkontext (ADR-014)
 
@@ -899,10 +936,12 @@ Zugriff neu, `ModelLoop` bestätigt nicht und meldet `NEEDS_CONFIRMATION` nach
 oben. Was fehlt, ist der Weg hinein und die Antwort auf zwei Fragen:
 
 * **Wer treibt sie an?** Ein HTTP-Aufruf, der bis zu `max_iterations` Runden
-  läuft, hält eine Verbindung über Minuten. Das ist die Stelle, an der ein
-  Worker fällig wird — und derselbe Worker fehlt der Wiederaufnahme
-  (Abschnitt 3a). Sie ist gebaut und hat einen einzigen Aufrufer: den nächsten
-  `advance`. Wer den Worker baut, löst beides.
+  läuft, hält eine Verbindung über Minuten. Der Prozess dafür **existiert
+  inzwischen** (`scripts/worker.py`, Abschnitt 3a) und tut heute genau eine
+  Sache: einen Planschritt je Lauf und Durchgang. Was ihm für die
+  Agentenschleife fehlt, ist keine Infrastruktur mehr, sondern die Semantik —
+  `max_iterations`, Laufbudget, und die Frage, wie ein Lauf aussieht, der
+  mitten in einer Schleife unterbrochen wird.
 * **Was passiert bei `NEEDS_CONFIRMATION`?** Die Schleife endet und der Lauf
   wartet. Der Weg zurück führt über `POST /actions/{id}/respond` — und danach
   müsste jemand die Schleife *fortsetzen*, nicht neu starten. `RunState` trägt

@@ -95,6 +95,29 @@ die Datenbank gelaufen ist. Genau das ist externen Prüfern mehrfach passiert.
 Fehlen die Dienste, bricht der Lauf mit **einer** Meldung ab statt mit einer
 pro Fixture.
 
+---
+
+## Betreiben
+
+Zwei Prozesse, und der zweite ist kein Beiwerk:
+
+```bash
+uv run uvicorn jarvis_api.main:app --reload   # die API
+uv run python scripts/worker.py               # der Arbeiter
+```
+
+Der Arbeiter setzt Läufe fort, deren Arbeiter abgestürzt ist — ein Anspruch auf
+einen Planschritt gilt, bevor gewirkt wird, und bleibt bei einem Absturz
+stehen. Ohne diesen Prozess läuft ein solcher Lauf erst weiter, wenn zufällig
+jemand denselben Lauf noch einmal anfasst.
+
+Ein **eigener** Prozess und keine Hintergrundaufgabe der API, aus demselben
+Grund: Er soll da sein, wenn die andere Seite gerade nicht mehr da ist. Er hat
+keine Sitzung und kann deshalb keine Bestätigung einholen — ein Schritt, der
+eine braucht, bleibt für den angemeldeten Nutzer liegen.
+
+---
+
 Für externe Begutachtung erzeugt `uv run python scripts/pruefpaket.py` den
 sicherheitskritischen Quelltext in Portionen samt Prüfaufträgen und einer Liste
 falsifizierbarer Behauptungen.
