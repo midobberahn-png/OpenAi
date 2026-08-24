@@ -82,3 +82,35 @@ export interface SchrittErgebnis {
   action_id: string | null;
   code: string | null;
 }
+
+export interface ErteilteSicht {
+  mode: "allow" | "confirm" | "deny";
+  constraints: Record<string, unknown>;
+  granted_at: string;
+  expires_at: string | null;
+  /** Abgelaufen, aber noch vorhanden — der verwirrendste Zustand, wenn ihn
+   * niemand benennt. */
+  expired: boolean;
+}
+
+export interface ScopeSicht {
+  name: string;
+  description: string;
+  risk_level: string;
+  /** Die **Empfehlung** des Katalogs, nicht die Erteilung. */
+  default_mode: "allow" | "confirm" | "deny";
+  /** ``null`` heißt: nicht erteilt. Nicht: verboten, und nicht: erlaubt. */
+  granted: ErteilteSicht | null;
+}
+
+export interface Aufruf {
+  id: string;
+  tool_name: string;
+  status: string;
+  step_seq: number | null;
+  created_at: string;
+  executed_at: string | null;
+  /** Momentaufnahme: ausgeführt, Werkzeug mit Rücknahme, Frist läuft noch.
+   * Verbindlich entscheidet der Server beim Zurücknehmen. */
+  undoable: boolean;
+}

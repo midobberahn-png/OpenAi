@@ -299,6 +299,66 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "InvocationView": {
+        "description": "Was in einem Lauf tatsächlich aufgerufen wurde.\n\n**Der Plan sagt, was vorgesehen war; das hier sagt, was geschah.** Die\nbeiden fallen auseinander — ein Schritt kann abgewiesen worden sein, ein\nAufruf kann außerhalb des Plans erfolgt sein (``POST /runs/{id}/steps``),\nund ein Agentenschritt enthält mehrere Aufrufe. Eine Oberfläche, die nur\nden Plan zeigt, zeigt eine Absicht und nennt sie Ergebnis.\n\nOhne ``arguments``: Sie stehen im Protokoll und können Fremdinhalt tragen —\nein gelesener Dateipfad, ein Betreff aus einer Mail. Was ein Mensch vor\neiner Bestätigung sehen soll, zeigt die Vorschau, und die ist dafür gebaut\n(Kürzung, Hervorhebung, Prüfbarkeit). Hier geht es um „was ist passiert\",\nnicht um „was steht drin\".",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "step_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Seq"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "undoable": {
+            "title": "Undoable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "tool_name",
+          "status",
+          "step_seq",
+          "created_at",
+          "executed_at",
+          "undoable"
+        ],
+        "title": "InvocationView",
+        "type": "object"
+      },
       "PermissionMode": {
         "description": "Wie eine Berechtigung erteilt ist.",
         "enum": [
@@ -1746,6 +1806,54 @@
           }
         },
         "summary": "Advance Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/runs/{run_id}/invocations": {
+      "get": {
+        "description": "Die Werkzeugaufrufe eines eigenen Laufs, älteste zuerst.\n\nDie Zugehörigkeit hängt am Lauf und wird wie überall über\n``_eigener_lauf`` geprüft — das Protokoll selbst führt keinen Nutzer.",
+        "operationId": "list_invocations_runs__run_id__invocations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InvocationView"
+                  },
+                  "title": "Response List Invocations Runs  Run Id  Invocations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Invocations",
         "tags": [
           "runs"
         ]

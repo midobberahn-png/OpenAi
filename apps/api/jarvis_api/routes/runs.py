@@ -53,11 +53,14 @@ from jarvis_api.models import model_catalog
 from jarvis_api.settings import Settings, get_settings
 from jarvis_contracts import (
     BUDGET_PRESETS,
+    UNDO_TTL,
     ApprovalChannel,
+    InvocationStatus,
     Run,
     RunStatus,
     RunTrigger,
     Session,
+    ToolInvocation,
 )
 from jarvis_core.orchestrator import (
     AdvanceRejected,
@@ -72,6 +75,7 @@ from jarvis_core.orchestrator import (
     utc_now,
 )
 from jarvis_core.ports.runs import RunStateConflict
+from jarvis_core.tools import ToolRegistry
 
 __all__ = ["router"]
 
@@ -329,6 +333,84 @@ async def read_run(
             "plan": await _planschritte(lauf, angebot=angebot),
         }
     )
+
+
+class InvocationView(BaseModel):
+    """Was in einem Lauf tatsächlich aufgerufen wurde.
+
+    **Der Plan sagt, was vorgesehen war; das hier sagt, was geschah.** Die
+    beiden fallen auseinander — ein Schritt kann abgewiesen worden sein, ein
+    Aufruf kann außerhalb des Plans erfolgt sein (``POST /runs/{id}/steps``),
+    und ein Agentenschritt enthält mehrere Aufrufe. Eine Oberfläche, die nur
+    den Plan zeigt, zeigt eine Absicht und nennt sie Ergebnis.
+
+    Ohne ``arguments``: Sie stehen im Protokoll und können Fremdinhalt tragen —
+    ein gelesener Dateipfad, ein Betreff aus einer Mail. Was ein Mensch vor
+    einer Bestätigung sehen soll, zeigt die Vorschau, und die ist dafür gebaut
+    (Kürzung, Hervorhebung, Prüfbarkeit). Hier geht es um „was ist passiert",
+    nicht um „was steht drin".
+    """
+
+    id: str
+    tool_name: str
+    status: str
+    step_seq: int | None
+    created_at: datetime
+    executed_at: datetime | None
+    undoable: bool
+    """Kann *dieser* Aufruf jetzt zurückgenommen werden?
+
+    Drei Bedingungen zusammen: ausgeführt, das Werkzeug kennt eine Rücknahme,
+    und die Frist läuft noch. Die Auskunft ist bewusst eine Momentaufnahme —
+    verbindlich entscheidet ``claim_undo`` in derselben Anweisung, die
+    zurücknimmt. Eine Schaltfläche, die erscheint, obwohl es nicht mehr geht,
+    wäre ärgerlich; eine, die fehlt, obwohl es ginge, wäre schlimmer.
+    """
+
+
+@router.get("/{run_id}/invocations", response_model=list[InvocationView])
+async def list_invocations(
+    run_id: UUID,
+    session: CurrentSession,
+    runs: Runs,
+    invocations: Invocations,
+    tools: Tools,
+) -> list[InvocationView]:
+    """Die Werkzeugaufrufe eines eigenen Laufs, älteste zuerst.
+
+    Die Zugehörigkeit hängt am Lauf und wird wie überall über
+    ``_eigener_lauf`` geprüft — das Protokoll selbst führt keinen Nutzer.
+    """
+    lauf = await _eigener_lauf(run_id, session, runs)
+    jetzt = utc_now()
+    return [
+        InvocationView(
+            id=str(aufruf.id),
+            tool_name=aufruf.tool_name,
+            status=str(aufruf.status),
+            step_seq=aufruf.step_seq,
+            created_at=aufruf.created_at,
+            executed_at=aufruf.executed_at,
+            undoable=_ruecknehmbar(aufruf, tools, jetzt),
+        )
+        for aufruf in await invocations.for_run(lauf.id)
+    ]
+
+
+def _ruecknehmbar(aufruf: ToolInvocation, tools: ToolRegistry, jetzt: datetime) -> bool:
+    """Momentaufnahme: Ginge eine Rücknahme jetzt?
+
+    Bewusst dieselben Bedingungen wie in ``claim_undo`` — ausgeführt, Werkzeug
+    mit Rücknahme, innerhalb der Frist —, aber ausdrücklich **nicht** dieselbe
+    Wahrheit: Verbindlich ist die Anweisung, die zurücknimmt. Diese Zeile
+    entscheidet nur, ob eine Schaltfläche erscheint.
+    """
+    if aufruf.status is not InvocationStatus.EXECUTED or aufruf.executed_at is None:
+        return False
+    spec = tools.get(aufruf.tool_name)
+    if spec is None or not spec.supports_undo:
+        return False
+    return aufruf.executed_at + UNDO_TTL > jetzt
 
 
 # --------------------------------------------------------------------------

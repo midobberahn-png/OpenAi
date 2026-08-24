@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, ApiFehler } from "../api/client";
 import type { LaufZeile, OffeneAktion } from "../api/typen";
 import { Bestaetigungsdialog } from "../teile/Bestaetigungsdialog";
+import { Laufdetail } from "./Laufdetail";
 
 /**
  * Was JARVIS gerade tut — und was auf eine Entscheidung wartet.
@@ -22,6 +23,7 @@ export function Laeufe() {
   const [offen, setOffen] = useState<OffeneAktion[]>([]);
   const [fehler, setFehler] = useState<string | null>(null);
   const [eingabe, setEingabe] = useState("");
+  const [offenerLauf, setOffenerLauf] = useState<LaufZeile | null>(null);
 
   const laden = useCallback(async () => {
     try {
@@ -56,6 +58,10 @@ export function Laeufe() {
 
   const wartend = offen[0];
 
+  if (offenerLauf !== null) {
+    return <Laufdetail lauf={offenerLauf} zurueck={() => setOffenerLauf(null)} />;
+  }
+
   return (
     <div className="inhalt">
       <div className="karte">
@@ -89,7 +95,12 @@ export function Laeufe() {
             </thead>
             <tbody>
               {laeufe.map((lauf) => (
-                <tr key={lauf.id} data-test="lauf">
+                <tr
+                  key={lauf.id}
+                  data-test="lauf"
+                  onClick={() => setOffenerLauf(lauf)}
+                  style={{ cursor: "pointer" }}
+                >
                   <td>
                     <span className={`punkt ${lauf.status}`} /> {lauf.status}
                   </td>

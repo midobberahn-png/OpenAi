@@ -32,7 +32,8 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
-from jarvis_api.deps import CurrentSession, Invocations, Tools
+from jarvis_api.deps import Audit, CurrentSession, Invocations, Tools
+from jarvis_core.audit.chain import AuditEntry
 from jarvis_core.orchestrator import utc_now
 from jarvis_core.policy.undo import UndoDenied, UndoGateway
 from jarvis_core.tools.registry import ForgedAuthorization, UnknownTool
@@ -63,6 +64,7 @@ async def undo_invocation(
     session: CurrentSession,
     invocations: Invocations,
     tools: Tools,
+    audit: Audit,
 ) -> UndoResult:
     """Nimmt einen eigenen, ausgeführten Aufruf innerhalb der Frist zurück."""
     try:
@@ -93,6 +95,28 @@ async def undo_invocation(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=str(gefaelscht)
         ) from gefaelscht
+
+    # **Eine Rücknahme ist eine Wirkung und gehört in die Spur.** Aufgefallen
+    # beim Schreiben des Browsertests: Der Executor protokolliert jede
+    # Ausführung, dieser Weg lief daran vorbei — die Kette hätte einen
+    # gelöschten Termin nicht bezeugt.
+    #
+    # ``ok`` steht im Eintrag, weil der Anspruch vor dem Handler verbraucht
+    # wird: „zurückgenommen" und „es wurde versucht" sind hier zwei
+    # verschiedene Aussagen, und die Spur soll die richtige tragen.
+    await audit.append(
+        AuditEntry(
+            occurred_at=utc_now(),
+            actor="user",
+            action="tool.undone" if ergebnis.ok else "tool.undo_failed",
+            resource=grant.tool_name,
+            details={
+                "invocation_id": str(grant.invocation_id),
+                "display": ergebnis.display or (ergebnis.error or ""),
+            },
+            user_id=session.user_id,
+        )
+    )
 
     return UndoResult(
         undone=ergebnis.ok,
