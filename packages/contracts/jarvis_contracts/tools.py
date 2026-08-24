@@ -8,7 +8,7 @@ Ausführung — das tut ausschließlich die Policy Engine.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import UUID
@@ -20,6 +20,7 @@ from .permissions import PolicyEffect, RiskLevel, ScopeName
 
 __all__ = [
     "SAFE_WHEN_TAINTED_MAX_RISK",
+    "UNDO_TTL",
     "InvocationStatus",
     "PayloadInspectability",
     "SanitizedPayload",
@@ -349,6 +350,18 @@ class InvocationStatus(StrEnum):
     Unterschied zwischen *ja* und *auf keinen Fall*.
     """
 
+    UNDONE = "undone"
+    """Der Aufruf wurde ausgeführt und anschließend zurückgenommen.
+
+    **Der Zustand sagt: Der Rückgängig-Weg ist verbraucht** — ein zweites Undo
+    trifft diese Zeile nicht mehr. Ob die Rücknahme auch gewirkt hat, steht im
+    Ergebnis: Ein Handler, der dabei scheitert, hinterlässt hier trotzdem
+    ``undone``, und das ist die unangenehme, aber richtige Auskunft. Der
+    Anspruch wird **vor** der Rücknahme verbraucht, aus demselben Grund wie
+    beim Grant: Zwei gleichzeitige Rücknahmen desselben Aufrufs dürfen nicht
+    beide durchgehen.
+    """
+
     EXPIRED = "expired"
     BLOCKED = "blocked"
     """Von der Policy Engine gesperrt — z. B. durch Taint."""
@@ -367,6 +380,7 @@ class InvocationStatus(StrEnum):
             InvocationStatus.BLOCKED,
             InvocationStatus.REJECTED,
             InvocationStatus.EXPIRED,
+            InvocationStatus.UNDONE,
         }
 
     @property
@@ -389,6 +403,22 @@ class InvocationStatus(StrEnum):
         return self.value
 
 
+UNDO_TTL = timedelta(minutes=15)
+"""Wie lange sich ein ausgeführter Aufruf zurücknehmen lässt.
+
+Eine Eigenschaft des Weges und keine des Tokens — deshalb steht sie hier und
+nicht am Feld.
+
+**Warum überhaupt eine Frist.** Ein Rückgängig-Weg ohne Ende ist ein zweites
+Löschrecht durch die Hintertür: Wer ein Konto Wochen später übernimmt, nähme
+alles zurück, was je angelegt wurde. Fünfzehn Minuten decken den Fall ab, für
+den Undo gedacht ist — „das war falsch, das wollte ich nicht" —, und decken
+den anderen nicht ab.
+
+Gemessen wird sie an ``executed_at`` und in der Datenbank, nicht in Python:
+dieselbe Überlegung wie bei der Frist auf dem Anspruch."""
+
+
 class ToolResult(BaseModel):
     """Ergebnis einer Werkzeugausführung."""
 
@@ -399,7 +429,22 @@ class ToolResult(BaseModel):
 
     error: str | None = None
     undo_token: str | None = None
-    """15 Minuten gültig. Für MEDIUM-Werkzeuge wirksamer als ein weiterer Dialog."""
+    """Womit **dieses Werkzeug** seinen eigenen Aufruf zurücknehmen kann.
+
+    Für ``calendar.create`` die Kennung des angelegten Termins. Was darin steht,
+    versteht nur der Undo-Handler desselben Werkzeugs; für alle anderen ist es
+    eine undurchsichtige Zeichenkette.
+
+    **Kein Inhaberpapier.** Der Wert wird im Werkzeugprotokoll abgelegt und
+    **nicht** an den Client herausgegeben. Wer zurücknehmen will, nennt die
+    Kennung des *Aufrufs*; woraufhin die Zugehörigkeit über den Lauf geprüft
+    wird und der Token aus der Datenbank kommt. Andersherum — Token an den
+    Client, Client schickt ihn zurück — wäre er eine Fähigkeit: Wer einen
+    fremden erriete oder abfinge, löschte einen fremden Termin.
+
+    Die Frist von 15 Minuten steht nicht hier, sondern in ``UNDO_TTL``: Sie ist
+    eine Eigenschaft des Weges und keine des Tokens.
+    """
 
     sources: list[Source] = Field(default_factory=list)
     produced_data_class: DataClass = DataClass.P1

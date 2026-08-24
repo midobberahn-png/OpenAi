@@ -86,3 +86,25 @@ class CalendarStore(Protocol):
         Wirft ``CalendarWriteFailed``, wenn die Ablage scheitert.
         """
         ...
+
+    async def delete_event(self, event_id: UUID) -> bool:
+        """Löscht einen Termin **dieses** Nutzers. Für die Rücknahme.
+
+        Auch hier kein ``user_id``-Parameter, und hier wiegt es schwerer als
+        beim Anlegen: Wer beim Löschen den Eigentümer mitbringt, löscht fremde
+        Termine. Die Einschränkung gehört deshalb in die Abfrage der
+        Implementierung und nicht in eine Prüfung darüber.
+
+        ``False`` heißt: Es gab nichts zu löschen — die Kennung gehört einem
+        anderen, oder der Termin ist bereits weg. Kein Fehler und kein
+        Unterschied nach außen: Beides heißt „danach ist er nicht mehr da", und
+        die Unterscheidung nach außen zu tragen hieße, die Existenz fremder
+        Termine zu bestätigen.
+
+        **Bewusst kein allgemeines Löschwerkzeug.** Diese Methode hat genau
+        einen Aufrufer: den Undo-Handler von ``calendar.create``, und der
+        bekommt seine Kennung aus dem Werkzeugprotokoll. Ein Werkzeug
+        ``calendar.delete`` wäre etwas anderes — eine Fähigkeit, die ein Nutzer
+        erteilen müsste, und die ein Modell vorschlagen könnte.
+        """
+        ...

@@ -50,6 +50,27 @@ _INSERT = text(
 )
 
 
+_DELETE = text(
+    """
+    DELETE FROM calendar_events
+     WHERE id = :id
+       AND user_id = :user_id
+    RETURNING id
+    """
+)
+"""``AND user_id = :user_id`` steht in der Anweisung und nicht in einer Prüfung
+darüber.
+
+Der Unterschied ist derselbe wie bei ``list_for_user`` und beim Laufspeicher:
+Eine Zugehörigkeit, die sich weglassen lässt, wird irgendwann weggelassen —
+und hier hieße das, fremde Termine zu löschen. Der Eigentümer ist an dieser
+Stelle nicht wählbar; er steht seit dem Verdrahten fest.
+
+``RETURNING id`` unterscheidet „gelöscht" von „war nicht da". Nach außen ist
+das derselbe Zustand; für den Nutzer, der eine Rücknahme angestoßen hat, ist
+es die Auskunft, ob sie etwas getan hat."""
+
+
 class PostgresCalendarStore:
     """Termine eines Nutzers."""
 
@@ -100,3 +121,19 @@ class PostgresCalendarStore:
             location=location,
             attendees=eingeladene,
         )
+
+    async def delete_event(self, event_id: UUID) -> bool:
+        """Löscht einen Termin dieses Nutzers — für die Rücknahme.
+
+        Eigene Transaktion wie beim Anlegen: Die Rücknahme wird bereits im
+        Werkzeugprotokoll als verbraucht geführt, bevor sie hier ankommt. Eine
+        Löschung, die mit der Transaktion eines Aufrufers zurückgerollt werden
+        kann, hinterließe einen Aufruf, der als zurückgenommen gilt, und einen
+        Termin, der noch steht.
+        """
+        try:
+            async with self._engine.begin() as conn:
+                treffer = await conn.execute(_DELETE, {"id": event_id, "user_id": self._user_id})
+        except SQLAlchemyError as fehler:
+            raise CalendarWriteFailed("Der Termin konnte nicht gelöscht werden.") from fehler
+        return treffer.first() is not None

@@ -28,6 +28,27 @@ DEPS = API / "deps.py"
 IDENTITAETSFELDER = {"user_id", "session_id", "owner_id", "actor_id", "invocation_id"}
 """Namen, die eine Identität behaupten. Ein Request darf sie nicht mitbringen."""
 
+RESSOURCE_STATT_IDENTITAET = {
+    ("undo.py", "undo_invocation", "invocation_id"),
+}
+"""Wo ein Name aus ``IDENTITAETSFELDER`` die **adressierte Ressource** meint.
+
+Jede Zeile braucht eine Begründung, und hier ist sie:
+
+``POST /invocations/{id}/undo`` nimmt einen ausgeführten Aufruf zurück. Der
+Aufruf *ist* der Gegenstand — wie ``run_id`` bei ``/runs/{id}/advance`` und
+``action_id`` bei ``/actions/{id}/respond``. Eine Identität behauptet er
+nicht: Wem der Aufruf gehört, entscheidet der Lauf, und die Zugehörigkeit
+steht in der ``WHERE``-Klausel von ``claim_undo`` — nicht in einer Prüfung
+darüber und schon gar nicht im Request.
+
+Warum ``invocation_id`` überhaupt auf der Liste steht: Im Bestätigungsablauf
+darf ein Client sie **nicht** nennen. Dort benennt er die Aktion, und welche
+Invokation daran hängt, ist eine Aussage des Systems über sich selbst — ein
+Client, der sie mitbrächte, verknüpfte eine Bestätigung mit einem fremden
+Aufruf. Diese Ausnahme hebt das nicht auf; sie sagt nur, dass es einen zweiten
+Ablauf gibt, in dem dieselbe Kennung etwas anderes ist."""
+
 OEFFENTLICH = {
     "bootstrap",
     "login_start",
@@ -160,6 +181,8 @@ def test_kein_endpunkt_nimmt_eine_identitaet_entgegen(path: Path) -> None:
             if arg.arg not in IDENTITAETSFELDER:
                 continue
             if _annotation_name(arg.annotation) == "CurrentSession":
+                continue
+            if (path.name, func.name, arg.arg) in RESSOURCE_STATT_IDENTITAET:
                 continue
             treffer.append(f"{func.name}({arg.arg})")
 

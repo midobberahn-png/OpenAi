@@ -53,7 +53,12 @@ class ProtokollAttrappe:
         self.eintraege.append(invocation)
 
     async def mark(
-        self, invocation_id: object, status: InvocationStatus, *, error: str | None = None
+        self,
+        invocation_id: object,
+        status: InvocationStatus,
+        *,
+        error: str | None = None,
+        undo_token: str | None = None,
     ) -> None:
         self.markierungen.append((invocation_id, status, error))
 

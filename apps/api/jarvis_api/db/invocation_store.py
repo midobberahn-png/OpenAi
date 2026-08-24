@@ -60,7 +60,14 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from jarvis_contracts import InvocationStatus, PolicyEffect, RiskLevel, ToolInvocation
+from jarvis_contracts import (
+    UNDO_TTL,
+    InvocationStatus,
+    PolicyEffect,
+    RiskLevel,
+    ToolInvocation,
+)
+from jarvis_core.ports.invocations import UndoClaim
 
 __all__ = ["PostgresInvocationStore"]
 
@@ -98,6 +105,43 @@ _MARK = text(
 )
 """``COALESCE(executed_at, :now)`` hält den **ersten** Ausführungszeitpunkt
 fest. Ein späteres Fortschreiben des Status verschiebt ihn nicht."""
+
+
+_CLAIM_UNDO = text(
+    """
+    UPDATE tool_invocations AS i
+       SET status = 'undone'
+      FROM runs AS r
+     WHERE i.id = :id
+       AND r.id = i.run_id
+       AND r.user_id = :user_id
+       AND i.status = 'executed'
+       AND i.executed_at > CAST(:now AS timestamptz) - CAST(:frist AS interval)
+    RETURNING i.tool_name, i.result ->> 'undo_token' AS undo_token
+    """
+)
+"""Beansprucht die Rücknahme — vier Bedingungen in **einer** Anweisung.
+
+``r.user_id = :user_id`` ist die Zugehörigkeit, und sie steht hier und nicht in
+einer Prüfung darüber. Das Protokoll führt keinen Nutzer; er hängt am Lauf, und
+der Weg dorthin ist ein Join. Eine Auflösung in zwei Schritten — Lauf laden,
+Nutzer vergleichen, dann schreiben — wäre bei zwei gleichzeitigen Anfragen
+wieder das bekannte Muster.
+
+``i.status = 'executed'`` ist zugleich der Einmaligkeitsanspruch: Nach dem
+ersten Treffer steht dort ``undone``, und die Bedingung gilt nicht mehr.
+
+``executed_at > CAST(:now AS timestamptz) - :frist`` ist die Frist. Der
+``CAST`` ist kein Zierrat: Ohne ihn hält PostgreSQL den Parameter für
+``unknown``, löst die Subtraktion als ``interval - interval`` auf und bricht ab
+— gemessen an genau dieser Fehlermeldung. ``:now`` kommt vom Aufrufer und
+nicht aus ``now()``, anders als bei der Frist auf dem Anspruch — dort messen
+zwei Prozesse gegeneinander, hier misst ein Request gegen eine Zeile, und die
+Zeit gehört zum Vorgang. Wer sie fälschte, säße bereits im Prozess.
+
+``RETURNING`` liefert, was die Rücknahme braucht: welches Werkzeug und woran.
+Beides aus der Zeile und nicht aus dem Request — das ist der Unterschied
+zwischen einer Rücknahme und einem Löschrecht."""
 
 
 _SPALTEN = (
@@ -212,17 +256,52 @@ class PostgresInvocationStore:
             ).all()
         return [_als_vertrag(z) for z in zeilen]
 
+    async def claim_undo(
+        self, invocation_id: UUID, *, user_id: UUID, now: datetime
+    ) -> UndoClaim | None:
+        """Beansprucht die Rücknahme in eigener Transaktion.
+
+        Dieselbe Bauart wie beim Grant-Verbrauch: Der Anspruch muss
+        festgeschrieben sein, bevor die Wirkung beginnt. Läge er in der
+        Transaktion des Requests, gäbe ein Absturz nach dem Löschen ihn zurück
+        — und der Termin wäre weg, der Aufruf aber wieder zurücknehmbar.
+        """
+        async with self._engine.begin() as conn:
+            zeile = (
+                await conn.execute(
+                    _CLAIM_UNDO,
+                    {
+                        "id": invocation_id,
+                        "user_id": user_id,
+                        "now": now,
+                        "frist": UNDO_TTL,
+                    },
+                )
+            ).first()
+        if zeile is None:
+            return None
+        return UndoClaim(tool_name=zeile.tool_name, undo_token=zeile.undo_token)
+
     async def mark(
-        self, invocation_id: object, status: InvocationStatus, *, error: str | None = None
+        self,
+        invocation_id: object,
+        status: InvocationStatus,
+        *,
+        error: str | None = None,
+        undo_token: str | None = None,
     ) -> None:
-        payload: dict[str, Any] | None = {"error": error} if error else None
+        payload: dict[str, Any] = {}
+        if error:
+            payload["error"] = error
+        if undo_token:
+            payload["undo_token"] = undo_token
         async with self._engine.begin() as conn:
             await conn.execute(
                 _MARK,
                 {
                     "id": UUID(str(invocation_id)),
                     "status": str(status),
-                    "result": json.dumps(payload) if payload is not None else None,
+                    "result": json.dumps(payload) if payload else None,
                     "now": datetime.now(tz=None).astimezone(),
                 },
             )

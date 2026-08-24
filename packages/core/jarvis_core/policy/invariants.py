@@ -574,6 +574,25 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.orchestrator.executor",
     ),
     Invariant(
+        id="undo-is-bound-to-its-invocation",
+        title="Eine Rücknahme trifft genau den Aufruf, zu dem sie gehört",
+        statement=(
+            "Zurückgenommen wird ausschließlich ein protokollierter, ausgeführter, "
+            "eigener Aufruf innerhalb von ``UNDO_TTL`` — höchstens einmal, und an dem "
+            "Rücknahmepunkt, den das Werkzeug selbst hinterlassen hat. Weder Token noch "
+            "Zielobjekt kommen aus dem Request."
+        ),
+        why=(
+            "Eine Rücknahme löscht. Käme der Rücknahmepunkt vom Aufrufer, wäre sie ein "
+            "Löschrecht auf fremde Objekte hinter einem harmlos klingenden Namen — und "
+            "zwar eines, das kein Nutzer je erteilt hat. Die Zulässigkeit hängt allein "
+            "an der Verengung: eigener Aufruf, kurze Frist, einmal, und nur das, was "
+            "dieser Aufruf bewirkt hat."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.policy.undo",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(

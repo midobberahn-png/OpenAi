@@ -584,9 +584,11 @@ class TestAlltagsfall:
         eintrag = next(a for a in offen.json() if a["id"] == action_id)
         assert eintrag["tool_name"] == "calendar.create"
         assert {f["label"] for f in eintrag["preview_fields"]} >= {"title", "start", "end"}
-        assert eintrag["reversible"] is False, (
-            "Es gibt keinen Undo-Weg — eine Vorschau, die einen verspricht, senkt die "
-            "Aufmerksamkeit genau dort, wo die Bestaetigung ihren Zweck hat."
+        assert eintrag["reversible"] is True, (
+            "Seit es einen Rücknahmeweg gibt, darf die Vorschau ihn nennen — und muss "
+            "es auch. Solange er fehlte, stand hier ``False``: Eine Vorschau, die "
+            "Umkehrbarkeit verspricht, ohne dass etwas umkehren kann, senkt die "
+            "Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat."
         )
 
         antwort = await client.post(

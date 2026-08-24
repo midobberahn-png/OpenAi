@@ -124,6 +124,7 @@ from .runs import (
     Usage,
 )
 from .tools import (
+    UNDO_TTL,
     InvocationStatus,
     PayloadInspectability,
     SanitizedPayload,
@@ -189,6 +190,7 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "SanitizedPayload",
     "ToolSpec",
     "ToolResult",
+    "UNDO_TTL",
     "ToolInvocation",
     "InvocationStatus",
     "Source",

@@ -37,6 +37,7 @@ from jarvis_core.tools.builtin import (
     CALENDAR_CREATE,
     FILES_READ,
     calendar_create_handler,
+    calendar_undo_handler,
     files_read_handler,
 )
 
@@ -54,7 +55,15 @@ def tool_catalog(
     """
     registry = ToolRegistry(grants=PostgresGrantConsumer(engine))
     registry.register(FILES_READ, files_read_handler(files))
-    registry.register(CALENDAR_CREATE, calendar_create_handler(calendar))
+    registry.register(
+        CALENDAR_CREATE,
+        calendar_create_handler(calendar),
+        # Der Rücknahmeweg desselben Werkzeugs, an denselben Kalender gebunden.
+        # Ohne ihn weist die Registry ``supports_undo=True`` zurück — ein
+        # Versprechen ohne Weg soll beim Verdrahten auffallen und nicht beim
+        # ersten Versuch eines Nutzers.
+        undo=calendar_undo_handler(calendar),
+    )
     return registry
 
 

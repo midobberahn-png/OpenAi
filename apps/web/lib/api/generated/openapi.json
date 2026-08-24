@@ -635,6 +635,30 @@
         "title": "StepView",
         "type": "object"
       },
+      "UndoResult": {
+        "description": "Was aus der Rücknahme geworden ist.\n\n``undone`` sagt, ob der Weg beschritten wurde; ``display`` sagt, was dabei\nherauskam. Die beiden fallen auseinander, wenn das Werkzeug scheitert:\nDer Anspruch ist dann verbraucht — ein zweiter Versuch trifft die Zeile\nnicht mehr —, und der Termin steht möglicherweise noch. Das steht hier so,\nweil ein Feld, das beides zusammenfasst, die unangenehme Hälfte verschweigt.",
+        "properties": {
+          "display": {
+            "title": "Display",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "undone": {
+            "title": "Undone",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "undone",
+          "display",
+          "tool_name"
+        ],
+        "title": "UndoResult",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1092,6 +1116,50 @@
         "summary": "Health",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/invocations/{invocation_id}/undo": {
+      "post": {
+        "description": "Nimmt einen eigenen, ausgeführten Aufruf innerhalb der Frist zurück.",
+        "operationId": "undo_invocation_invocations__invocation_id__undo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invocation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invocation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UndoResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo Invocation",
+        "tags": [
+          "undo"
         ]
       }
     },

@@ -14,6 +14,7 @@ from .approval import (
 from .engine import PolicyEngine, build_preview
 from .invariants import INVARIANTS, Invariant, InvariantStatus, invariant_ids
 from .secrets import SECRET_PATTERNS, data_class_for_content, looks_like_secret
+from .undo import UndoDenied, UndoGateway, UndoGrant
 
 __all__ = [
     "DEFAULT_TTL",
@@ -27,6 +28,9 @@ __all__ = [
     "InvariantStatus",
     "PolicyEngine",
     "SessionVerifier",
+    "UndoDenied",
+    "UndoGateway",
+    "UndoGrant",
     "UnverifiedSessions",
     "build_preview",
     "canonical_arguments",

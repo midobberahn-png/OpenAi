@@ -137,6 +137,55 @@ def test_execution_grant_wird_nur_im_gateway_erzeugt() -> None:
     )
 
 
+@pytest.mark.invariant("undo-is-bound-to-its-invocation")
+def test_undo_grant_wird_nur_im_undo_gateway_erzeugt() -> None:
+    """Dieselbe Suche wie beim Ausführungs-Grant, für den Rücknahme-Grant.
+
+    Der Grund ist derselbe und wiegt hier eher schwerer: Ein selbst gebauter
+    ``UndoGrant`` wäre ein Löschweg ohne Zugehörigkeitsprüfung. Wer ihn
+    konstruieren kann, löscht fremde Termine, ohne dass Frist, Anspruch oder
+    Eigentümer je geprüft würden.
+
+    Und dieselbe Einordnung: Der AST-Test kennt nur die Muster, die man ihm
+    beigebracht hat. Die eigentliche Absicherung ist die nominale Prüfung in
+    ``ToolRegistry.undo()``.
+    """
+    gateway = CORE / "policy" / "undo.py"
+    offenders: list[str] = []
+
+    for path in [*_python_files(CORE), *_python_files(REPO / "apps")]:
+        if path == gateway:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+        namen = {"UndoGrant"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name == "UndoGrant" and alias.asname:
+                        namen.add(alias.asname)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                gerufen = node.func
+                schluss = (
+                    gerufen.id
+                    if isinstance(gerufen, ast.Name)
+                    else gerufen.attr
+                    if isinstance(gerufen, ast.Attribute)
+                    else ""
+                )
+                if schluss in namen:
+                    offenders.append(f"{path.relative_to(REPO)}:{node.lineno}")
+            if isinstance(node, ast.Name) and node.id == "_UNDO_SENTINEL":
+                offenders.append(f"{path.relative_to(REPO)}:{node.lineno} (Sentinel)")
+
+    assert not offenders, (
+        "UndoGrant wird außerhalb des Undo-Gateways erzeugt — das wäre ein Löschweg "
+        "ohne Zugehörigkeitsprüfung:\n" + "\n".join(offenders)
+    )
+
+
 @pytest.mark.invariant("layering-no-provider-sdk-in-core")
 def test_kein_provider_sdk_im_kern() -> None:
     """Kein OpenAI-, Anthropic- oder Google-Typ existiert außerhalb der

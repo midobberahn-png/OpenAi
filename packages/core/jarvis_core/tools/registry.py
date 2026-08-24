@@ -21,6 +21,7 @@ from jarvis_core.ports.grants import GrantConsumer
 
 if TYPE_CHECKING:  # nur für die Typprüfung — zur Laufzeit ein lokaler Import
     from jarvis_core.policy.approval import ExecutionGrant
+    from jarvis_core.policy.undo import UndoGrant
 
 __all__ = [
     "DuplicateTool",
@@ -28,11 +29,20 @@ __all__ = [
     "GrantAlreadyUsed",
     "ToolHandler",
     "ToolRegistry",
+    "UndoHandler",
+    "UndoMismatch",
     "UnguardedExecution",
     "UnknownTool",
 ]
 
 ToolHandler = Callable[..., Awaitable[ToolResult]]
+
+UndoHandler = Callable[[str], Awaitable[ToolResult]]
+"""Nimmt **einen** Aufruf zurück, adressiert durch dessen Rücknahmepunkt.
+
+Genau ein Parameter, und keine ``**kwargs`` wie beim Ausführungs-Handler: Was
+zurückgenommen wird, steht nicht in Argumenten, die jemand mitbringen könnte,
+sondern in dem, was das Werkzeug bei der Ausführung selbst notiert hat."""
 
 
 class DuplicateTool(Exception):
@@ -78,6 +88,15 @@ class GrantAlreadyUsed(Exception):
     """
 
 
+class UndoMismatch(Exception):
+    """``supports_undo`` und der registrierte Undo-Handler widersprechen sich.
+
+    Konfigurationsfehler, und einer, der beim Start auffallen muss statt beim
+    ersten Versuch: Der Wert steht in der Vorschau, die ein Mensch **vor** der
+    Bestätigung liest.
+    """
+
+
 class UnguardedExecution(Exception):
     """Ausführung ohne eingerichteten Grant-Verbrauch.
 
@@ -93,6 +112,7 @@ class ToolRegistry:
     def __init__(self, *, grants: GrantConsumer | None = None) -> None:
         self._specs: dict[str, ToolSpec] = {}
         self._handlers: dict[str, ToolHandler] = {}
+        self._undo: dict[str, UndoHandler] = {}
         self._grants = grants
         """Der Grant-Verbrauch. ``None`` ist zulässig, solange nur der Katalog
         gelesen wird — für ``execute()`` nicht. Die Registry wird an vielen
@@ -101,15 +121,50 @@ class ToolRegistry:
         auf, die nichts absichert. Fehlt er beim Ausführen, wird abgewiesen —
         ein fehlender Sicherheitskontext muss schließen, nicht öffnen."""
 
-    def register(self, spec: ToolSpec, handler: ToolHandler | None = None) -> None:
+    def register(
+        self,
+        spec: ToolSpec,
+        handler: ToolHandler | None = None,
+        *,
+        undo: UndoHandler | None = None,
+    ) -> None:
+        """Nimmt ein Werkzeug auf — mit Ausführung und, wo es sie gibt, Rücknahme.
+
+        ``undo`` muss zu ``ToolSpec.supports_undo`` passen. Die Prüfung steht
+        hier und nicht als guter Vorsatz irgendwo: Ein Werkzeug, das
+        Umkehrbarkeit *verspricht* und keine hat, senkt die Aufmerksamkeit vor
+        der Bestätigung — genau dort, wo sie gebraucht wird. Und ein Werkzeug
+        mit Rücknahme, das sie nicht anbietet, verschweigt sie.
+
+        **Sie gilt nur, wenn auch ein Ausführungs-Handler dabei ist.** Ein
+        Katalog ohne Implementierung ist ein zulässiger und häufiger Fall —
+        Schema-Erzeugung, Policy-Prüfung ohne Ausführung —, und wo nichts
+        ausgeführt wird, ist auch nichts zurückzunehmen. Die erste Fassung
+        prüfte ohne diese Bedingung und brachte fünf Suiten zum Anschlagen, die
+        den Katalog nur lesen; die Zeile hier ist die Lehre daraus.
+        """
         if spec.name in self._specs:
             raise DuplicateTool(
                 f"Werkzeug {spec.name!r} ist bereits registriert. Ein Überschreiben "
                 "würde die Berechtigungen hinter demselben Namen still austauschen."
             )
+        if spec.supports_undo and handler is not None and undo is None:
+            raise UndoMismatch(
+                f"{spec.name!r} führt supports_undo=True und hat keinen Undo-Handler. "
+                "Der Wert speist ActionPreview.reversible — den Satz „das kannst du "
+                "rückgängig machen“, den ein Mensch vor seiner Bestätigung liest."
+            )
+        if undo is not None and not spec.supports_undo:
+            raise UndoMismatch(
+                f"{spec.name!r} bringt einen Undo-Handler mit und führt "
+                "supports_undo=False. Eine Rücknahme, die niemandem angeboten wird, "
+                "ist keine."
+            )
         self._specs[spec.name] = spec
         if handler is not None:
             self._handlers[spec.name] = handler
+        if undo is not None:
+            self._undo[spec.name] = undo
 
     def get(self, name: str) -> ToolSpec | None:
         return self._specs.get(name)
@@ -225,6 +280,47 @@ class ToolRegistry:
             )
 
         return await handler(**auth.arguments)
+
+    async def undo(self, auth: UndoGrant, *, user_id: UUID) -> ToolResult:
+        """Nimmt einen Aufruf zurück — der einzige Weg dorthin.
+
+        Dieselbe Bauart wie ``execute()``, und aus demselben Grund: Es gibt
+        keine Methode, die einen Undo-Handler herausgibt. Wer zurücknehmen
+        will, braucht einen ``UndoGrant``, und der entsteht ausschließlich im
+        ``UndoGateway`` — nach Zugehörigkeit, Frist und Anspruch.
+
+        **Drei Prüfungen statt fünf, und die Lücke ist keine.** Es gibt keinen
+        Payload-Hash zu vergleichen: Eine Rücknahme hat keine Argumente, die
+        ein Mensch bestätigt hätte, sondern genau einen Rücknahmepunkt, den das
+        Werkzeug selbst notiert hat. Und der Verbrauch steht nicht hier,
+        sondern im Gate: Er *ist* der Anspruch — die Zeile wechselt auf
+        ``undone``, bevor dieser Aufruf überhaupt beginnt.
+
+        Was bleibt: Herkunft (nominal), Nutzer und Implementierung.
+        """
+        from jarvis_core.policy.undo import UndoGrant as _UndoGrant
+
+        if type(auth) is not _UndoGrant:
+            raise ForgedAuthorization(
+                "Die vorgelegte Autorisierung ist kein UndoGrant. Ein Objekt, das nur so "
+                "aussieht, ist keines — eine Rücknahme entsteht ausschließlich im "
+                "UndoGateway."
+            )
+        if auth.user_id != user_id:
+            raise ForgedAuthorization(
+                "Die Rücknahme gehört zu einem anderen Nutzer. Ein Vergleich eines "
+                "Wertes mit sich selbst prüft nichts — deshalb nennt der Aufrufer den "
+                "Nutzer ausdrücklich."
+            )
+
+        handler = self._undo.get(auth.tool_name)
+        if handler is None:
+            raise UnknownTool(
+                f"Für {auth.tool_name!r} ist keine Rücknahme registriert. Der Aufruf ist "
+                "protokolliert als zurücknehmbar, dieser Prozess kann es nicht — ein "
+                "Konfigurationsfehler und kein Berechtigungsproblem."
+            )
+        return await handler(auth.undo_token)
 
     def names(self) -> set[str]:
         return set(self._specs)

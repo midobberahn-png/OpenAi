@@ -259,9 +259,38 @@ class HandlerSpy:
         return len(self.calls)
 
 
+class UndoSpy:
+    """Zählt Rücknahmen — und was ihr als Rücknahmepunkt vorgelegt wurde.
+
+    Der zweite Wert ist der interessante: Er belegt, dass der Token aus dem
+    Werkzeugprotokoll kommt und nicht aus dem Request.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.tokens: list[str] = []
+
+    async def __call__(self, token: str) -> ToolResult:
+        self.tokens.append(token)
+        return ToolResult(ok=True, data={"deleted": True}, display="Zurückgenommen")
+
+    @property
+    def call_count(self) -> int:
+        return len(self.tokens)
+
+
+undos: dict[str, UndoSpy] = {}
+"""Die Rücknahme-Attrappen des zuletzt gebauten Katalogs.
+
+Ein Modulwert und kein zweiter Rückgabewert: ``build_registry()`` wird an
+Dutzenden Stellen aufgerufen, und ein dritter Wert im Tupel machte jede davon
+kaputt, um zwei Tests zu bedienen."""
+
+
 def build_registry() -> tuple[ToolRegistry, dict[str, HandlerSpy]]:
     """Registry mit Attrappen — es geht um die Kette, nicht um echte Mails."""
 
+    undos.clear()
     spies = {
         "mail.read": HandlerSpy(
             "mail.read",
@@ -315,7 +344,14 @@ def build_registry() -> tuple[ToolRegistry, dict[str, HandlerSpy]]:
     # ist, nachdem sie gewirkt hat.
     registry = ToolRegistry(grants=InProcessGrants())
     for spec in (MAIL_READ, CALENDAR_READ, CALENDAR_CREATE, MAIL_SEND, SYSTEM_TIME):
-        registry.register(spec, spies[spec.name])
+        # Der Undo-Handler gehört zur Spezifikation: Die Registry weist
+        # ``supports_undo=True`` ohne ihn zurück. Eine Attrappe, die das
+        # umginge, prüfte etwas anderes als die Anwendung — und genau dieser
+        # Aufruf hier hat die Prüfung beim Einbauen zum Anschlagen gebracht.
+        undo = UndoSpy(spec.name) if spec.supports_undo else None
+        registry.register(spec, spies[spec.name], undo=undo)
+        if undo is not None:
+            undos[spec.name] = undo
     return registry, spies
 
 

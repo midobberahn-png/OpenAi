@@ -15,12 +15,28 @@ die ein Durchstichtest existiert.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
 from jarvis_contracts import InvocationStatus, ToolInvocation
 
-__all__ = ["InvocationStore"]
+__all__ = ["InvocationStore", "UndoClaim"]
+
+
+@dataclass(frozen=True)
+class UndoClaim:
+    """Was eine beanspruchte Rücknahme mitbringt.
+
+    Zwei Angaben, und beide kommen aus der Datenbank: **welches** Werkzeug
+    zurücknimmt und **woran**. Der Aufrufer nennt weder das eine noch das
+    andere — er nennt die Kennung des Aufrufs, und alles Weitere ergibt sich
+    aus der Zeile, die ihm gehört.
+    """
+
+    tool_name: str
+    undo_token: str | None
 
 
 class InvocationStore(Protocol):
@@ -69,8 +85,51 @@ class InvocationStore(Protocol):
         """
         ...
 
+    async def claim_undo(
+        self, invocation_id: UUID, *, user_id: UUID, now: datetime
+    ) -> UndoClaim | None:
+        """Beansprucht die Rücknahme eines Aufrufs — atomar und in einem Zug.
+
+        Vier Bedingungen, und alle vier gehören **in die Anweisung**, die den
+        Zustand ändert:
+
+        * Der Aufruf gehört dem Nutzer (über den Lauf, nicht über den Request).
+        * Er steht auf ``executed`` — nur eine Wirkung lässt sich zurücknehmen.
+        * Seine Ausführung liegt weniger als ``UNDO_TTL`` zurück.
+        * Er ist noch nicht zurückgenommen.
+
+        Ein ``lesen … prüfen … schreiben`` mit denselben vier Bedingungen wäre
+        bei zwei gleichzeitigen Anfragen zwei Rücknahmen — dasselbe Muster wie
+        beim Nonce, beim Ausführungsanspruch, beim Grant-Verbrauch und beim
+        Planschritt. Der fünfte Fall, und diesmal von vornherein an der
+        richtigen Stelle.
+
+        Rückgabe ist der Rücknahmepunkt, oder ``None``, wenn eine der vier
+        Bedingungen nicht gilt. Kein Unterschied nach Grund: Für den Aufrufer
+        heißen alle vier dasselbe, und die Unterscheidung nach außen zu tragen
+        hieße, einem Fremden die Existenz eines Aufrufs zu bestätigen.
+
+        **Der Zustand wechselt vor der Wirkung.** Scheitert die Rücknahme
+        danach, bleibt ``undone`` stehen: Der Weg ist verbraucht, und ob er
+        gewirkt hat, sagt das Ergebnis. Die Gegenrichtung — erst wirken, dann
+        vermerken — ließe zwei gleichzeitige Rücknahmen beide durch.
+        """
+        ...
+
     async def mark(
-        self, invocation_id: object, status: InvocationStatus, *, error: str | None = None
+        self,
+        invocation_id: object,
+        status: InvocationStatus,
+        *,
+        error: str | None = None,
+        undo_token: str | None = None,
     ) -> None:
-        """Schreibt den Ausgang fort (ausgeführt, gescheitert, blockiert)."""
+        """Schreibt den Ausgang fort (ausgeführt, gescheitert, blockiert).
+
+        ``undo_token`` ist der Rücknahmepunkt, den das Werkzeug hinterlassen
+        hat. Er wird **hier** abgelegt und nirgends sonst: Der Weg zurück
+        adressiert den *Aufruf*, und was zurückgenommen wird, muss deshalb an
+        ihm hängen. An den Client geht er nicht — er ist kein Inhaberpapier,
+        sondern eine Notiz des Werkzeugs an sich selbst.
+        """
         ...

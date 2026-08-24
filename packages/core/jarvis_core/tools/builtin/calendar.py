@@ -27,24 +27,39 @@ Teilnehmern. Der Weg von „Fremdinhalt gelesen" zu „Fremde bekommen eine
 Einladung" ist damit strukturell zu, und das ist genau der Widerspruch, den
 V1.0 nicht auflösen konnte (docs/16-v1.1-review.md §1).
 
-**Warum kein Undo, obwohl es umkehrbar wäre.**
+**Undo, und warum es das vorher nicht gab.**
 
-``supports_undo`` steht auf ``False``, und das ist keine Eigenschaft des
+``supports_undo`` stand lange auf ``False``, und das war keine Eigenschaft des
 Termins, sondern eine des Systems: Der Wert speist ``ActionPreview.reversible``
-— also den Satz „das kannst du rückgängig machen", den ein Mensch vor seiner
-Bestätigung liest. Einen Einlöseweg für ``ToolResult.undo_token`` gibt es
-nicht; das Feld führt niemand fort und kein Endpunkt nimmt es entgegen.
-
+— also den Satz „das kannst du rückgängig machen“, den ein Mensch vor seiner
+Bestätigung liest. Einen Einlöseweg für ``ToolResult.undo_token`` gab es nicht.
 Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, ist
 schlimmer als eine, die schweigt: Sie senkt die Aufmerksamkeit genau an der
-Stelle, an der die Bestätigung ihren Zweck hat. Sobald es einen Undo-Weg gibt,
-wird der Wert umgestellt — vorher nicht.
+Stelle, an der die Bestätigung ihren Zweck hat.
+
+Den Weg gibt es jetzt (``jarvis_core.policy.undo``), deshalb steht der Wert auf
+``True``. Der Rücknahmepunkt ist die Kennung des angelegten Termins — sie geht
+ins Werkzeugprotokoll und **nicht** an den Client. Zurückgenommen wird über die
+Kennung des *Aufrufs*; wem er gehört, sagt der Lauf.
+
+Was die Rücknahme ausdrücklich **nicht** ist: ein Löschrecht. Sie trifft genau
+einen protokollierten, eigenen, höchstens 15 Minuten alten Aufruf, und sie
+trifft ihn einmal. Ein Werkzeug ``calendar.delete`` wäre etwas anderes — eine
+Fähigkeit, die ein Nutzer erteilen müsste und die ein Modell vorschlagen
+könnte.
+
+**Und sie holt keine Einladung zurück.** Ein Termin mit Teilnehmern hat
+Einladungen verschickt; das Löschen des Eintrags macht das nicht ungeschehen.
+Die Vorschau verspricht deshalb nicht mehr, als der Weg hält — was
+``reversible`` bedeutet, ist „der Eintrag verschwindet", nicht „es ist nichts
+passiert".
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from jarvis_contracts import (
     DataClass,
@@ -55,7 +70,7 @@ from jarvis_contracts import (
 )
 from jarvis_core.ports.calendar import CalendarStore, CalendarWriteFailed
 
-__all__ = ["CALENDAR_CREATE", "calendar_create_handler"]
+__all__ = ["CALENDAR_CREATE", "calendar_create_handler", "calendar_undo_handler"]
 
 MAX_DAUER_STUNDEN = 24
 
@@ -92,9 +107,10 @@ CALENDAR_CREATE = ToolSpec(
     requires_preview=True,
     payload_inspectability=PayloadInspectability.STRUCTURED,
     outbound_fields=["attendees"],
-    # ``supports_undo=False``: umkehrbar wäre der Termin, das System ist es
-    # nicht — siehe Modulkopf.
-    supports_undo=False,
+    # ``supports_undo=True``, seit es einen Einlöseweg gibt: Der Handler unten
+    # notiert die Kennung des Termins als Rücknahmepunkt, und
+    # ``UndoGateway`` löst sie ein — eigener Aufruf, 15 Minuten, einmal.
+    supports_undo=True,
     rate_limit="30/hour",
     timeout_s=15.0,
 )
@@ -168,6 +184,11 @@ def calendar_create_handler(calendar: CalendarStore) -> Any:
         )
         return ToolResult(
             ok=True,
+            # Der Rücknahmepunkt: die Kennung des Termins. Sie geht ins
+            # Werkzeugprotokoll und nicht an den Client — ein Token, das der
+            # Aufrufer zurückschickt, wäre eine Fähigkeit, die sich raten
+            # lässt. Was hier steht, versteht nur der Undo-Handler unten.
+            undo_token=str(termin.id),
             data={
                 "id": str(termin.id),
                 "title": termin.title,
@@ -181,6 +202,55 @@ def calendar_create_handler(calendar: CalendarStore) -> Any:
             # zurückkommt, hat der Nutzer soeben bestätigt. ``taints_context``
             # bleibt aus — anders als bei ``files.read``.
             taints_context=False,
+        )
+
+    return handler
+
+
+def calendar_undo_handler(calendar: CalendarStore) -> Any:
+    """Nimmt einen angelegten Termin zurück.
+
+    Ein Parameter, und er ist keine Argumentliste: Was zurückgenommen wird,
+    steht nicht in Feldern, die jemand mitbringen könnte, sondern in dem, was
+    der Handler oben selbst notiert hat.
+
+    Der Store ist an denselben Nutzer gebunden wie beim Anlegen — auch diese
+    Rücknahme kann keinen fremden Kalender treffen, weil sie den Adressaten
+    nicht benennen kann.
+    """
+
+    async def handler(token: str) -> ToolResult:
+        try:
+            kennung = UUID(token)
+        except ValueError:
+            # Kein Angriffsfall: Der Token stammt aus der eigenen Datenbank.
+            # Steht dort etwas anderes als eine Kennung, ist das ein Fehler
+            # dieses Werkzeugs — und er soll nicht als „zurückgenommen" enden.
+            return ToolResult(
+                ok=False,
+                error="Der Rücknahmepunkt ist keine Terminkennung.",
+                display="Nicht zurückgenommen",
+            )
+
+        try:
+            geloescht = await calendar.delete_event(kennung)
+        except CalendarWriteFailed as gescheitert:
+            return ToolResult(ok=False, error=str(gescheitert), display="Nicht zurückgenommen")
+
+        if not geloescht:
+            # Der Termin ist nicht mehr da. Für den Nutzer ist das der Zustand,
+            # den er wollte — deshalb ``ok=True`` und ein Satz, der nichts
+            # behauptet, was nicht geschehen ist.
+            return ToolResult(
+                ok=True,
+                data={"deleted": False, "id": str(kennung)},
+                display="Der Termin war bereits entfernt",
+            )
+
+        return ToolResult(
+            ok=True,
+            data={"deleted": True, "id": str(kennung)},
+            display="Termin zurückgenommen",
         )
 
     return handler

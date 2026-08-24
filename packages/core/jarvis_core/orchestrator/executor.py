@@ -574,6 +574,10 @@ class ToolExecutor:
             invocation_id,
             InvocationStatus.EXECUTED if result.ok else InvocationStatus.FAILED,
             result.error,
+            # Der Rücknahmepunkt gehört zum Aufruf und nicht zum Lauf: Der Weg
+            # zurück adressiert genau diesen einen Aufruf, und der Token muss
+            # dort liegen, wo Zugehörigkeit und Frist geprüft werden.
+            undo_token=result.undo_token,
         )
         await self._log(
             updated,
@@ -668,11 +672,16 @@ class ToolExecutor:
         )
 
     async def _mark(
-        self, invocation_id: UUID | None, status: InvocationStatus, error: str | None = None
+        self,
+        invocation_id: UUID | None,
+        status: InvocationStatus,
+        error: str | None = None,
+        *,
+        undo_token: str | None = None,
     ) -> None:
         if self._invocations is None or invocation_id is None:
             return
-        await self._invocations.mark(invocation_id, status, error=error)
+        await self._invocations.mark(invocation_id, status, error=error, undo_token=undo_token)
 
     async def _log(
         self,
