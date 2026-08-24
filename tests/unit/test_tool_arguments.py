@@ -144,7 +144,9 @@ class TestImExecutor:
         executor = ToolExecutor(
             registry=registry,
             policy=policy,
-            gateway=ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions()),
+            gateway=ApprovalGateway(
+                InMemoryApprovalStore(), policy, sessions=UnverifiedSessions(), clock=lambda: NOW
+            ),
             audit=protokoll,
             clock=lambda: NOW,
         )

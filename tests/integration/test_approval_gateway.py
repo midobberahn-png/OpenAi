@@ -107,11 +107,24 @@ async def _seed(conn: AsyncConnection) -> tuple[uuid.UUID, uuid.UUID]:
     return uid, rid
 
 
-def _gateway(conn: AsyncConnection, perms: MutablePermissions) -> ApprovalGateway:
+def _registry_mit_termin() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(CALENDAR_CREATE)
+    return registry
+
+
+def _gateway(conn: AsyncConnection, perms: MutablePermissions) -> ApprovalGateway:
+    registry = _registry_mit_termin()
     return ApprovalGateway(
-        PostgresApprovalStore(conn), PolicyEngine(registry, perms), sessions=UnverifiedSessions()
+        PostgresApprovalStore(conn),
+        PolicyEngine(registry, perms),
+        sessions=UnverifiedSessions(),
+        # Diese Suite hält die Zeit an: Alle Fristen werden über ``now``
+        # gesteuert, und der Ausführungsanspruch liest seit der Reparatur des
+        # TOCTOU-Befunds seine eigene, frische Zeit. Ohne diese Uhr fiele er
+        # gegen die echte Gegenwart aus — die Bestätigungen dieser Suite liegen
+        # im Jahr 2026 und wären längst abgelaufen.
+        clock=lambda: NOW,
     )
 
 
@@ -394,6 +407,71 @@ class TestAngriffCToctou:
                 allowed_data_class=DataClass.P2,
             )
         assert exc.value.code == "approval-expired"
+
+    @pytest.mark.invariant("approval-toctou-protected")
+    async def test_die_frist_faellt_in_den_finalen_anspruch(self, conn: AsyncConnection) -> None:
+        """**Herkunft: externe Prüfung von ``61d4428``.**
+
+        Der Test darüber prüft den Ablauf mit einem ``now``, das bereits beim
+        Eintritt ins Gate überschritten ist. Der Bericht zeigt die andere Lage:
+        Die Frist verstreicht **während** eines bereits begonnenen Durchlaufs.
+
+        Das Gate nimmt seine Zeit beim Eintritt und reicht sie durch — die
+        Prüfung ``is_expired(now)`` steht am Anfang, danach folgen eine erneute
+        Policy-Entscheidung und mehrere Datenbankzugriffe. Dauert das länger
+        als die Restgültigkeit, ist die Bestätigung im Moment der Ausführung
+        abgelaufen, und der Anspruch gewann trotzdem: Sein UPDATE prüfte
+        ``response`` und ``executed_at``, nicht die Frist.
+
+        Deshalb steht die Frist jetzt **in** der Anweisung, die den Anspruch
+        begründet, und sie misst dort die Uhr der Datenbank. Ein eingefrorenes
+        ``now`` aus dem Eintritt wäre genau die Lücke, gegen die die Zeile
+        steht.
+        """
+        uid, rid = await _seed(conn)
+        sid = uuid.uuid4()
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+
+        action = await _request(gw, uid, rid, sid)
+        await gw.respond(
+            action_id=action.id,
+            nonce=action.nonce,
+            approve=True,
+            user_id=uid,
+            session_id=sid,
+            channel="ui",
+            now=NOW,
+        )
+
+        # Die Uhr des Gates ist elf Minuten weiter als die Zeit, mit der der
+        # Durchlauf begonnen hat — die Frist ist während der Prüfung
+        # verstrichen. Genau diese Lage nennt der Prüfbericht.
+        spaet = ApprovalGateway(
+            PostgresApprovalStore(conn),
+            PolicyEngine(_registry_mit_termin(), perms),
+            sessions=UnverifiedSessions(),
+            clock=lambda: NOW + timedelta(minutes=11),
+        )
+
+        with pytest.raises(ExecutionDenied) as exc:
+            await spaet.authorize_execution(
+                action_id=action.id,
+                arguments=ARGS,
+                spec=CALENDAR_CREATE,
+                taint=TaintLevel.CLEAN,
+                # Die Zeit vom Eintritt ins Gate: Hier ist die Bestätigung
+                # noch gültig, und die Eingangsprüfung lässt sie durch.
+                now=NOW,
+                run_id=rid,
+                allowed_data_class=DataClass.P2,
+            )
+
+        assert exc.value.code == "already-executed", (
+            "Der Anspruch hat eine abgelaufene Bestätigung eingelöst. Die letzte "
+            "Prüfung vor der Wirkung muss frische Zeit messen."
+        )
 
     @pytest.mark.invariant("approval-toctou-protected")
     async def test_nachtraegliche_kontamination_wird_bemerkt(self, conn: AsyncConnection) -> None:

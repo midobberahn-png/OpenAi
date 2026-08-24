@@ -82,7 +82,7 @@ def _executor(
     executor = ToolExecutor(
         registry=registry,
         policy=policy,
-        gateway=ApprovalGateway(store, policy, sessions=UnverifiedSessions()),
+        gateway=ApprovalGateway(store, policy, sessions=UnverifiedSessions(), clock=lambda: NOW),
         invocations=protokoll,
         clock=lambda: NOW,
     )

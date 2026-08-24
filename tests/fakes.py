@@ -137,9 +137,17 @@ class InMemoryApprovalStore:
 
     async def claim_execution(self, action_id: UUID, now: datetime) -> bool:
         """Bildet den atomaren Anspruch nach — der Beleg dafür liegt in der
-        Integrationssuite gegen Postgres."""
+        Integrationssuite gegen Postgres.
+
+        **Auch die Frist**, seit sie dort Teil des Anspruchs ist. Eine
+        Attrappe, die weniger prüft als die Anwendung, lässt Unit-Tests
+        durchgehen, wo der Betrieb abweist — und dann steht die Zusage nur noch
+        in der Integrationssuite.
+        """
         action = self._actions.get(action_id)
         if action is None or action.response != "approved":
+            return False
+        if action.expires_at <= now:
             return False
         if action_id in self._ausgefuehrt:
             return False

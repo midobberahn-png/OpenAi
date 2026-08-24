@@ -114,7 +114,9 @@ def _aufbau(
     executor = ToolExecutor(
         registry=tools,
         policy=policy,
-        gateway=ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions()),
+        gateway=ApprovalGateway(
+            InMemoryApprovalStore(), policy, sessions=UnverifiedSessions(), clock=lambda: NOW
+        ),
         clock=lambda: NOW,
     )
     agents = AgentRegistry()
@@ -322,7 +324,9 @@ class TestDatenklasse:
         executor = ToolExecutor(
             registry=tools,
             policy=policy,
-            gateway=ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions()),
+            gateway=ApprovalGateway(
+                InMemoryApprovalStore(), policy, sessions=UnverifiedSessions(), clock=lambda: NOW
+            ),
             clock=lambda: NOW,
         )
         agents = AgentRegistry()
@@ -366,7 +370,9 @@ class TestDatenklasse:
         executor = ToolExecutor(
             registry=tools,
             policy=policy,
-            gateway=ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions()),
+            gateway=ApprovalGateway(
+                InMemoryApprovalStore(), policy, sessions=UnverifiedSessions(), clock=lambda: NOW
+            ),
             clock=lambda: NOW,
         )
         agents = AgentRegistry()

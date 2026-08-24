@@ -44,7 +44,9 @@ def _setup(
 ):
     registry, spies = build_registry()
     policy = PolicyEngine(registry, perms)
-    gateway = ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions())
+    gateway = ApprovalGateway(
+        InMemoryApprovalStore(), policy, sessions=UnverifiedSessions(), clock=lambda: NOW
+    )
     executor = ToolExecutor(
         registry=registry,
         policy=policy,

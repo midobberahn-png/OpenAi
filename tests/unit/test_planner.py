@@ -143,6 +143,7 @@ async def test_geplanter_schritt_ist_keine_berechtigung() -> None:
     den der Executor trotzdem nicht ausführt: Er fragt für jeden Schritt
     erneut.
     """
+    from jarvis_core.clock import utc_now
     from jarvis_core.orchestrator import BudgetTracker, ToolExecutor
     from jarvis_core.policy import ApprovalGateway, PolicyEngine, UnverifiedSessions
     from tests.fakes import SESSION, FakePermissions, InMemoryApprovalStore, build_run
@@ -160,7 +161,9 @@ async def test_geplanter_schritt_ist_keine_berechtigung() -> None:
     executor = ToolExecutor(
         registry=registry,
         policy=policy,
-        gateway=ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions()),
+        gateway=ApprovalGateway(
+            InMemoryApprovalStore(), policy, sessions=UnverifiedSessions(), clock=utc_now
+        ),
     )
     outcome = await executor.execute_tool(
         build_run(),

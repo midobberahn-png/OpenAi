@@ -235,7 +235,14 @@ class TestKompletterAblauf:
         tools, spies = build_registry()
         policy = PolicyEngine(tools, permissions)
         gateway = ApprovalGateway(
-            PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
+            PostgresApprovalStore(conn),
+            policy,
+            sessions=UnverifiedSessions(),
+            # Dieselbe angehaltene Zeit wie im Executor: Der
+            # Ausführungsanspruch misst seit dem TOCTOU-Befund seine eigene,
+            # frische Zeit, und eine Bestätigung aus dem Jahr 2026 wäre gegen
+            # die echte Gegenwart abgelaufen.
+            clock=lambda: NOW,
         )
         audit = ChainAudit()
         executor = ToolExecutor(
@@ -420,7 +427,10 @@ class TestKompletterAblauf:
             registry=tools,
             policy=policy,
             gateway=ApprovalGateway(
-                PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
+                PostgresApprovalStore(conn),
+                policy,
+                sessions=UnverifiedSessions(),
+                clock=lambda: NOW,
             ),
             invocations=PostgresInvocationStore(engine),
             clock=lambda: NOW,
@@ -488,7 +498,10 @@ class TestKompletterAblaufMitAgenten:
             registry=tools,
             policy=policy,
             gateway=ApprovalGateway(
-                PostgresApprovalStore(conn), policy, sessions=UnverifiedSessions()
+                PostgresApprovalStore(conn),
+                policy,
+                sessions=UnverifiedSessions(),
+                clock=lambda: NOW,
             ),
             invocations=PostgresInvocationStore(engine),
             clock=lambda: NOW,

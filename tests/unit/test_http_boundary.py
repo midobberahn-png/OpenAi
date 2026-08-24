@@ -127,6 +127,33 @@ def _annotation_name(node: ast.expr | None) -> str:
     return ast.unparse(node) if node is not None else ""
 
 
+PYDANTIC_BASEN = {"BaseModel", "pydantic.BaseModel"}
+"""Wie ``BaseModel`` in einer Basisklassenliste geschrieben sein kann."""
+
+
+def _pydantic_modelle(tree: ast.Module) -> set[str]:
+    """Alle Klassen der Datei, die von ``BaseModel`` erben — auch über Ecken.
+
+    Die Auflösung läuft, bis sich nichts mehr ändert: ``class A(BaseModel)``,
+    ``class B(A)``, ``class C(B)``. Eine feste Zahl von Durchgängen wäre eine
+    Annahme über die Tiefe der Vererbung, und genau solche Annahmen sind der
+    Grund, warum dieser Test überarbeitet werden musste.
+    """
+    klassen = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    modelle: set[str] = set()
+    gewachsen = True
+    while gewachsen:
+        gewachsen = False
+        for klasse in klassen:
+            if klasse.name in modelle:
+                continue
+            basen = {ast.unparse(b) for b in klasse.bases}
+            if basen & (PYDANTIC_BASEN | modelle):
+                modelle.add(klasse.name)
+                gewachsen = True
+    return modelle
+
+
 def test_routen_verzeichnis_existiert() -> None:
     assert ROUTES.is_dir(), "Pfadannahme des Tests stimmt nicht mehr"
     assert _route_files(), "Ohne Routen prüft dieser Test nichts"
@@ -140,15 +167,30 @@ def test_kein_request_modell_traegt_eine_identitaet(path: Path) -> None:
     Der Test trifft absichtlich *alle* Modelle der Datei, nicht nur die als
     Body verwendeten: Ein Modell, das heute nur intern genutzt wird, ist
     morgen ein Request-Body.
+
+    **Und alle Modelle heißt auch: die geerbten.** Die erste Fassung verlangte
+    ``BaseModel`` als *direkte* Basisklasse. Eine externe Prüfung hat den
+    Ausweg benannt, und er kostet zwei Zeilen:
+
+        class RequestBase(BaseModel): ...
+        class EvilRequest(RequestBase):
+            user_id: UUID
+
+    ``EvilRequest`` ist für FastAPI ein vollwertiges Request-Modell und war für
+    diesen Test keines. Jetzt wird die Vererbung innerhalb der Datei
+    aufgelöst — so weit, wie sie sich statisch verfolgen lässt: Eine Basis aus
+    einem anderen Modul erkennt der Test nicht, und das steht hier, statt
+    unausgesprochen zu bleiben.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     treffer: list[str] = []
 
+    # Erst die Modelle bestimmen, dann ihre Felder: Eine Ableitung kann vor
+    # ihrer Basis stehen, und ``ast.walk`` läuft nicht in Definitionsreihenfolge.
+    modelle = _pydantic_modelle(tree)
+
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        basen = {ast.unparse(b) for b in node.bases}
-        if "BaseModel" not in basen:
+        if not isinstance(node, ast.ClassDef) or node.name not in modelle:
             continue
         for stmt in node.body:
             if (
@@ -370,14 +412,55 @@ def test_jeder_oeffentliche_endpunkt_ist_begrenzt(path: Path) -> None:
     for func in _endpoints(tree):
         if func.name not in OEFFENTLICH or func.name in ohne_grenze_erlaubt:
             continue
-        dekoratoren = ast.dump(ast.Module(body=func.decorator_list, type_ignores=[]))
-        if "rate_limited" not in dekoratoren:
+        if not any(_hat_grenze(deco) for deco in func.decorator_list):
             fehlend.append(func.name)
 
     assert not fehlend, (
         f"{path.name}: Öffentliche Endpunkte ohne Zugriffsgrenze: {fehlend}. "
         "Wer ohne Anmeldung erreichbar ist, braucht eine."
     )
+
+
+def _hat_grenze(deco: ast.expr) -> bool:
+    """Steht in ``dependencies=[…]`` ein ``Depends(rate_limited(…))``?
+
+    **Herkunft: externe Prüfung von ``61d4428``.** Die erste Fassung suchte den
+    Namen ``rate_limited`` irgendwo im Dekorator — ein Vorkommen und keine
+    Form. Ein Kommentar, ein Vorgabewert, ein gleichnamiges Feld hätte gereicht.
+
+    Jetzt wird die Form geprüft: das Schlüsselwort ``dependencies``, darin ein
+    ``Depends``-Aufruf, und darin ein Aufruf von ``rate_limited``.
+
+    Was auch das nicht leistet, und deshalb steht es hier: Ein Strukturtest
+    beweist nicht, dass die Dependency zur Laufzeit greift. Den Beweis führt
+    ``tests/integration/test_rate_limit.py`` am Statuscode ``429`` — die beiden
+    gehören zusammen, und keiner ersetzt den anderen.
+    """
+    if not isinstance(deco, ast.Call):
+        return False
+    for kw in deco.keywords:
+        if kw.arg != "dependencies":
+            continue
+        for eintrag in ast.walk(kw.value):
+            if (
+                isinstance(eintrag, ast.Call)
+                and _aufrufname(eintrag) == "Depends"
+                and any(
+                    isinstance(arg, ast.Call) and _aufrufname(arg) == "rate_limited"
+                    for arg in eintrag.args
+                )
+            ):
+                return True
+    return False
+
+
+def _aufrufname(node: ast.Call) -> str:
+    """Der letzte Namensteil eines Aufrufs — ``a.b.c(…)`` ergibt ``c``."""
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return ""
 
 
 @pytest.mark.invariant("identity-derives-from-session")
@@ -501,4 +584,55 @@ def test_die_route_orchestriert_den_planschritt_nicht_selbst() -> None:
         f"advance_run orchestriert wieder selbst: {sorted(gefunden)}. Der Ablauf "
         "gehört in jarvis_core.orchestrator.advance — dort ist die Reihenfolge "
         "Anspruch → Wirkung → Festschreiben an einer Stelle sichtbar."
+    )
+
+
+# --------------------------------------------------------------------------
+# Prüfungen der Prüfungen
+#
+# Zwei Strukturtests dieser Datei haben sich in externen Prüfungen als zu
+# schwach erwiesen — einmal ein Router-Alias, einmal indirekte Vererbung. Ein
+# Test, der nichts findet, sieht aus wie ein Test, der nichts zu finden hat.
+# Deshalb bekommen die Erkenner hier ihre eigenen Fälle.
+# --------------------------------------------------------------------------
+
+
+def test_indirekte_vererbung_gilt_als_pydantic_modell() -> None:
+    """Der Ausweg aus der externen Prüfung, nachgestellt.
+
+    ``EvilRequest`` ist für FastAPI ein vollwertiges Request-Modell. Erkennt
+    ihn der Erkenner nicht, geht ein ``user_id`` im Body durch, ohne dass ein
+    Test anschlägt.
+    """
+    tree = ast.parse(
+        "from pydantic import BaseModel\n"
+        "class RequestBase(BaseModel): pass\n"
+        "class Mittelbau(RequestBase): pass\n"
+        "class EvilRequest(Mittelbau): pass\n"
+        "class Fremd: pass\n"
+    )
+
+    modelle = _pydantic_modelle(tree)
+
+    assert {"RequestBase", "Mittelbau", "EvilRequest"} <= modelle
+    assert "Fremd" not in modelle, "Wer nicht erbt, ist keins."
+
+
+def test_ein_erwaehnter_name_ist_keine_zugriffsgrenze() -> None:
+    """Der Unterschied zwischen Vorkommen und Form.
+
+    Beide Dekoratoren unten enthalten die Zeichenfolge ``rate_limited``. Nur
+    einer davon hängt tatsächlich eine Dependency ein.
+    """
+    echt, getarnt = ast.parse(
+        "@router.post('/a', dependencies=[Depends(rate_limited(BOOTSTRAP))])\n"
+        "async def a(): ...\n"
+        "@router.post('/b', response_model=rate_limited)\n"
+        "async def b(): ...\n"
+    ).body
+
+    assert isinstance(echt, ast.AsyncFunctionDef) and isinstance(getarnt, ast.AsyncFunctionDef)
+    assert _hat_grenze(echt.decorator_list[0])
+    assert not _hat_grenze(getarnt.decorator_list[0]), (
+        "Ein Name im Dekorator ist keine Zugriffsgrenze."
     )

@@ -27,17 +27,38 @@ _CLAIM = text(
      WHERE id = :id
        AND response = 'approved'
        AND executed_at IS NULL
+       AND expires_at > :now
     RETURNING id
     """
 )
 """Der Ausführungsanspruch — bedingtes UPDATE, dessen Trefferzahl die Antwort
 ist.
 
-Beide Bedingungen sind nötig: ``response = 'approved'`` schließt aus, dass
-eine abgelehnte oder offene Bestätigung ausführt; ``executed_at IS NULL``
-macht den Anspruch einmalig. Ein vorgelagertes ``SELECT`` wäre bei zwei
-gleichzeitigen Aufrufen wertlos — und genau diese Gleichzeitigkeit ist der
-Fall, für den es den Anspruch gibt."""
+Drei Bedingungen, und jede schließt etwas anderes aus: ``response = 'approved'``
+verhindert, dass eine abgelehnte oder offene Bestätigung ausführt;
+``executed_at IS NULL`` macht den Anspruch einmalig; ``expires_at > now()``
+hält die Frist. Ein vorgelagertes ``SELECT`` wäre bei zwei gleichzeitigen
+Aufrufen wertlos — und genau diese Gleichzeitigkeit ist der Fall, für den es
+den Anspruch gibt.
+
+**Die dritte Bedingung kam aus einer externen Prüfung zu ``61d4428``.** Das
+Gate prüft den Ablauf beim Eintritt (``is_expired(now)``) und reicht dieselbe
+Zeit weiter; dazwischen liegen eine erneute Policy-Entscheidung und mehrere
+Datenbankzugriffe. Verstreicht die Frist **währenddessen**, war die
+Bestätigung im Moment der Ausführung abgelaufen — und der Anspruch gewann
+trotzdem.
+
+``:now`` ist deshalb **nicht** die Zeit vom Eintritt ins Gate: Der Aufrufer
+liest seine Uhr unmittelbar vor diesem Anspruch neu (``ApprovalGateway._clock``).
+Ein eingefrorener Zeitpunkt beantwortete dieselbe Frage noch einmal, statt sie
+neu zu stellen.
+
+Und ausdrücklich nicht ``now()`` der Datenbank, obwohl das naheliegt: Die
+Fristen dieses Gates sind Anwendungszeit — ``expires_at`` entsteht aus ``now +
+ttl`` im Kern, und die Suite hält die Zeit an, um Abläufe zu prüfen, statt auf
+sie zu warten. Zwei Uhren für dieselbe Frist wären eine Quelle von Fehlern, die
+nur unter Last auftreten. Anders als beim Planschritt-Anspruch, wo zwei
+Prozesse gegeneinander messen und deshalb die Datenbankuhr gilt."""
 
 
 _INSERT = text(

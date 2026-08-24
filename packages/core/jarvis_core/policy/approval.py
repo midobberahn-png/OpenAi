@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
@@ -45,6 +46,7 @@ from jarvis_contracts import (
     TaintLevel,
     ToolSpec,
 )
+from jarvis_core.clock import utc_now
 from jarvis_core.policy.engine import PolicyEngine
 from jarvis_core.ports.approval import ApprovalStore, BurnResult
 
@@ -229,11 +231,26 @@ class ApprovalGateway:
         *,
         sessions: SessionVerifier,
         ttl: timedelta = DEFAULT_TTL,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._store = store
         self._policy = policy
         self._sessions = sessions
         self._ttl = ttl
+        self._clock = clock
+        """Für die **letzte** Prüfung vor der Wirkung, und nur dafür.
+
+        Alle Fristen dieses Gates kommen sonst als ``now`` vom Aufrufer — das
+        macht sie prüfbar, und daran ändert sich nichts. Der
+        Ausführungsanspruch braucht trotzdem eine eigene Lesung: Zwischen
+        ``is_expired(now)`` am Eingang und dem Anspruch am Ende liegen eine
+        erneute Policy-Entscheidung und mehrere Datenbankzugriffe. Mit der Zeit
+        vom Eingang beantwortet der Anspruch dieselbe Frage noch einmal, statt
+        sie neu zu stellen — und eine Bestätigung, deren Frist inzwischen
+        verstrichen ist, gewänne ihn.
+
+        Gemeldet von einer externen Prüfung zu ``61d4428``. Wer die Zeit in
+        einem Test anhalten will, hält sie hier mit an."""
 
     # -- 1. Anfrage ------------------------------------------------------
     async def request(
@@ -481,9 +498,16 @@ class ApprovalGateway:
         # ist die richtige Richtung für Aktionen mit Außenwirkung — eine Mail,
         # die vielleicht nicht hinausging, kann der Nutzer erneut senden; eine,
         # die zweimal hinausging, holt niemand zurück.
-        if not await self._store.claim_execution(action_id, now):
+        # Frisch gelesen und nicht ``now``: Die Frist wird an dieser Stelle
+        # neu gemessen, weil sie hier zum letzten Mal gilt.
+        if not await self._store.claim_execution(action_id, self._clock()):
+            # Zwei Ursachen, eine Meldung: Die Bestätigung ist bereits
+            # eingelöst — oder ihre Frist ist verstrichen, während dieser
+            # Durchlauf noch prüfte. Der Anspruch unterscheidet sie nicht, und
+            # eine zweite Abfrage dafür wäre eine Auskunft ohne Folgen.
             raise ExecutionDenied(
-                "Diese Bestätigung wurde bereits ausgeführt.",
+                "Diese Bestätigung lässt sich nicht mehr einlösen: Sie wurde bereits "
+                "ausgeführt, oder ihre Frist ist inzwischen verstrichen.",
                 code="already-executed",
             )
 

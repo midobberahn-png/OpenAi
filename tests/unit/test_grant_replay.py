@@ -71,6 +71,11 @@ def _aufbau(werkzeug: str, *, scope_mode: str) -> tuple[ToolRegistry, HandlerSpy
         InMemoryApprovalStore(),
         PolicyEngine(registry, perms),
         sessions=UnverifiedSessions(),
+        # Angehaltene Zeit, auch für den Ausführungsanspruch: Er misst seit dem
+        # TOCTOU-Befund seine eigene, frische Zeit — gegen die echte Gegenwart
+        # wäre eine Bestätigung dieser Suite abgelaufen, und die Suite prüfte
+        # dann den Ablauf statt der Wiedervorlage.
+        clock=lambda: NOW,
     )
     return registry, spies[werkzeug], spec, gateway
 

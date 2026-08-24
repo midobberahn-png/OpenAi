@@ -19,6 +19,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
+from httpx import AsyncClient
 from redis.asyncio import Redis
 
 from jarvis_api.rate_limit_store import RedisRateLimitStore
@@ -151,3 +152,43 @@ class TestZusammenspiel:
         schluessel = [k async for k in redis.scan_iter(f"ratelimit:{policy.name}:*")]
         if schluessel:
             await redis.delete(*schluessel)
+
+
+class TestDieGrenzeGiltAmEndpunkt:
+    """**Herkunft: externe Prüfung von ``61d4428``.**
+
+    Der Strukturtest belegte bislang, dass im Dekorator eines öffentlichen
+    Endpunkts der Name ``rate_limited`` vorkommt. Das ist ein Hinweis und kein
+    Beweis: Es sagt nichts darüber, ob die Dependency tatsächlich läuft.
+
+    Hier wird sie ausgeführt. Der Beweis ist der Statuscode ``429`` an einem
+    Endpunkt, den jeder ohne Anmeldung erreicht — und zwar über denselben Weg,
+    den ein Angreifer nähme.
+    """
+
+    async def test_die_challenge_grenze_schlaegt_zu(
+        self, client: AsyncClient, redis: Redis
+    ) -> None:
+        from jarvis_core.limits import AUTH_CHALLENGE
+
+        # Der Zähler dieses Endpunkts wird zurückgesetzt, sonst hinge das
+        # Ergebnis daran, was vorher lief. ``X-Forwarded-For`` hilft hier
+        # ausdrücklich **nicht**: Ohne eingetragenen Proxy glaubt das System
+        # den Header nicht — und das ist die richtige Voreinstellung, nicht
+        # eine Unbequemlichkeit des Tests.
+        for schluessel in await redis.keys("ratelimit:auth.challenge:*"):
+            await redis.delete(schluessel)
+        grenze = AUTH_CHALLENGE.per_client.limit
+
+        antworten = [
+            (await client.post("/auth/login/start", json={})).status_code for _ in range(grenze + 2)
+        ]
+
+        assert antworten[-1] == 429, (
+            f"Nach {grenze} Anfragen in einem Fenster muss die Grenze zuschlagen; "
+            f"gesehen wurde {antworten}."
+        )
+        assert 429 not in antworten[: grenze - 1], (
+            "Und vorher darf sie es nicht — eine Grenze, die zu früh greift, ist "
+            "keine Grenze, sondern ein Ausfall."
+        )

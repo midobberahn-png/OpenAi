@@ -90,7 +90,9 @@ def _agents() -> AgentRegistry:
 def _runtime(perms: FakePermissions, *, audit: RecordingAudit | None = None):
     tools, spies = build_registry()
     policy = PolicyEngine(tools, perms)
-    gateway = ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions())
+    gateway = ApprovalGateway(
+        InMemoryApprovalStore(), policy, sessions=UnverifiedSessions(), clock=lambda: NOW
+    )
     executor = ToolExecutor(
         registry=tools, policy=policy, gateway=gateway, audit=audit, clock=lambda: NOW
     )
