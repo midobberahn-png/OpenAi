@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `085876f` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `ddd7ecd` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,8 +42,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 71, Remote auf GitHub |
-| Tests | **1277** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| Commits | 72, Remote auf GitHub |
+| Tests | **1277** Python + 3 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
 | **Security Invariant Coverage** | **56/57** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
@@ -1030,12 +1030,34 @@ Test. Das Permission Center war damit nicht ungebaut, sondern **unbaubar**.
 nach der gefährlichen Richtung geschnitten: eigener Port, Katalogprüfung,
 scope-eigene Einschränkungen, vollständiges Ersetzen, Protokoll mit Richtung.
 
-**Was jetzt zu entscheiden ist, bevor jemand anfängt:** Das UI-Dokument nennt
-Next.js, TanStack Query, react-three-fiber und einen eigenen GLSL-Shader. Das
-ist eine Werkzeugkette, die dieses Repository noch nicht hat — kein
-npm-Toolchain, kein JS-Testrunner, keine Vorstellung davon, wie eine
-Oberfläche in diesem Projekt geprüft wird. Wer hier anfängt, entscheidet das,
-und zwar für Monate. Die Frage gehört gestellt und nicht nebenbei beantwortet.
+**Die Werkzeugkette ist entschieden** (ADR-015, `docs/20-oberflaeche-adr.md`):
+Vite + React als reine SPA, von der API selbst ausgeliefert. Kein Next.js, kein
+SSR, kein dritter Betriebsprozess — der ausschlaggebende Grund ist die
+Herkunft: Sitzungs-Cookie und Passkey-Bindung hängen daran, und ein Origin ist
+trivial richtig, wo zwei eine Konfigurationsfrage wären.
+
+**Gebaut** (`ddd7ecd`): Passkey-Anmeldung samt Erstinbetriebnahme, Laufliste mit
+Zustand und Kontaminationsmarke, Bestätigungsdialog nach den vier Regeln aus
+§7. Geprüft wird im echten Browser gegen die echte API (`make gate` baut,
+startet und spielt durch) — mit virtuellem Authenticator: Nachgestellt ist nur
+der Schlüsselspeicher, die Zeremonie läuft vollständig.
+
+**Der erste Browserlauf hat sofort einen echten Befund gefunden**, und er ist
+lehrreich für alles Weitere: `login/start` schickt keine Kandidatenliste, der
+Authenticator soll selbst wählen — wählen kann er aber nur unter *auffindbaren*
+Schlüsseln, und die Registrierung verlangte keinen. In der pytest-Suite war das
+unsichtbar, weil die Attrappe auf jede Anfrage antwortet. Genau dafür gibt es
+den Durchstich im Browser.
+
+**Was als Nächstes ansteht:**
+
+* **Laufdetail und Undo.** Die Liste zeigt Zustände; der Plan eines einzelnen
+  Laufs, seine Schritte und die Rücknahme eines ausgeführten Aufrufs fehlen
+  noch in der Oberfläche — die API kann beides.
+* **Permission Center.** Die API steht seit `32c54c5`, die Oberfläche dazu
+  nicht.
+* **Chat.** Braucht den Ereignisstrom (siehe unten); bis dahin wäre es
+  Polling mit einem Eingabefeld.
 
 Was **unabhängig** davon fehlt und jede Fassung braucht:
 
