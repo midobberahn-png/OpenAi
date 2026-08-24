@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `130d5c5` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `1d61619` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,8 +42,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 60, Remote auf GitHub |
-| Tests | **1164** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| Commits | 64, Remote auf GitHub |
+| Tests | **1193** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
 | **Security Invariant Coverage** | **52/53** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
@@ -915,37 +915,50 @@ das Beispiel aus `description` wörtlich zurück** (`/Users/ich/Notizen/plan.md`
 Ein Beispiel in einer Schemabeschreibung ist für ein Modell ohne andere
 Information keine Illustration, sondern die Antwort.
 
-### 6. Die eigentliche Agentenschleife
+### 6. Erledigt: Die Agentenschleife läuft
 
-`agents/model_loop.py` ist gebaut, geprüft und hat weiterhin keinen Endpunkt.
-Ein Planschritt der Art `agent` wird von `advance_run` mit 409 abgewiesen und in
-`GET /runs/{id}` als `needs_model` geführt.
+`ModelLoop` hatte keinen Aufrufer, und der Planer schrieb seit jeher `research`
+oder `general` in Agentenschritte, ohne dass es diese Agenten gab. Beides ist
+geschlossen: `apps/api/jarvis_api/agents.py` ist der Katalog,
+`core/agents/plan_step.py` die Zusammensetzung, `advance` führt sie aus. Auch
+der Arbeiter kann Agentenschritte fortsetzen.
 
-Der Unterschied zum Gebauten ist keine Größenfrage:
+**Der Zuschnitt, der die Fläche klein hält:** Der Schritt läuft **einmal** und
+wird in jedem Ausgang abgeschlossen — auch dann, wenn der Agent auf eine
+Bestätigung wartet oder seine Runden aufbraucht. Ein offen gelassener
+Agentenschritt wäre eine Einladung, ihn zu wiederholen, und ein zweiter
+Durchgang führte die Werkzeuge des ersten erneut aus.
 
-| | Argument-/Antwortquelle (fertig) | Agentenschleife (offen) |
-|---|---|---|
-| Werkzeug wählt | der Plan | das Modell |
-| Angebot | genau eines bzw. keines | die Schnittmenge, je Runde neu |
-| Runden | eine | bis `max_iterations` |
-| Abbruch | Rückgabewert | braucht eine Entscheidung |
+Vier Befunde fielen beim Anschließen an, und keiner davon war vorhergesehen:
 
-Die Sicherheitsmechanik steht bereits: `AgentSession.call_tool()` geht denselben
-Weg wie eine Absicht des Nutzers, `AgentRuntime` berechnet das Angebot bei jedem
-Zugriff neu, `ModelLoop` bestätigt nicht und meldet `NEEDS_CONFIRMATION` nach
-oben. Was fehlt, ist der Weg hinein und die Antwort auf zwei Fragen:
+1. **Die Datenklasse war eingefroren.** Die Kontamination las die Schleife je
+   Runde aus dem Lauf, die Datenklasse einmal im Konstruktor — ein Werkzeug,
+   das den Lauf auf P3 stuft, hätte die nächste Runde weiterhin als P2 laufen
+   lassen. Gegenprobe ohne die Korrektur schlägt fehl.
+2. **Die Schrittnummern kollidierten mit dem Plan** (eigener Commit `e0e2305`,
+   der Befund ist älter als die Schleife).
+3. **Ein Importzyklus**, sofort beim ersten Testlauf: `agents` benutzt den
+   Orchestrator, also darf der Orchestrator nicht `agents` benutzen. Der Ablauf
+   kennt jetzt ein Protokoll (`AgentStepRunner`); ein Schichttest hält die
+   Richtung fest.
+4. **Die Aufrufe eines Agenten hingen im Protokoll ohne Zuordnung** — und damit
+   hätte die Wiederaufnahme einen hängengebliebenen Agentenschritt für folgenlos
+   gehalten und ihn wiederholt (`1d61619`).
 
-* **Wer treibt sie an?** Ein HTTP-Aufruf, der bis zu `max_iterations` Runden
-  läuft, hält eine Verbindung über Minuten. Der Prozess dafür **existiert
-  inzwischen** (`scripts/worker.py`, Abschnitt 3a) und tut heute genau eine
-  Sache: einen Planschritt je Lauf und Durchgang. Was ihm für die
-  Agentenschleife fehlt, ist keine Infrastruktur mehr, sondern die Semantik —
-  `max_iterations`, Laufbudget, und die Frage, wie ein Lauf aussieht, der
-  mitten in einer Schleife unterbrochen wird.
-* **Was passiert bei `NEEDS_CONFIRMATION`?** Die Schleife endet und der Lauf
-  wartet. Der Weg zurück führt über `POST /actions/{id}/respond` — und danach
-  müsste jemand die Schleife *fortsetzen*, nicht neu starten. `RunState` trägt
-  das Nötige; es ruft nur niemand auf.
+**Was offen bleibt — und die ersten beiden Punkte sind Zuschnitt, kein Mangel:**
+
+* **Keine Fortsetzung nach einer Bestätigung.** Die Schleife endet, der Lauf
+  wartet, der Schritt gilt als erledigt (`ok=false`). Eine Fortsetzung bräuchte
+  den Gesprächsverlauf in der Laufpersistenz: Fremdinhalt, unbegrenzt, mit
+  Größe, Löschfristen und Herkunftsmarkierung daran. **Das ist das nächste ADR**,
+  nicht der nächste Commit.
+* **`general` ist praktisch unerreichbar.** Der Planer delegiert nur bei
+  `Intent.RESEARCH` oder bei mehr als sechs Werkzeugschritten — und es gibt
+  zwei Werkzeuge. Der Agent ist gebaut und wartet auf einen dritten Auslöser.
+* **Keine Delegation zweiter Stufe im Betrieb.** `can_delegate` hat nur der
+  Supervisor, und die Schleife schlägt keine Delegation vor — sie kennt nur
+  Werkzeuge. Ein Agent, der delegiert, bräuchte ein Werkzeug „delegiere an X",
+  und das ist eine eigene Entscheidung.
 
 ### 7. Undo — oder die Zusage zurücknehmen
 
