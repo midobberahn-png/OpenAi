@@ -613,6 +613,25 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.tools.registry",
     ),
     Invariant(
+        id="permissions-change-only-at-the-edge",
+        title="Rechte erteilt ein Mensch, kein Werkzeug",
+        statement=(
+            "Berechtigungen werden ausschließlich an der HTTP-Kante geschrieben — aus "
+            "einer geprüften Sitzung, gegen den Scope-Katalog, mit scope-eigenen "
+            "Einschränkungen. Kein Werkzeug trägt einen Berechtigungs-Scope, und kein "
+            "Kernmodul ruft die schreibenden Methoden."
+        ),
+        why=(
+            "Die gefährliche Richtung ist das Erteilen: Ein Scope auf ``allow`` nimmt "
+            "jede künftige Bestätigung aus dem Weg — genau den Dialog, den ein Mensch "
+            "liest, bevor etwas nach außen wirkt. Ein Werkzeug, das Berechtigungen "
+            "schreibt, wäre der kürzeste Weg von „ein Modell hat Fremdinhalt gelesen“ "
+            "zu „das Modell darf jetzt mehr“."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.routes.permissions",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(

@@ -229,3 +229,70 @@ def test_der_orchestrator_importiert_nicht_aus_agents(path: Path) -> None:
         "Der Orchestrator spricht über Protokolle; die Zusammensetzung gehört "
         "zu den Agenten."
     )
+
+
+PERMISSIONS_ROUTE = REPO / "apps" / "api" / "jarvis_api" / "routes" / "permissions.py"
+PERMISSION_STORE = REPO / "apps" / "api" / "jarvis_api" / "db" / "permission_store.py"
+SCHREIBENDE_RECHTE = {"upsert_grant", "revoke_grant"}
+
+
+@pytest.mark.invariant("permissions-change-only-at-the-edge")
+def test_berechtigungen_aendert_nur_die_kante() -> None:
+    """Rechte erteilt ein Mensch, kein Werkzeug.
+
+    Die gefährliche Richtung ist das Erteilen: Ein Scope auf ``allow`` nimmt
+    jede künftige Bestätigung aus dem Weg — genau den Dialog, den ein Mensch
+    liest, bevor etwas nach außen wirkt. Ein Werkzeug, das Berechtigungen
+    schreibt, wäre damit der kürzeste Weg von „ein Modell hat Fremdinhalt
+    gelesen" zu „das Modell darf jetzt mehr".
+
+    Der Typ kann das nicht verhindern — ``PermissionAdmin`` ist ein Protokoll,
+    und wer es hereinreicht, kann es benutzen. Deshalb steht die Grenze hier:
+    ``upsert_grant`` und ``revoke`` werden **ausschließlich** in der Route und
+    in ihrer eigenen Implementierung gerufen.
+
+    Die Methode heißt ``revoke_grant`` und nicht ``revoke``, und das ist die
+    Lehre aus der ersten Fassung dieses Tests: ``revoke`` heißt anderswo auch
+    das Beenden einer Sitzung, und der Test schlug an drei Stellen an, die
+    nichts mit Berechtigungen zu tun haben. Der Ausweg wäre eine Ausnahmeliste
+    gewesen — und eine Ausnahmeliste wächst, bis sie den Test aufhebt. Ein
+    eindeutiger Name kostet nichts.
+    """
+    erlaubt = {PERMISSIONS_ROUTE, PERMISSION_STORE}
+    offenders: list[str] = []
+
+    for path in [*_python_files(CORE), *_python_files(REPO / "apps")]:
+        if path in erlaubt:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in SCHREIBENDE_RECHTE
+            ):
+                offenders.append(f"{path.relative_to(REPO)}:{node.lineno} ({node.func.attr})")
+
+    assert not offenders, (
+        "Berechtigungen werden außerhalb der Kante geschrieben:\n"
+        + "\n".join(offenders)
+        + "\nRechte erteilt ein Mensch, kein Werkzeug."
+    )
+
+
+@pytest.mark.invariant("permissions-change-only-at-the-edge")
+def test_kein_werkzeug_traegt_einen_berechtigungs_scope() -> None:
+    """Und keines darf je einen bekommen.
+
+    Die Gegenrichtung derselben Grenze: Selbst wenn niemand den schreibenden
+    Port hereinreicht, wäre ein Werkzeug mit einem Scope aus der
+    Berechtigungsfamilie die Ankündigung, dass es einen geben soll. Der
+    Scope-Katalog kennt keinen solchen — und dieser Test hält fest, dass das
+    eine Entscheidung ist und kein Zufall.
+    """
+    from jarvis_core.tools.builtin import CALENDAR_CREATE, FILES_READ
+
+    for spec in (CALENDAR_CREATE, FILES_READ):
+        assert not any(scope.startswith("permissions.") for scope in spec.scopes), (
+            f"{spec.name} verlangt einen Berechtigungs-Scope: {spec.scopes}"
+        )

@@ -22,7 +22,13 @@ from fastapi import FastAPI
 
 from jarvis_api.db.session import dispose
 from jarvis_api.deps import dispose_redis
-from jarvis_api.routes import actions_router, auth_router, runs_router, undo_router
+from jarvis_api.routes import (
+    actions_router,
+    auth_router,
+    permissions_router,
+    runs_router,
+    undo_router,
+)
 from jarvis_api.settings import get_settings
 
 __all__ = ["app", "create_app"]
@@ -51,6 +57,7 @@ def create_app() -> FastAPI:
     application.include_router(auth_router)
     application.include_router(runs_router)
     application.include_router(actions_router)
+    application.include_router(permissions_router)
     application.include_router(undo_router)
 
     @application.get("/health", tags=["system"])

@@ -165,6 +165,47 @@
         "title": "CeremonyOptions",
         "type": "object"
       },
+      "GrantView": {
+        "properties": {
+          "constraints": {
+            "additionalProperties": true,
+            "title": "Constraints",
+            "type": "object"
+          },
+          "expired": {
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "granted_at": {
+            "format": "date-time",
+            "title": "Granted At",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PermissionMode"
+          }
+        },
+        "required": [
+          "mode",
+          "constraints",
+          "granted_at",
+          "expired"
+        ],
+        "title": "GrantView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -177,6 +218,16 @@
         },
         "title": "HTTPValidationError",
         "type": "object"
+      },
+      "PermissionMode": {
+        "description": "Wie eine Berechtigung erteilt ist.",
+        "enum": [
+          "deny",
+          "confirm",
+          "allow"
+        ],
+        "title": "PermissionMode",
+        "type": "string"
       },
       "PlanStepView": {
         "description": "Ein Planschritt mit seinem **jetzigen** Stand.",
@@ -368,6 +419,17 @@
         "title": "RespondResult",
         "type": "object"
       },
+      "RiskLevel": {
+        "description": "Folgenschwere eines Werkzeugs.\n\nDie Ordnung ist bedeutungstragend und wird explizit definiert — die\nlexikografische Ordnung der Werte wäre falsch (\"critical\" < \"high\").",
+        "enum": [
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ],
+        "title": "RiskLevel",
+        "type": "string"
+      },
       "RunRequest": {
         "description": "Ein neuer Lauf. Führt bewusst keine ``user_id``.",
         "properties": {
@@ -487,6 +549,43 @@
         "title": "RunView",
         "type": "object"
       },
+      "ScopeView": {
+        "description": "Ein Scope mit dem, was der Nutzer dazu entschieden hat — oder nicht.",
+        "properties": {
+          "default_mode": {
+            "$ref": "#/components/schemas/PermissionMode"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "granted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GrantView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "risk_level": {
+            "$ref": "#/components/schemas/RiskLevel"
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "risk_level",
+          "default_mode"
+        ],
+        "title": "ScopeView",
+        "type": "object"
+      },
       "SessionView": {
         "description": "Sitzungsübersicht für das Permission Center.",
         "properties": {
@@ -529,6 +628,36 @@
           "is_current"
         ],
         "title": "SessionView",
+        "type": "object"
+      },
+      "SetGrantRequest": {
+        "description": "Was ein Nutzer über einen Scope entscheidet.\n\nKein ``scope``-Feld: Der Scope steht im Pfad. Zwei Angaben desselben\nGegenstands sind eine Gelegenheit, sie auseinanderlaufen zu lassen.",
+        "properties": {
+          "constraints": {
+            "additionalProperties": true,
+            "title": "Constraints",
+            "type": "object"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PermissionMode"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "SetGrantRequest",
         "type": "object"
       },
       "StepRequest": {
@@ -1160,6 +1289,119 @@
         "summary": "Undo Invocation",
         "tags": [
           "undo"
+        ]
+      }
+    },
+    "/permissions": {
+      "get": {
+        "description": "Der ganze Katalog, mit dem Stand des angemeldeten Nutzers.\n\n**Der Katalog und nicht nur das Erteilte.** „Darf JARVIS Mails senden?\"\nbeantwortet gerade der Scope, zu dem nichts erteilt ist; eine Liste, die\nihn nicht führt, kann die Frage nicht stellen.",
+        "operationId": "list_permissions_permissions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ScopeView"
+                  },
+                  "title": "Response List Permissions Permissions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Permissions",
+        "tags": [
+          "permissions"
+        ]
+      }
+    },
+    "/permissions/{scope}": {
+      "delete": {
+        "description": "Zieht eine Berechtigung zurück.\n\n``204`` auch dann, wenn es nichts zurückzuziehen gab: Danach gilt in beiden\nFällen dasselbe — der Nutzer hat dieses Recht nicht erteilt. Ein ``404``\nwäre eine Auskunft darüber, was jemand erteilt hat, und die gehört nicht in\neinen Statuscode.\n\n**Sofort wirksam.** Die Policy Engine liest bei jedem Aufruf neu; ein Lauf,\nder gerade zwischen zwei Schritten steht, findet das Recht beim nächsten\nnicht mehr vor.",
+        "operationId": "revoke_permission_permissions__scope__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "title": "Scope",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Permission",
+        "tags": [
+          "permissions"
+        ]
+      },
+      "put": {
+        "description": "Erteilt, ändert oder verweigert einen Scope — vollständig.\n\nEin ``PUT`` und kein ``PATCH``, und das ist bedeutungstragend: Was hier\nsteht, gilt danach. Ein Zusammenführen mit dem alten Stand wäre die Art von\nBequemlichkeit, bei der eine Pfadgrenze aus der Vorwoche eine neue\nErteilung still erweitert.",
+        "operationId": "set_permission_permissions__scope__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scope",
+            "required": true,
+            "schema": {
+              "title": "Scope",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrantView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Permission",
+        "tags": [
+          "permissions"
         ]
       }
     },

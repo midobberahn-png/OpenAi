@@ -28,6 +28,7 @@ grundsätzlich zur Verfügung", nicht „was gilt jetzt".
 
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 import structlog
@@ -35,7 +36,8 @@ from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from jarvis_contracts import PermissionGrant, PermissionMode, constraints_for
+from jarvis_contracts import PermissionGrant, PermissionMode, RiskLevel, constraints_for
+from jarvis_core.ports.permissions import ScopeEintrag
 
 __all__ = ["PostgresPermissionStore"]
 
@@ -62,6 +64,78 @@ _SCOPES = text(
        AND mode <> 'deny'
     """
 )
+
+
+_KATALOG = text(
+    """
+    SELECT name, description, default_mode, risk_level
+      FROM scopes
+     ORDER BY name
+    """
+)
+"""Der Scope-Katalog — was es überhaupt gibt.
+
+Ohne Nutzerbezug, und das ist richtig: Der Katalog beschreibt das System und
+nicht eine Person. Die Frage „darf JARVIS Mails senden?" beantwortet gerade der
+Scope, zu dem **nichts** erteilt ist; eine Oberfläche, die nur Erteiltes zeigt,
+kann sie nicht stellen."""
+
+_ALLE_GRANTS = text(
+    """
+    SELECT scope, mode, constraints, granted_at, expires_at
+      FROM permissions
+     WHERE user_id = :user_id
+     ORDER BY scope
+    """
+)
+"""Alles, was diesem Nutzer erteilt ist — auch ``deny`` und Abgelaufenes.
+
+Anders als ``_SCOPES``, das für eine *Entscheidung* filtert. Hier geht es um
+Auskunft, und ein ausdrückliches ``deny`` ist eine Entscheidung des Nutzers:
+Sie zu verschweigen hieße, ihm eine Einstellung zu zeigen, die er nicht
+getroffen hat."""
+
+_UPSERT = text(
+    """
+    INSERT INTO permissions (user_id, scope, mode, constraints, granted_at, expires_at)
+    VALUES (:user_id, :scope, :mode, CAST(:constraints AS jsonb), :granted_at, :expires_at)
+    ON CONFLICT (user_id, scope) DO UPDATE
+       SET mode = EXCLUDED.mode,
+           constraints = EXCLUDED.constraints,
+           granted_at = EXCLUDED.granted_at,
+           expires_at = EXCLUDED.expires_at,
+           updated_at = now()
+    RETURNING scope
+    """
+)
+"""Erteilen oder ersetzen — in einer Anweisung.
+
+``ON CONFLICT … DO UPDATE`` und nicht „lesen, dann entscheiden": Zwei
+gleichzeitige Änderungen desselben Scopes ergäben sonst je nach Reihenfolge
+einen Einfügefehler oder eine verlorene Änderung. ``UNIQUE(user_id, scope)``
+trägt die Zusage, dass es je Scope genau eine Wahrheit gibt.
+
+**Ersetzend und nicht ergänzend, auch bei den Einschränkungen.** Wer eine
+Berechtigung setzt, setzt sie vollständig. Ein Zusammenführen mit dem alten
+Stand wäre die Art von Bequemlichkeit, bei der eine Pfadgrenze aus der
+Vorwoche eine neue Erteilung still erweitert.
+
+Ein unbekannter Scope scheitert am Fremdschlüssel auf ``scopes.name`` — die
+Datenbank weist ihn ab, bevor die Anwendung ihn prüfen kann. Beides ist
+richtig: Die Kante antwortet dem Nutzer verständlich, die Zeile lässt sich
+nicht anders schreiben."""
+
+_REVOKE = text(
+    """
+    DELETE FROM permissions
+     WHERE user_id = :user_id
+       AND scope = :scope
+    RETURNING scope
+    """
+)
+"""``user_id`` steht in der Anweisung. Eine Zugehörigkeit, die sich weglassen
+lässt, wird irgendwann weggelassen — und hier hieße das, fremde Rechte zu
+löschen."""
 
 
 class PostgresPermissionStore:
@@ -119,6 +193,75 @@ class PostgresPermissionStore:
             granted_at=zeile["granted_at"],
             expires_at=zeile["expires_at"],
         )
+
+    async def catalog(self) -> list[ScopeEintrag]:
+        async with self._engine.connect() as conn:
+            zeilen = (await conn.execute(_KATALOG)).mappings().all()
+        return [
+            ScopeEintrag(
+                name=z["name"],
+                description=z["description"],
+                default_mode=PermissionMode(z["default_mode"]),
+                risk_level=RiskLevel(z["risk_level"]),
+            )
+            for z in zeilen
+        ]
+
+    async def grants_for(self, user_id: UUID) -> list[PermissionGrant]:
+        """Alle Berechtigungen eines Nutzers — unlesbare übersprungen.
+
+        Dieselbe Entscheidung wie in ``get_grant()``: Ein Datensatz, der sich
+        nicht auslegen lässt, ist keine Berechtigung. Er hier als „ohne
+        Einschränkungen" anzuzeigen wäre die schlimmste Auskunft — der Nutzer
+        sähe mehr Freiheit, als tatsächlich gilt.
+        """
+        async with self._engine.connect() as conn:
+            zeilen = (await conn.execute(_ALLE_GRANTS, {"user_id": user_id})).mappings().all()
+
+        grants: list[PermissionGrant] = []
+        for zeile in zeilen:
+            try:
+                einschraenkungen = constraints_for(zeile["scope"], zeile["constraints"])
+            except ValidationError as unlesbar:
+                _log.error(
+                    "berechtigung.unlesbar",
+                    scope=zeile["scope"],
+                    user_id=str(user_id),
+                    fehler=str(unlesbar),
+                )
+                continue
+            grants.append(
+                PermissionGrant(
+                    scope=zeile["scope"],
+                    mode=PermissionMode(zeile["mode"]),
+                    constraints=einschraenkungen,
+                    granted_at=zeile["granted_at"],
+                    expires_at=zeile["expires_at"],
+                )
+            )
+        return grants
+
+    async def upsert_grant(self, user_id: UUID, grant: PermissionGrant) -> None:
+        async with self._engine.begin() as conn:
+            await conn.execute(
+                _UPSERT,
+                {
+                    "user_id": user_id,
+                    "scope": str(grant.scope),
+                    "mode": str(grant.mode),
+                    "constraints": json.dumps(
+                        grant.constraints.model_dump(mode="json", exclude_none=True),
+                        ensure_ascii=False,
+                    ),
+                    "granted_at": grant.granted_at,
+                    "expires_at": grant.expires_at,
+                },
+            )
+
+    async def revoke_grant(self, user_id: UUID, scope: str) -> bool:
+        async with self._engine.begin() as conn:
+            treffer = await conn.execute(_REVOKE, {"user_id": user_id, "scope": scope})
+            return treffer.first() is not None
 
     async def granted_scopes(self, user_id: UUID) -> set[str]:
         async with self._engine.connect() as conn:
