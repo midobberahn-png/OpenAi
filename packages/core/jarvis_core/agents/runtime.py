@@ -90,7 +90,7 @@ class AgentSession:
         tracker: BudgetTracker,
         chain: AgentChain,
         tools: Callable[[Run], Awaitable[frozenset[str]]],
-        session_id: UUID,
+        session_id: UUID | None,
         channel: ApprovalChannel = "ui",
     ) -> None:
         self._executor = executor
@@ -104,6 +104,10 @@ class AgentSession:
         # genau darauf zielt ein Angreifer, der eine Mail unterschiebt.
         self._tools = tools
         self._session_id = session_id
+        """``None`` heißt: kein Bestätigungskanal — der Arbeiter, der einen
+        hängengebliebenen Lauf fortsetzt, hat keine Sitzung. Ein Vorschlag, der
+        eine Bestätigung braucht, wird dann abgewiesen, statt eine Anfrage zu
+        erzeugen, die niemand einlösen könnte."""
         self._channel = channel
 
     @property
@@ -233,7 +237,7 @@ class AgentRuntime:
         run: Run,
         tracker: BudgetTracker,
         behaviour: AgentBehaviour,
-        session_id: UUID,
+        session_id: UUID | None,
         context: ContextBundle | None = None,
         budget: RunBudget | None = None,
     ) -> DelegationOutcome:

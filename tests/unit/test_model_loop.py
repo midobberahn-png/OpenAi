@@ -346,6 +346,67 @@ class TestDatenklasse:
         assert ergebnis.result.status is AgentStatus.FAILED
         assert "nicht zulässig" in (ergebnis.result.error or "")
 
+    @pytest.mark.invariant("model-never-sees-excess-data-class")
+    async def test_die_datenklasse_wird_in_jeder_runde_neu_gelesen(self) -> None:
+        """**Aufgefallen beim Anschließen der Schleife.**
+
+        Die Kontamination las die Schleife von Anfang an je Runde aus dem Lauf;
+        die Datenklasse war ein Wert aus dem Konstruktor. Der Unterschied ist
+        nicht theoretisch: Ein Werkzeug stuft den Lauf hoch — ``mail.read``
+        liefert P2, und ein Text, der nach Zugangsdaten aussieht, ergibt P3.
+        Mit einem eingefrorenen Wert liefe die nächste Runde weiter unter der
+        alten Einstufung, und ein Modell, das nur bis P1 zugelassen ist, bekäme
+        P2-Material zu sehen.
+
+        Gemessen an genau diesem Ablauf: Runde 1 ist zulässig, Runde 2 ist es
+        nicht mehr — **weil der Lauf sich dazwischen geändert hat.**
+        """
+        tools, _ = build_registry()
+        policy = PolicyEngine(tools, FakePermissions().allow("mail.read"))
+        executor = ToolExecutor(
+            registry=tools,
+            policy=policy,
+            gateway=ApprovalGateway(InMemoryApprovalStore(), policy, sessions=UnverifiedSessions()),
+            clock=lambda: NOW,
+        )
+        agents = AgentRegistry()
+        agents.register(SUPERVISOR)
+        agents.register(ASSISTENT)
+
+        nur_p1 = ModelCapability(
+            name="klein", provider="ollama", max_data_class=DataClass.P1, context_window=8000
+        )
+        modell = DrehbuchModell([_vorschlag("mail.read", folder="INBOX")])
+        schleife = ModelLoop(
+            spec=ASSISTENT,
+            gateway=ModelGateway({"ollama": modell}, [nur_p1]),
+            tools=tools,
+            model="klein",
+            # Der Lauf startet bei P1 — deshalb ist Runde 1 zulässig.
+            data_class=DataClass.P1,
+        )
+        runtime = AgentRuntime(agents=agents, tools=tools, policy=policy, executor=executor)
+
+        ergebnis = await runtime.delegate(
+            chain=AgentChain(agents=(SUPERVISOR,)),
+            target="assistent",
+            task="Lies die Mails",
+            # ``routed_to=P2``: Das Routing des Laufs lässt P2 zu, damit
+            # ``mail.read`` überhaupt laufen darf — sonst hielte schon der
+            # Datenklassenfilter des Executors den Schritt auf, und der Test
+            # prüfte etwas anderes als die Schleife. Das **Modell** in diesem
+            # Gateway darf nur P1; daran scheitert Runde 2.
+            run=build_run(data_class=DataClass.P1, routed_to=DataClass.P2),
+            tracker=BudgetTracker(RunBudget(), clock=lambda: NOW),
+            behaviour=schleife,
+            session_id=SESSION,
+        )
+
+        assert len(modell.angebote) == 1, "Runde 1 lief, Runde 2 nicht mehr."
+        assert ergebnis.run.data_class is DataClass.P2, "Das Werkzeug hat den Lauf hochgestuft."
+        assert ergebnis.result.status is AgentStatus.FAILED
+        assert "nicht zulässig" in (ergebnis.result.error or "")
+
     async def test_ein_sauberer_lauf_bleibt_sauber(self) -> None:
         """Der Gegentest zur Kontaminationsregel.
 

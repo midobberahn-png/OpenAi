@@ -722,8 +722,8 @@ class TestMehrschrittplan:
         ehrlichste Auskunft, weil ihn niemand ausfuehren konnte. Jetzt kann ihn
         jemand ausfuehren, und ``ready`` ist die ehrliche Auskunft.
 
-        ``needs_model`` bleibt fuer ``agent``: Dort waehlt ein Sub-Agent seine
-        Werkzeuge selbst, und dafuer gibt es weiterhin keinen Endpunkt.
+        Fuer ``agent`` gilt seit der Agentenschleife dasselbe: ``needs_model``
+        wird nicht mehr vergeben.
         """
         await _angemeldet(client, engine)
         lauf = await client.post("/runs", json={"input": "Wie spaet ist es?"})

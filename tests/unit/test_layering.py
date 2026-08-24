@@ -148,3 +148,35 @@ def test_kein_provider_sdk_im_kern() -> None:
         if found:
             offenders.append(f"{path.relative_to(REPO)}: {sorted(found)}")
     assert not offenders, "Provider-SDK im Kern gefunden:\n" + "\n".join(offenders)
+
+
+ORCHESTRATOR = CORE / "orchestrator"
+
+
+@pytest.mark.parametrize("path", _python_files(ORCHESTRATOR), ids=lambda p: p.name)
+def test_der_orchestrator_importiert_nicht_aus_agents(path: Path) -> None:
+    """Die Richtung zwischen ``agents`` und ``orchestrator`` ist eine Einbahnstraße.
+
+    ``agents`` benutzt Executor und Budgetzähler des Orchestrators — nie
+    umgekehrt. Beim Anschließen der Agentenschleife war der bequeme Weg, die
+    Zusammensetzung (``AgentStepSource``) im Orchestrator abzulegen und dort
+    ``ModelLoop`` zu importieren. Das schließt den Kreis, und zwar sofort:
+    ``agents.runtime`` importiert ``orchestrator.executor``, was das Paket
+    ``orchestrator`` lädt, was die neue Datei lädt, die ``agents`` lädt.
+
+    Gemessen an einem ``ImportError`` beim ersten Testlauf und nicht
+    vorhergesehen — deshalb steht die Grenze jetzt als Test da und nicht als
+    guter Vorsatz. Der Ablauf kennt ein Protokoll (``AgentStepRunner``); was es
+    erfüllt, entsteht bei den Agenten.
+    """
+    module = [
+        node.module
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module
+    ]
+    verstoesse = [m for m in module if m.startswith("jarvis_core.agents")]
+    assert not verstoesse, (
+        f"{path.name} importiert aus jarvis_core.agents: {sorted(verstoesse)}. "
+        "Der Orchestrator spricht über Protokolle; die Zusammensetzung gehört "
+        "zu den Agenten."
+    )

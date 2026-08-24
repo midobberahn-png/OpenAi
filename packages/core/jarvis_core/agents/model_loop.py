@@ -41,6 +41,7 @@ from jarvis_contracts import (
     MessageRole,
     ProposedToolCall,
     Usage,
+    escalate,
 )
 from jarvis_core.agents.runtime import AgentSession
 from jarvis_core.providers.gateway import ModelGateway, ModelNotPermitted
@@ -70,9 +71,19 @@ class ModelLoop:
         self._tools = tools
         self._model = model
         self._data_class = data_class
-        """Die Obergrenze für die Modellwahl — aus dem Routing des Laufs, nicht
-        aus der Aufgabe. Ein Agent, der seine eigene Datenklasse bestimmt,
-        bestimmt damit, wohin die Daten gehen."""
+        """Die Datenklasse beim Start — aus dem Routing des Laufs, nicht aus der
+        Aufgabe. Ein Agent, der seine eigene Datenklasse bestimmt, bestimmt
+        damit, wohin die Daten gehen.
+
+        **Sie ist der Anfangswert und nicht der Wert.** Was in jeder Runde gilt,
+        steht im Lauf: ``escalate(self._data_class, session.run.data_class)``.
+        Der Grund ist derselbe wie beim Angebot — der Lauf ändert sich unter der
+        Schleife. Ein ``files.read`` auf einen Text, der nach Zugangsdaten
+        aussieht, stuft den Lauf auf P3; ein einmal gelesener Wert ließe die
+        nächste Runde weiterhin als P2 laufen, und ein Modell, das nur bis P2
+        zugelassen ist, bekäme P3-Material zu sehen. Die Kontamination wurde
+        von Anfang an je Runde gelesen; die Datenklasse nicht — beim
+        Anschließen der Schleife aufgefallen."""
 
     async def act(self, session: AgentSession, request: AgentRequest) -> AgentResult:
         verlauf: list[Message] = [
@@ -83,7 +94,6 @@ class ModelLoop:
 
         benutzt: list[str] = []
         verbrauch = Usage()
-        seq = 0
 
         for runde in range(self._spec.max_iterations):
             # Das Angebot wird in **jeder** Runde neu bestimmt. Nach einem
@@ -101,7 +111,9 @@ class ModelLoop:
                         tools=angebot,
                         max_tokens=min(4096, max(256, request.budget.max_tokens // 4)),
                     ),
-                    data_class=self._data_class,
+                    # Beides aus dem Lauf, wie er *jetzt* ist — und beides
+                    # kann nur steigen.
+                    data_class=escalate(self._data_class, session.run.data_class),
                     taint=session.run.taint_level,
                 )
             except ModelNotPermitted as abgelehnt:
@@ -132,8 +144,7 @@ class ModelLoop:
             verlauf.append(Message(role=MessageRole.ASSISTANT, content=antwort.text))
 
             for vorschlag in antwort.tool_calls:
-                seq += 1
-                ausgang = await self._versuche(session, vorschlag, seq=seq)
+                ausgang = await self._versuche(session, vorschlag)
                 verlauf.append(ausgang.nachricht)
 
                 if ausgang.wartet:
@@ -176,17 +187,25 @@ class ModelLoop:
         """
         return list(self._tools.to_schema(set(await session.current_tools())))
 
-    async def _versuche(
-        self, session: AgentSession, vorschlag: ProposedToolCall, *, seq: int
-    ) -> _Ausgang:
+    async def _versuche(self, session: AgentSession, vorschlag: ProposedToolCall) -> _Ausgang:
         """Reicht einen Vorschlag weiter — und übersetzt das Ergebnis zurück.
 
         Jeder Ausgang landet als ``tool``-Nachricht im Verlauf, auch die
         Ablehnung. Das ist Absicht: Ein Modell, dem man verschweigt, dass sein
         Vorschlag abgelehnt wurde, schlägt ihn wieder vor.
+
+        **Die Schrittnummer kommt aus dem Lauf und nicht aus einem Zähler
+        dieser Schleife.** Ein Zähler begänne bei 1 — und die 1 ist die Nummer
+        des ersten *Planschrittes*. Jeder Werkzeugaufruf eines Agenten schreibt
+        ein ``StepOutcome``; mit den Zahlen 1, 2, 3 träte er der Reihe nach
+        jeden Planschritt als erledigt, ohne dass einer gelaufen wäre.
+        ``Run.next_step_seq`` vergibt oberhalb des ganzen Plans und ist nach
+        jedem ausgeführten Aufruf eine höher.
         """
         try:
-            ergebnis = await session.call_tool(vorschlag.tool_name, vorschlag.arguments, seq=seq)
+            ergebnis = await session.call_tool(
+                vorschlag.tool_name, vorschlag.arguments, seq=session.run.next_step_seq
+            )
         except UnknownTool:
             # Halluzinierte Werkzeugnamen sind alltäglich und kein
             # Sicherheitsvorfall. Sie gehören ins Gespräch zurück, damit das

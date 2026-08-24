@@ -12,7 +12,7 @@ der Orchestrator selbst beurteilt, was „wahrscheinlich sicher“ ist, gibt es
 zwei Wahrheiten über Berechtigungen — und die zweite prüft niemand.
 """
 
-from .advance import AdvanceOutcome, AdvanceRejected, RunAdvancer
+from .advance import AdvanceOutcome, AdvanceRejected, AgentStepRunner, RunAdvancer
 from .budget import BudgetTracker, utc_now
 from .classifier import TRIVIAL_UTTERANCES, classify
 from .executor import StepExecution, StepStatus, ToolExecutor
@@ -48,6 +48,7 @@ __all__ = [
     "TRIVIAL_UTTERANCES",
     "AdvanceOutcome",
     "AdvanceRejected",
+    "AgentStepRunner",
     "ArgumentsUnavailable",
     "BudgetTracker",
     "ExecutionMode",

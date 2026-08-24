@@ -38,6 +38,7 @@ from pydantic import BaseModel, Field
 
 from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.deps import (
+    Agents,
     Approvals,
     CurrentSession,
     Invocations,
@@ -156,12 +157,12 @@ async def _planschritte(lauf: Run, *, angebot: set[str]) -> list[PlanStepView]:
     nicht mehr geht; das andere verschweigt, dass sich die Lage geändert hat.
     Stattdessen steht je Schritt, woran er jetzt ist.
 
-    ``needs_model`` blieb übrig für den einen Schritttyp, den dieser Endpunkt
-    weiterhin nicht ausführt: ``agent``. Ein Sub-Agent wählt seine Werkzeuge
-    selbst — das ist eine andere und größere Fläche als „ein Modell füllt die
-    Argumente eines angekündigten Schrittes", und ``ModelLoop`` hat dafür noch
-    keinen Endpunkt. ``llm``-Schritte sind seit dem Antwortschritt ausführbar
-    und werden deshalb wie jeder andere fällige Schritt als ``ready`` geführt.
+    ``needs_model`` ist damit **entfallen**: Auch ``agent``-Schritte sind
+    ausführbar, seit die Modellschleife ihren Weg hinein hat
+    (``plan_agent.py``). Der Status hatte einen ehrlichen Zweck — er sagte „das
+    kann hier niemand ausführen" — und wäre jetzt eine Falschaussage. Er bleibt
+    im Vertrag als Wert erwähnt, weil ein Client ihn aus älteren Antworten
+    kennen kann; vergeben wird er nicht mehr.
     """
     if lauf.plan is None:
         return []
@@ -175,11 +176,12 @@ async def _planschritte(lauf: Run, *, angebot: set[str]) -> list[PlanStepView]:
             stand = "done"
         elif schritt.seq not in bereit:
             stand = "waiting"
-        elif schritt.kind == "agent":
-            stand = "needs_model"
-        elif schritt.kind == "llm":
-            # Kein Angebotsabgleich: Der Schritt bekommt kein Werkzeug zu sehen
-            # und kann deshalb an keinem fehlenden scheitern.
+        elif schritt.kind in {"agent", "llm"}:
+            # Kein Angebotsabgleich, und für beide aus je eigenem Grund: Der
+            # ``llm``-Schritt bekommt gar kein Werkzeug zu sehen; der
+            # ``agent``-Schritt bestimmt sein Angebot in jeder Runde neu, aus
+            # dem Lauf, wie er dann ist. Ein Abgleich mit dem Angebot von
+            # *jetzt* sagte über beide nichts.
             stand = "ready"
         elif schritt.target not in angebot:
             stand = "blocked"
@@ -544,6 +546,7 @@ async def advance_run(
     invocations: Invocations,
     modell: ModelArguments,
     antworten: ModelResponse,
+    agenten: Agents,
 ) -> StepView:
     """Führt den nächsten fälligen Schritt des Plans aus.
 
@@ -578,6 +581,7 @@ async def advance_run(
         ),
         arguments=modell,
         responses=antworten,
+        agents=agenten,
         # Ohne diesen Parameter ist ein fremder Anspruch eine Sackgasse: 409,
         # und der Lauf steht für immer. Mit ihm sieht der Ablauf nach, ob die
         # Frist abgelaufen ist und ob das Werkzeugprotokoll eine Wirkung

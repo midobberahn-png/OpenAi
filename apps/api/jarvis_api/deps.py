@@ -20,6 +20,7 @@ from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from jarvis_api.agents import agent_catalog
 from jarvis_api.auth import WebAuthnVerifier
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.db.calendar_store import PostgresCalendarStore
@@ -34,13 +35,19 @@ from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
 from jarvis_api.tools import file_reader_for, tool_catalog
 from jarvis_contracts import Session
+from jarvis_core.agents import AgentRuntime, AgentStepSource
 from jarvis_core.auth import PasskeyService, SessionManager
 from jarvis_core.limits import RateLimiter, RateLimitExceeded, RateLimitPolicy
-from jarvis_core.orchestrator import PlanArgumentSource, PlanResponseSource
+from jarvis_core.orchestrator import (
+    PlanArgumentSource,
+    PlanResponseSource,
+    ToolExecutor,
+)
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
 from jarvis_core.tools import ToolRegistry
 
 __all__ = [
+    "Agents",
     "Approvals",
     "CurrentSession",
     "DbConnection",
@@ -56,6 +63,7 @@ __all__ = [
     "SessionToken",
     "Sessions",
     "Tools",
+    "agent_step_source",
     "approval_gateway",
     "client_identifier",
     "current_session",
@@ -287,6 +295,38 @@ def plan_response_source(
 
 
 ModelResponse = Annotated[PlanResponseSource, Depends(plan_response_source)]
+
+
+def agent_step_source(
+    tools: Tools,
+    policy: Policy,
+    invocations: Invocations,
+    approvals: Approvals,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AgentStepSource:
+    """Die Quelle für Planschritte der Art ``agent``.
+
+    Sie bekommt denselben Executor wie jeder andere Schritt — und das ist die
+    Aussage: Ein Werkzeugaufruf eines Sub-Agenten geht durch Policy Engine,
+    Bestätigung und Ausführungs-Gate wie eine Absicht des Nutzers. Die
+    Agentenkette ist eine zusätzliche Verengung davor, kein zweiter Weg daneben.
+    """
+    return AgentStepSource(
+        runtime=AgentRuntime(
+            agents=agent_catalog(),
+            tools=tools,
+            policy=policy,
+            executor=ToolExecutor(
+                registry=tools, policy=policy, gateway=approvals, invocations=invocations
+            ),
+        ),
+        agents=agent_catalog(),
+        gateway=model_gateway(settings),
+        tools=tools,
+    )
+
+
+Agents = Annotated[AgentStepSource, Depends(agent_step_source)]
 
 
 def policy_engine(tools: Tools, permissions: Permissions) -> PolicyEngine:

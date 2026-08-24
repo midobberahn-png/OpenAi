@@ -41,12 +41,14 @@ abgebrochene Läufe fortsetzt, spricht keins. Ein Schichttest hält das fest.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
 from jarvis_contracts import (
+    AgentResult,
+    AgentStatus,
     ApprovalChannel,
     PendingAction,
     Plan,
@@ -67,7 +69,43 @@ from jarvis_core.policy.engine import PolicyEngine
 from jarvis_core.ports.runs import RunStateConflict, RunStore
 from jarvis_core.tools.registry import ToolRegistry
 
-__all__ = ["AdvanceOutcome", "AdvanceRejected", "RunAdvancer"]
+__all__ = ["AdvanceOutcome", "AdvanceRejected", "AgentStepRunner", "RunAdvancer"]
+
+
+class AgentStepOutcome(Protocol):
+    """Was ein Agentenschritt zurückgibt: ein Ergebnis und der Lauf dazu.
+
+    Strukturell und nicht als Import: ``DelegationOutcome`` lebt bei den
+    Agenten, und die Abhängigkeit zwischen den Paketen ist eine Einbahnstraße
+    (``agents`` → ``orchestrator``). Ein Import in dieser Richtung schlösse den
+    Kreis; ein Protokoll sagt dasselbe, ohne ihn zu schließen.
+    """
+
+    @property
+    def result(self) -> AgentResult: ...
+
+    @property
+    def run(self) -> Run: ...
+
+
+class AgentStepRunner(Protocol):
+    """Wer einen ``agent``-Schritt ausführt.
+
+    Erfüllt von ``jarvis_core.agents.plan_step.AgentStepSource``. Der Ablauf
+    braucht davon nur, dass es ihn gibt und was er zurückgibt — welche
+    Modellschleife dahinter steckt und mit welchen Rechten sie läuft, ist
+    ausdrücklich nicht seine Frage.
+    """
+
+    async def for_step(
+        self,
+        *,
+        step: PlanStep,
+        run: Run,
+        tracker: BudgetTracker,
+        goal: str,
+        session_id: UUID | None,
+    ) -> AgentStepOutcome: ...
 
 
 class AdvanceRejected(Exception):
@@ -131,6 +169,7 @@ class RunAdvancer:
         executor: ToolExecutor,
         arguments: PlanArgumentSource,
         responses: PlanResponseSource,
+        agents: AgentStepRunner | None = None,
         recovery: Recovery | None = None,
         channel: ApprovalChannel = "ui",
     ) -> None:
@@ -140,6 +179,11 @@ class RunAdvancer:
         self._executor = executor
         self._arguments = arguments
         self._responses = responses
+        self._agents = agents
+        """Ohne Agentenquelle bleibt ein ``agent``-Schritt abgewiesen — der
+        Stand vor diesem Block. ``None`` ist deshalb kein Notbehelf, sondern
+        die ehrliche Auskunft eines Aufrufers, der keinen Agentenkatalog hat."""
+
         self._recovery = recovery
         """Ohne Wiederaufnahme bleibt ein fremder Anspruch eine Sackgasse, und
         das ist der bisherige Stand: ``None`` heißt „ein beanspruchter Schritt
@@ -195,6 +239,10 @@ class RunAdvancer:
             # keinen direkten Weg, und das ist Absicht.
             lauf = self._executor.start(lauf, tracker)
 
+        if schritt.kind == "agent":
+            return await self._agent(
+                lauf, tracker, plan, schritt, status_vorher, session_id, anspruch
+            )
         if schritt.kind != "tool":
             return await self._antwort(lauf, tracker, plan, schritt, status_vorher, anspruch)
         return await self._werkzeug(
@@ -280,14 +328,13 @@ class RunAdvancer:
         Ein Schritt, der ohnehin nicht laufen kann, soll ihn gar nicht erst
         belegen.
         """
-        if schritt.kind == "agent":
-            # ``ModelLoop`` ist gebaut und hat keinen Endpunkt. Ein Sub-Agent
-            # wählt seine Werkzeuge selbst — eine andere und größere Fläche als
-            # „ein Modell füllt die Argumente eines angekündigten Schrittes".
+        if schritt.kind == "agent" and self._agents is None:
+            # Ohne Agentenquelle wie bisher: Die Schleife ist gebaut, dieser
+            # Aufrufer hat sie nur nicht verdrahtet.
             raise AdvanceRejected(
                 "needs-agent",
                 f"Schritt {schritt.seq} delegiert an den Sub-Agenten {schritt.target!r}. "
-                "Die Agentenschleife hat noch keinen Endpunkt.",
+                "Dieser Aufrufer hat keine Agentenquelle.",
             )
 
         if schritt.kind != "tool" and vorgegeben is not None:
@@ -496,6 +543,118 @@ class RunAdvancer:
             reason="Antwort formuliert.",
             display=antwort.text,
         )
+
+    # -- ③④⑤ Agentenschritt ------------------------------------------------
+    async def _agent(
+        self,
+        lauf: Run,
+        tracker: BudgetTracker,
+        plan: Plan,
+        schritt: PlanStep,
+        status_vorher: RunStatus,
+        session_id: UUID | None,
+        anspruch: UUID,
+    ) -> AdvanceOutcome:
+        """Ein Sub-Agent führt seine Schleife — genau einmal.
+
+        **Die Grenze in der Mitte liegt hier anders als beim Werkzeugschritt.**
+        Dort trennt eine Zeile „nichts geschehen" von „gewirkt". Hier kann die
+        Schleife *mehrere* Werkzeuge ausgeführt haben, bevor sie endet — die
+        Grenze ist deshalb der Eintritt in ``for_step``. Alles davor gibt den
+        Anspruch zurück, alles ab dort nicht mehr.
+
+        **Und deshalb wird dieser Schritt in jedem Ausgang abgeschlossen**, auch
+        wenn der Agent nicht fertig wurde. Ein offen gelassener Agentenschritt
+        wäre eine Einladung, ihn zu wiederholen — und ein zweiter Durchgang
+        führte die Werkzeuge des ersten erneut aus. Was er erreicht hat, steht
+        in seinem Ergebnis; ``ok`` sagt, ob das ein Erfolg war.
+        """
+        if self._agents is None:  # pragma: no cover - in ③ bereits abgewiesen
+            raise AdvanceRejected("needs-agent", "Dieser Aufrufer hat keine Agentenquelle.")
+
+        try:
+            ausgang = await self._agents.for_step(
+                step=schritt,
+                run=lauf,
+                tracker=tracker,
+                goal=plan.goal,
+                session_id=session_id,
+            )
+        except PlanStepUnavailable as ohne:
+            # Vor der Schleife gescheitert: kein Modell, kein solcher Agent,
+            # Delegation unzulässig. Nichts ist geschehen.
+            await self._runs.release_step(lauf.id, anspruch)
+            raise AdvanceRejected("no-agent", str(ohne)) from ohne
+        except BaseException:
+            # Auch hier gilt die Regel von ③: Was nachweislich nichts bewirkt
+            # hat, gibt den Anspruch zurück. Ein Abbruch *innerhalb* der
+            # Schleife fällt nicht hierher — ``delegate`` fängt ihn nicht, und
+            # ein Werkzeug, das schon lief, hat bereits gewirkt.
+            await self._runs.release_step(lauf.id, anspruch)
+            raise
+
+        ergebnis = ausgang.result
+        erfolg = ergebnis.status is AgentStatus.SUCCESS
+        fertig = ausgang.run.model_copy(
+            update={
+                "state": ausgang.run.state.with_step_done(
+                    StepOutcome(
+                        seq=schritt.seq,
+                        ok=erfolg,
+                        summary=self._agent_zusammenfassung(ergebnis),
+                        model_view=self._agent_modellsicht(ergebnis),
+                        finished_at=utc_now(),
+                    )
+                ),
+                "usage": tracker.usage,
+            }
+        )
+        if erfolg:
+            # Nur bei Erfolg: Ein Lauf, der auf eine Bestätigung wartet, ist
+            # nicht fertig, und ``finish()`` auf ihn anzuwenden hieße, den
+            # wartenden Menschen wegzudefinieren.
+            fertig = self._falls_fertig(fertig, tracker, plan)
+        await self._speichern(fertig, status_vorher, anspruch)
+
+        return AdvanceOutcome(
+            status="executed" if erfolg else "blocked",
+            run=fertig,
+            reason=self._agent_zusammenfassung(ergebnis),
+            display=ergebnis.output or "",
+            code=None if erfolg else f"agent-{ergebnis.status}",
+        )
+
+    @staticmethod
+    def _agent_zusammenfassung(ergebnis: AgentResult) -> str:
+        """Eine Zeile für Menschen — was der Agent erreicht hat.
+
+        Die Fälle werden benannt und nicht gedeutet: ``partial`` heißt „die
+        Runden waren aufgebraucht", ``needs_confirmation`` heißt „es wartet ein
+        Mensch". Beides ist kein Erfolg, und beides als „erledigt"
+        zusammenzufassen wäre eine Falschaussage in der Laufübersicht.
+        """
+        werkzeuge = ", ".join(ergebnis.tools_used) or "keine"
+        if ergebnis.status is AgentStatus.NEEDS_CONFIRMATION:
+            return f"Wartet auf eine Bestätigung. Bis dahin ausgeführt: {werkzeuge}."
+        if ergebnis.status is AgentStatus.PARTIAL:
+            return f"Nach der zulässigen Zahl von Runden nicht fertig. Ausgeführt: {werkzeuge}."
+        if ergebnis.status is AgentStatus.FAILED:
+            return f"Gescheitert: {ergebnis.error or 'ohne Angabe'}."
+        return (ergebnis.output or "Erledigt.")[:2000]
+
+    @staticmethod
+    def _agent_modellsicht(ergebnis: AgentResult) -> str:
+        """Was ein späterer Schritt von diesem Agenten sehen darf: seinen Text.
+
+        Ausdrücklich **nicht** die Werkzeugdaten, die er unterwegs gelesen hat.
+        Die stehen bereits als eigene ``StepOutcome`` im Lauf, jede mit der
+        Grenze ihres eigenen Werkzeugs (ADR-014). Sie hier noch einmal
+        durchzureichen hieße, dieselbe Zusage zweimal zu geben — und einmal
+        davon ohne Deklaration.
+        """
+        if ergebnis.status is AgentStatus.FAILED:
+            return ""
+        return (ergebnis.output or "")[:8000]
 
     # -- Gemeinsames ------------------------------------------------------
     def _falls_fertig(self, lauf: Run, tracker: BudgetTracker, plan: Plan) -> Run:

@@ -33,6 +33,7 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from jarvis_api.agents import agent_catalog
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.db.calendar_store import PostgresCalendarStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
@@ -43,6 +44,7 @@ from jarvis_api.providers import model_gateway
 from jarvis_api.settings import Settings
 from jarvis_api.tools import file_reader_for, tool_catalog
 from jarvis_contracts import Run
+from jarvis_core.agents import AgentRuntime, AgentStepSource
 from jarvis_core.auth import SessionManager
 from jarvis_core.orchestrator import (
     DEFAULT_LEASE,
@@ -111,18 +113,33 @@ def worker_for(
                 policy,
                 sessions=SessionManager(PostgresSessionStore(conn)),
             )
+            executor = ToolExecutor(
+                registry=registry,
+                policy=policy,
+                gateway=approvals,
+                invocations=invocations,
+            )
+            katalog = agent_catalog()
             yield RunAdvancer(
                 runs=runs,
                 tools=registry,
                 policy=policy,
-                executor=ToolExecutor(
-                    registry=registry,
-                    policy=policy,
-                    gateway=approvals,
-                    invocations=invocations,
-                ),
+                executor=executor,
                 arguments=PlanArgumentSource(gateway=model_gateway(settings)),
                 responses=PlanResponseSource(gateway=model_gateway(settings)),
+                # Auch der Arbeiter führt Agentenschritte aus — mit derselben
+                # Grenze wie überall: ohne Sitzung entsteht keine Bestätigung.
+                # Ein Sub-Agent, der ein bestätigungspflichtiges Werkzeug
+                # vorschlägt, bekommt eine Ablehnung ins Gespräch zurück und
+                # kann es anders versuchen.
+                agents=AgentStepSource(
+                    runtime=AgentRuntime(
+                        agents=katalog, tools=registry, policy=policy, executor=executor
+                    ),
+                    agents=katalog,
+                    gateway=model_gateway(settings),
+                    tools=registry,
+                ),
                 recovery=Recovery(runs=runs, invocations=invocations, tools=registry, lease=lease),
             )
 
