@@ -243,7 +243,7 @@ class TestWenSuchtDerArbeiterUeberhaupt:
         speicher = PostgresRunStore(engine)
         assert await speicher.claim_step(uuid.UUID(run_id), 1, erwarteter_status=RunStatus.QUEUED)
 
-        gefunden = await speicher.stale_runs(frist=FRIST, limit=20)
+        gefunden = await speicher.stale_runs(frist=FRIST, idle=FRIST, limit=20)
 
         assert uuid.UUID(run_id) not in {lauf.id for lauf in gefunden}
 
@@ -259,6 +259,85 @@ class TestWenSuchtDerArbeiterUeberhaupt:
         await _kalenderrecht(engine, user_id=user_id, mode="allow")
         run_id = await _lauf_mit_terminschritt(client, engine)
 
-        gefunden = await PostgresRunStore(engine).stale_runs(frist=timedelta(0), limit=20)
+        gefunden = await PostgresRunStore(engine).stale_runs(
+            frist=timedelta(0), idle=timedelta(0), limit=20
+        )
 
         assert uuid.UUID(run_id) not in {lauf.id for lauf in gefunden}
+
+
+class TestEinLiegengebliebenerLauf:
+    """**Der Befund, und er ist die Kehrseite einer richtigen Entscheidung.**
+
+    Der Arbeiter sucht bislang ausschließlich Läufe mit einem **überfälligen
+    Anspruch** — jemand hat begonnen und ist abgestürzt. Das war richtig
+    gedacht: Ein Lauf *ohne* Anspruch ist keine Wiederaufnahme, und einen
+    `queued`-Lauf von sich aus anzustoßen hieße, bei etwas zu handeln, das der
+    Nutzer vielleicht liegen gelassen hat.
+
+    Die Kehrseite fiel erst mit dem Chat auf: Ein Lauf **mitten im Plan** hat
+    keinen Anspruch — er wird nach jedem Schritt freigegeben. Wer den Browser
+    schließt, während Schritt zwei von vier fällig ist, hinterlässt einen Lauf,
+    den niemand je aufgreift. Kein Anspruch, also kein Fund; kein Zuschauer,
+    also kein `advance`.
+
+    Und *dieser* Lauf ist etwas anderes als ein liegengelassener: Es sind
+    Schritte gelaufen. Der Nutzer hat nicht nur gefragt, das System hat schon
+    gehandelt — und mittendrin aufzuhören ist der eine Zustand, den niemand
+    gewollt hat.
+    """
+
+    @pytest.mark.invariant("hung-step-is-reassigned-only-when-provably-idle")
+    async def test_ein_lauf_mitten_im_plan_wird_aufgegriffen(
+        self, client: AsyncClient, engine: AsyncEngine, drehbuch: Drehbuchmodell
+    ) -> None:
+        user_id = await _angemeldet(client, engine)
+        await _kalenderrecht(engine, user_id=user_id, mode="allow")
+        run_id = await _lauf_mit_terminschritt(client, engine)
+
+        # Ein Schritt läuft — danach ist der Anspruch frei und der Lauf steht
+        # mitten im Plan. Genau so sieht ein geschlossener Browser aus.
+        erster = await client.post(f"/runs/{run_id}/advance", json={"arguments": TERMIN})
+        assert erster.json()["status"] == "executed", erster.json()
+        async with engine.begin() as conn:
+            zustand = (
+                await conn.execute(
+                    text("SELECT status, state FROM runs WHERE id = :r"), {"r": uuid.UUID(run_id)}
+                )
+            ).one()
+        assert zustand.status == "executing"
+        assert zustand.state.get("claim_id") is None, "Kein Anspruch — und das ist der Punkt."
+
+        # ``idle=0``: Gemessen wird das Aufgreifen, nicht das Warten. Dass die
+        # Frist trennt, prüft der Test darunter.
+        bericht = await worker_for(engine, get_settings(), lease=FRIST, idle=timedelta(0)).sweep()
+
+        gemeldet = [e for e in bericht.ergebnisse if e.run_id == run_id]
+        assert gemeldet, (
+            "Der Arbeiter hat einen Lauf mitten im Plan nicht aufgegriffen. "
+            f"Gefunden: {bericht.ergebnisse}"
+        )
+
+    @pytest.mark.invariant("hung-step-is-reassigned-only-when-provably-idle")
+    async def test_ein_lauf_der_gerade_getrieben_wird_bleibt_unberuehrt(
+        self, client: AsyncClient, engine: AsyncEngine, drehbuch: Drehbuchmodell
+    ) -> None:
+        """**Die Gegenprobe, und sie ist die wichtigere.**
+
+        Die Oberfläche treibt einen Plan in Sekunden. Griffe der Arbeiter
+        sofort mit zu, führten zwei Treiber denselben Lauf — der Anspruch
+        verhinderte zwar zwei gleichzeitige Schritte, aber nicht, dass der
+        Arbeiter dem Nutzer die Schritte wegnimmt, während er zusieht.
+
+        Die Frist ist das, was „wird getrieben" von „liegt" trennt.
+        """
+        user_id = await _angemeldet(client, engine)
+        await _kalenderrecht(engine, user_id=user_id, mode="allow")
+        run_id = await _lauf_mit_terminschritt(client, engine)
+        await client.post(f"/runs/{run_id}/advance", json={"arguments": TERMIN})
+
+        bericht = await worker_for(engine, get_settings(), lease=FRIST).sweep()
+
+        assert [e for e in bericht.ergebnisse if e.run_id == run_id] == [], (
+            "Der Arbeiter hat einem Lauf zugegriffen, der gerade getrieben wird."
+        )

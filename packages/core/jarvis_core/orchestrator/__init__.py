@@ -29,6 +29,7 @@ from .plan_response import (
 )
 from .planner import ExecutionMode, plan_turn, select_mode
 from .recovery import (
+    DEFAULT_IDLE,
     DEFAULT_LEASE,
     Recovery,
     RecoveryVerdict,
@@ -44,6 +45,7 @@ from .router import (
 from .worker import RunWorker, SweepReport, SweepResult
 
 __all__ = [
+    "DEFAULT_IDLE",
     "DEFAULT_LEASE",
     "TRIVIAL_UTTERANCES",
     "AdvanceOutcome",

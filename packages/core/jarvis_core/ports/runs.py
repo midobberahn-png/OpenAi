@@ -101,8 +101,26 @@ class RunStore(Protocol):
         """
         ...
 
-    async def stale_runs(self, *, frist: timedelta, limit: int = 20) -> list[Run]:
-        """Läufe, deren beanspruchter Schritt überfällig ist — **über alle Nutzer**.
+    async def stale_runs(self, *, frist: timedelta, idle: timedelta, limit: int = 20) -> list[Run]:
+        """Läufe, die jemand aufgreifen sollte — **über alle Nutzer**.
+
+        **Zwei Lagen, zwei Fristen, und sie sind verschieden.**
+
+        * *Überfällig beansprucht* (``frist``): Jemand hat einen Schritt
+          begonnen und ist nicht zurückgekommen. Ob dabei etwas gewirkt hat,
+          weiß nur das Werkzeugprotokoll.
+        * *Liegengeblieben* (``idle``): Ein Lauf steht **mitten im Plan** und
+          hat keinen Anspruch — er wird nach jedem Schritt freigegeben. Wer den
+          Browser schließt, während Schritt zwei von vier fällig ist,
+          hinterlässt genau das. Hier ist nichts unklar: Der letzte Schritt ist
+          sauber abgeschlossen, der nächste war nur nie dran.
+
+        Die zweite Lage kam später dazu und ist die Kehrseite einer richtigen
+        Entscheidung: Ein Lauf ohne Anspruch ist keine Wiederaufnahme. Für
+        einen ``queued``-Lauf gilt das weiterhin — dort hat noch nichts
+        stattgefunden, und ihn anzustoßen hieße, bei etwas zu handeln, das
+        jemand vielleicht liegen gelassen hat. Sobald ein Schritt gelaufen ist,
+        ist es kein Liegenlassen mehr, sondern ein halb erledigter Auftrag.
 
         Die einzige Signatur dieses Ports ohne ``user_id``, und sie braucht
         eine Begründung, weil ``list_for_user`` ausdrücklich das Gegenteil tut:

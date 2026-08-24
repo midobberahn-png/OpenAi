@@ -86,9 +86,27 @@ _UEBERFAELLIG = text(
     SELECT {_SPALTEN}
       FROM runs
      WHERE status IN ('queued', 'executing')
-       AND (state ->> 'claim_id') IS NOT NULL
-       AND (state ->> 'claimed_at')::timestamptz < now() - CAST(:frist AS interval)
-     ORDER BY (state ->> 'claimed_at')::timestamptz
+       AND (
+             (
+               -- ① Überfällig beansprucht: jemand hat begonnen und ist nicht
+               --    zurückgekommen. Was dabei gewirkt hat, weiß das Protokoll.
+               (state ->> 'claim_id') IS NOT NULL
+               AND (state ->> 'claimed_at')::timestamptz < now() - CAST(:frist AS interval)
+             )
+             OR (
+               -- ② Liegengeblieben: mitten im Plan, ohne Anspruch. Der letzte
+               --    Schritt ist sauber abgeschlossen, der nächste war nie dran.
+               (state ->> 'claim_id') IS NULL
+               AND status = 'executing'
+               AND jsonb_array_length(COALESCE(state -> 'completed_steps', '[]'::jsonb)) > 0
+               AND (state -> 'completed_steps' -> -1 ->> 'finished_at')::timestamptz
+                     < now() - CAST(:idle AS interval)
+             )
+           )
+     ORDER BY COALESCE(
+                (state ->> 'claimed_at')::timestamptz,
+                (state -> 'completed_steps' -> -1 ->> 'finished_at')::timestamptz
+              )
      LIMIT :limit
     """
 )
@@ -110,12 +128,32 @@ ankommt: *begonnen und stehengeblieben* gegen *nie begonnen*. Ein Lauf ohne
 Anspruch ist keine Wiederaufnahme — ihn von sich aus anzustoßen hieße, bei
 einem Lauf zu handeln, den der Nutzer vielleicht liegen gelassen hat.
 
+**Und genau das hat später eine zweite Lage nötig gemacht.** Der Satz oben
+stimmt für einen Lauf, in dem noch nichts geschehen ist. Er stimmt *nicht* für
+einen Lauf **mitten im Plan**: Dort hat kein Anspruch offen zu stehen, weil er
+nach jedem Schritt freigegeben wird. Wer den Browser schließt, während Schritt
+zwei von vier fällig ist, hinterlässt einen Lauf, den bis dahin niemand
+aufgriff — kein Anspruch, also kein Fund. Aufgefallen erst mit dem Chat, der
+einen Plan tatsächlich zu Ende treibt.
+
+Zweig ② deckt das ab, und ``jsonb_array_length(completed_steps) > 0`` ist die
+Grenze: Ein Lauf ohne einen einzigen Schritt bleibt draußen. Sobald einer
+gelaufen ist, ist es kein Liegenlassen mehr, sondern ein halb erledigter
+Auftrag — und das ist der eine Zustand, den niemand gewollt hat.
+
+``-> -1`` ist das jüngste Element des Arrays; sein ``finished_at`` beantwortet
+„seitdem ist nichts passiert", ohne dass es dafür eine eigene Spalte bräuchte.
+Die Frist dafür (``:idle``) ist bewusst eine **andere** als ``:frist``: „wie
+lange darf ein Schritt dauern" und „wie lange darf ein Lauf stillstehen" sind
+zwei Fragen, und ein Wert für beide wäre ihre Verwechslung.
+
 ``awaiting_confirmation`` fehlt in der Liste, obwohl der Index ihn führt: Dort
 wartet ein Mensch, und auf den zu warten ist der Zweck des Zustands und kein
 Fehler. Ein Anspruch steht dort ohnehin nicht offen — er fällt mit dem
 Schreiben, das die Bestätigung anfordert.
 
-``ORDER BY claimed_at``: Der am längsten hängende zuerst. Bei einem ``LIMIT``
+``ORDER BY`` über beide Zeitstempel (``COALESCE``): Der am längsten wartende
+zuerst, gleich aus welchem der beiden Zweige er stammt. Bei einem ``LIMIT``
 entscheidet die Reihenfolge, wer liegen bleibt, und das soll nicht der Zufall
 der Einfügereihenfolge sein.
 
@@ -374,14 +412,14 @@ class PostgresRunStore:
             )
         return [Run.model_validate(dict(z)) for z in zeilen]
 
-    async def stale_runs(self, *, frist: timedelta, limit: int = 20) -> list[Run]:
-        """Überfällig beanspruchte Läufe, der älteste zuerst.
+    async def stale_runs(self, *, frist: timedelta, idle: timedelta, limit: int = 20) -> list[Run]:
+        """Aufzugreifende Läufe, der am längsten wartende zuerst.
 
         Lesend und folgenlos — deshalb ``connect()`` und nicht ``begin()``.
         """
         async with self._engine.connect() as conn:
             zeilen = (
-                (await conn.execute(_UEBERFAELLIG, {"frist": frist, "limit": limit}))
+                (await conn.execute(_UEBERFAELLIG, {"frist": frist, "idle": idle, "limit": limit}))
                 .mappings()
                 .all()
             )

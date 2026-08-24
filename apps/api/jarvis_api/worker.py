@@ -48,6 +48,7 @@ from jarvis_contracts import Run
 from jarvis_core.agents import AgentRuntime, AgentStepSource
 from jarvis_core.auth import SessionManager
 from jarvis_core.orchestrator import (
+    DEFAULT_IDLE,
     DEFAULT_LEASE,
     PlanArgumentSource,
     PlanResponseSource,
@@ -78,6 +79,7 @@ def worker_for(
     settings: Settings,
     *,
     lease: timedelta = DEFAULT_LEASE,
+    idle: timedelta = DEFAULT_IDLE,
     batch: int = 20,
 ) -> RunWorker:
     """Ein Arbeiter, der seine Bestandteile je Lauf neu zusammensetzt."""
@@ -151,6 +153,7 @@ def worker_for(
         runs=PostgresRunStore(engine),
         advancer_for=advancer_for,
         lease=lease,
+        idle=idle,
         batch=batch,
     )
 

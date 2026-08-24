@@ -184,7 +184,7 @@ class LaufSpeicherAttrappe:
         self.laeufe = laeufe
         self.abfragen: list[tuple[timedelta, int]] = []
 
-    async def stale_runs(self, *, frist: timedelta, limit: int = 20) -> list[Run]:
+    async def stale_runs(self, *, frist: timedelta, idle: timedelta, limit: int = 20) -> list[Run]:
         self.abfragen.append((frist, limit))
         return self.laeufe
 

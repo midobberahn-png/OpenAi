@@ -46,7 +46,7 @@ from jarvis_core.ports.invocations import InvocationStore
 from jarvis_core.ports.runs import RunStore
 from jarvis_core.tools.registry import ToolRegistry
 
-__all__ = ["DEFAULT_LEASE", "Recovery", "RecoveryVerdict", "StepAssessment"]
+__all__ = ["DEFAULT_IDLE", "DEFAULT_LEASE", "Recovery", "RecoveryVerdict", "StepAssessment"]
 
 
 DEFAULT_LEASE = timedelta(minutes=15)
@@ -61,6 +61,28 @@ sein: Zu kurz gewählt, übernimmt die Wiederaufnahme Schritte, die noch laufen,
 und der Schutz vor dem doppelten Seiteneffekt hängt allein am Protokoll.
 
 Zu lang gewählt kostet es Wartezeit, und Wartezeit ist die billigere Seite.
+"""
+
+
+DEFAULT_IDLE = timedelta(minutes=2)
+"""Wie lange ein **begonnener** Lauf liegen darf, bevor ihn jemand aufgreift.
+
+Eine zweite Frist neben ``DEFAULT_LEASE``, und ausdrücklich nicht dieselbe
+Zahl: Die eine beantwortet „wie lange darf ein Schritt dauern", diese hier
+„wie lange darf ein Lauf zwischen zwei Schritten stillstehen". Ein Wert für
+beides sähe sparsam aus und wäre die Verwechslung zweier Fragen — wer eine
+davon ändert, änderte stillschweigend die andere mit.
+
+**Warum es diese Frist überhaupt braucht.** Ein Lauf mitten im Plan hat
+*keinen* Anspruch — er wird nach jedem Schritt freigegeben. Wer den Browser
+schließt, während Schritt zwei von vier fällig ist, hinterlässt einen Lauf, den
+niemand aufgreift: kein Anspruch, also kein Fund; kein Zuschauer, also kein
+``advance``. Aufgefallen erst mit dem Chat, der einen Plan tatsächlich zu Ende
+treibt.
+
+Zwei Minuten sind großzügig gegenüber dem Normalfall (die Oberfläche treibt in
+Sekunden) und knapp genug, dass ein geschlossener Browser nicht in eine
+Stunde Stillstand führt.
 """
 
 

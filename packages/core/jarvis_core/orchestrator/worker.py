@@ -45,7 +45,7 @@ from datetime import timedelta
 
 from jarvis_contracts import Run
 from jarvis_core.orchestrator.advance import AdvanceRejected, RunAdvancer
-from jarvis_core.orchestrator.recovery import DEFAULT_LEASE
+from jarvis_core.orchestrator.recovery import DEFAULT_IDLE, DEFAULT_LEASE
 from jarvis_core.ports.runs import RunStore
 
 __all__ = ["RunWorker", "SweepReport", "SweepResult"]
@@ -90,6 +90,7 @@ class RunWorker:
         runs: RunStore,
         advancer_for: Callable[[Run], AbstractAsyncContextManager[RunAdvancer]],
         lease: timedelta = DEFAULT_LEASE,
+        idle: timedelta = DEFAULT_IDLE,
         batch: int = 20,
     ) -> None:
         self._runs = runs
@@ -108,6 +109,12 @@ class RunWorker:
         Fehler einen, der auch die anderen trifft."""
 
         self._lease = lease
+        self._idle = idle
+        """Wie lange ein begonnener Lauf stillstehen darf — die zweite Frist.
+
+        Getrennt von ``lease``, weil sie eine andere Frage beantwortet; die
+        Begründung steht bei ``DEFAULT_IDLE``."""
+
         self._batch = batch
 
     async def sweep(self) -> SweepReport:
@@ -125,7 +132,9 @@ class RunWorker:
         immer liegen. Deshalb wird hier breit gefangen — die einzige Stelle im
         Kern, an der das richtig ist, und sie ist deshalb auch die einzige.
         """
-        kandidaten = await self._runs.stale_runs(frist=self._lease, limit=self._batch)
+        kandidaten = await self._runs.stale_runs(
+            frist=self._lease, idle=self._idle, limit=self._batch
+        )
         bericht = SweepReport(gefunden=len(kandidaten))
         fortgesetzt = 0
 

@@ -22,6 +22,37 @@ import type { LaufZeile } from "../api/typen";
  * **Der Plan bleibt sichtbar.** Ein Chatfenster, das nur Text zeigt, verbirgt,
  * was das System tut; das Laufdetail bleibt einen Klick entfernt.
  */
+/** Wie viele Schritte die Oberfläche am Stück treibt. */
+const MAX_SCHRITTE = 12;
+
+/**
+ * Treibt einen Lauf, solange Schritte **tatsächlich laufen**.
+ *
+ * **Die Abbruchbedingung ist der Punkt.** Weitergemacht wird nur nach
+ * ``executed``: Ein blockierter Schritt bleibt der nächste fällige, und ein
+ * Treiber, der „nicht ausgeführt" als „nochmal versuchen" liest, dreht sich im
+ * Kreis — bei einem Werkzeugschritt mit jedem Umlauf auf Kosten des Budgets.
+ *
+ * Bei ``awaiting_confirmation`` endet er ohnehin: Dort steht ein Mensch, und
+ * eine Oberfläche, die darüber hinwegtreibt, hätte die Bestätigung
+ * abgeschafft.
+ *
+ * **Und er ist begrenzt.** Nicht, weil ein Plan so lang würde, sondern weil
+ * eine Schleife ohne Grenze in einer Oberfläche, die Werkzeuge auslöst, kein
+ * Fehler wäre, den man bemerkt — sie liefe einfach weiter.
+ */
+async function treiben(runId: string, laden: () => Promise<void>): Promise<void> {
+  for (let runde = 0; runde < MAX_SCHRITTE; runde += 1) {
+    const schritt = await api.post<{ status: string; run_status: string }>(
+      `/runs/${runId}/advance`,
+      {},
+    );
+    await laden();
+    if (schritt.status !== "executed") return;
+    if (schritt.run_status !== "executing" && schritt.run_status !== "queued") return;
+  }
+}
+
 export function Chat({ oeffneLauf }: { oeffneLauf: (lauf: LaufZeile) => void }) {
   const [laeufe, setLaeufe] = useState<LaufZeile[]>([]);
   const [eingabe, setEingabe] = useState("");
@@ -76,12 +107,7 @@ export function Chat({ oeffneLauf }: { oeffneLauf: (lauf: LaufZeile) => void }) 
     try {
       const lauf = await api.post<{ id: string }>("/runs", { input: text });
       await laden();
-      // **Der Lauf wird hier angestoßen und nicht von selbst.** Ein Plan, den
-      // niemand ausführt, bleibt stehen; ein Plan, der von allein losläuft,
-      // nimmt dem Nutzer die Ankündigung. Der Chat stößt genau einen Schritt
-      // an — was danach kommt, entscheidet der nächste Ausgang.
-      await api.post(`/runs/${lauf.id}/advance`, {});
-      await laden();
+      await treiben(lauf.id, laden);
     } catch (problem) {
       setFehler(problem instanceof ApiFehler ? problem.detail : String(problem));
     }
