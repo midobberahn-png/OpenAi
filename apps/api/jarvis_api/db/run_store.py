@@ -29,6 +29,7 @@ ob die Zeile noch dort steht, wo der Aufrufer sie vermutet.
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -85,7 +86,8 @@ _CLAIM = text(
     UPDATE runs
        SET state = state || jsonb_build_object(
                'current_step', CAST(:seq AS integer),
-               'claim_id', CAST(:claim_id AS text)
+               'claim_id', CAST(:claim_id AS text),
+               'claimed_at', to_jsonb(now())
            )
      WHERE id = :id
        AND status = :erwarteter_status
@@ -106,6 +108,13 @@ falsch und der Lauf dauerhaft blockiert. ``->>`` liefert Text und ergibt
 SQL-``NULL`` sowohl bei fehlendem Schlüssel als auch bei JSON-``null``. Genau
 diese zweite Lesart ist gemeint, weil ``_RELEASE`` JSON-``null`` schreibt.
 
+``claimed_at`` kommt aus ``now()`` und damit aus **der Datenbank**, nicht aus
+dem Arbeitsspeicher des Anspruchstellers. Wer später die Frist misst, liest
+dieselbe Uhr wie der, der sie gesetzt hat — bei zwei Arbeitern auf zwei
+Rechnern ist das nicht selbstverständlich, und eine um Minuten falsch gehende
+Uhr gäbe entweder einen laufenden Schritt frei oder ließe einen hängenden
+liegen.
+
 ``claim_id`` wird mitgeschrieben und ist das Fencing-Token: Es sagt nicht nur,
 **dass** der Schritt beansprucht ist, sondern **von wem**. ``||`` statt zweier
 ``jsonb_set``, weil beide Schlüssel gemeinsam gelten müssen — ein Anspruch ohne
@@ -118,13 +127,22 @@ entschiede über einen Taint-Zustand, den der erste gerade ändert."""
 _RELEASE = text(
     """
     UPDATE runs
-       SET state = state || jsonb_build_object('current_step', NULL, 'claim_id', NULL)
+       SET state = state || jsonb_build_object(
+               'current_step', NULL, 'claim_id', NULL, 'claimed_at', NULL
+           )
      WHERE id = :id
        AND (state ->> 'claim_id') = :claim_id
     RETURNING id
     """
 )
 """Gibt den Anspruch zurück, ohne den Schritt als erledigt zu führen.
+
+**Alle drei Anspruchsfelder fallen gemeinsam.** ``claimed_at`` stehen zu
+lassen erzeugte eine Frist ohne Anspruch — einen Zustand, den ``RunState``
+zurückweist. Der Fehler entstünde beim Schreiben und schlüge beim **Laden** zu,
+also genau dann, wenn eine Wiederaufnahme den Lauf braucht. Gemessen: Der Test
+über die freigegebene Frist fiel darüber, bevor er über die Frist selbst
+etwas aussagen konnte.
 
 ``AND (state ->> 'claim_id') = :claim_id`` ist das Fencing. Ohne diese Zeile
 gibt jeder Aufräumer jeden Anspruch frei — auch den, der inzwischen einem
@@ -135,6 +153,49 @@ Freigabe den falschen.
 Ohne Statusbedingung und ohne Trefferprüfung: Wessen Anspruch nicht mehr gilt,
 hat nichts freizugeben, und das ist kein Fehler — es ist der Ausgang, den das
 Fencing herbeiführen soll."""
+
+_RECLAIM = text(
+    """
+    UPDATE runs
+       SET state = state || jsonb_build_object(
+               'claim_id', CAST(:claim_id AS text),
+               'claimed_at', to_jsonb(now())
+           )
+     WHERE id = :id
+       AND status = :erwarteter_status
+       AND (state ->> 'current_step')::integer = :seq
+       AND (state ->> 'claim_id') IS NOT NULL
+       AND (state ->> 'claimed_at')::timestamptz < now() - CAST(:frist AS interval)
+    RETURNING id
+    """
+)
+"""Vergibt einen **abgelaufenen** Anspruch neu — die Gegenrichtung zu ``_CLAIM``.
+
+Der Unterschied zu ``_CLAIM`` ist die erste Bedingung: Dort muss der Schritt
+frei sein, hier muss er belegt sein. Beides in einer Anweisung
+zusammenzufassen wäre der Fehler, der die Zusage aufhebt — ein ``OR`` über
+„frei oder abgelaufen" gäbe jedem Anspruchsteller stillschweigend das Recht
+zur Übernahme, und dieses Recht soll eine eigene, benannte Entscheidung
+bleiben.
+
+``AND (state ->> 'claimed_at')::timestamptz < now() - :frist`` ist die Frist.
+Fehlt ``claimed_at``, ist der Vergleich ``NULL`` und damit nicht wahr: Ein
+Anspruch ohne Frist wird **nicht** übernommen. Das ist der sichere Ausgang und
+kein Versehen — solche Ansprüche stammen aus der Zeit vor dem Feld, und „keine
+Angabe" als „lange her" zu lesen hieße, mitten in einem Rollout den Schritt
+eines gerade arbeitenden Prozesses zu übernehmen.
+
+``current_step = :seq`` und nicht bloß „irgendein Anspruch": Übernommen wird
+ein *bestimmter* Schritt. Steht der Lauf inzwischen bei einem anderen, hat sich
+die Lage geändert, und die Übernahme beruht auf einer veralteten Beurteilung.
+
+**Was diese Anweisung nicht kann.** Sie sperrt den alten Arbeiter vom
+*Schreiben* aus — sein Fencing-Token gilt nicht mehr. Sie hält ihn nicht davon
+ab, *zu wirken*: Ein Prozess, der gerade im Handler steht, legt den Termin an,
+gleichgültig, wem der Anspruch inzwischen gehört. Deshalb ist die Frist eine
+Obergrenze für die Dauer eines Schrittes und kein Timeout. Was daraus folgt —
+nämlich nachzusehen, was der Schritt schon bewirkt hat —, entscheidet der
+Kern (``jarvis_core.orchestrator.recovery``), nicht dieser Speicher."""
 
 _UPDATE = text(
     """
@@ -294,6 +355,40 @@ class PostgresRunStore:
                     "seq": seq,
                     "claim_id": str(kennung),
                     "erwarteter_status": str(erwarteter_status),
+                },
+            )
+            return kennung if treffer.first() is not None else None
+
+    async def reclaim_step(
+        self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus, frist: timedelta
+    ) -> UUID | None:
+        """Übernimmt einen abgelaufenen Anspruch — ebenfalls in eigener Transaktion.
+
+        Aus demselben Grund wie beim Anspruch selbst: Eine Übernahme, die mit
+        der Transaktion des Aufrufers zurückgerollt werden kann, gälte nur
+        während der Ausführung. Der alte Arbeiter wäre danach wieder im Recht,
+        obwohl der neue bereits gewirkt hat.
+
+        ``None`` heißt: nicht übernommen. Die Frist läuft noch, der Lauf steht
+        woanders, der Schritt ist ein anderer — oder ein zweiter Übernehmer war
+        schneller. Der Aufrufer muss die Fälle nicht unterscheiden; für ihn
+        heißen sie alle „nicht du".
+        """
+        kennung = uuid4()
+        async with self._engine.begin() as conn:
+            treffer = await conn.execute(
+                _RECLAIM,
+                {
+                    "id": run_id,
+                    "seq": seq,
+                    "claim_id": str(kennung),
+                    "erwarteter_status": str(erwarteter_status),
+                    # Als ``timedelta`` und nicht als Zeitpunkt: Gerechnet wird
+                    # in der Datenbank (``now() - :frist``), damit Anfang und
+                    # Ende der Messung auf **derselben** Uhr stehen. asyncpg
+                    # bindet den Parameter typisiert an ``interval`` — eine
+                    # Zeichenkette wie ``"900.0 seconds"`` weist es ab.
+                    "frist": frist,
                 },
             )
             return kennung if treffer.first() is not None else None

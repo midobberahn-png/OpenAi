@@ -466,6 +466,7 @@ def test_die_route_orchestriert_den_planschritt_nicht_selbst() -> None:
     verboten = {
         "execute_tool",  # die Wirkung selbst
         "claim_step",  # der Anspruch …
+        "reclaim_step",  # … seine Übernahme nach Ablauf der Frist …
         "release_step",  # … und seine Freigabe: die Stelle beider Befunde
         "for_step",  # der Modellaufruf
         "finish",  # der Abschluss des Laufs

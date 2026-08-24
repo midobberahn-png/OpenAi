@@ -61,6 +61,7 @@ from jarvis_core.orchestrator import (
     AdvanceRejected,
     BudgetTracker,
     NoEligibleModel,
+    Recovery,
     RunAdvancer,
     ToolExecutor,
     classify,
@@ -584,6 +585,11 @@ async def advance_run(
         ),
         arguments=modell,
         responses=antworten,
+        # Ohne diesen Parameter ist ein fremder Anspruch eine Sackgasse: 409,
+        # und der Lauf steht für immer. Mit ihm sieht der Ablauf nach, ob die
+        # Frist abgelaufen ist und ob das Werkzeugprotokoll eine Wirkung
+        # ausschließt — und übernimmt nur dann.
+        recovery=Recovery(runs=runs, invocations=invocations, tools=tools),
         channel=KANAL,
     )
 

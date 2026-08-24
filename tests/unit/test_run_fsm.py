@@ -140,6 +140,33 @@ class TestRunState:
         with pytest.raises(ValidationError, match="gemeinsam"):
             RunState(claim_id=uuid4())
 
+    @pytest.mark.invariant("hung-step-is-reassigned-only-when-provably-idle")
+    def test_ein_anspruch_ohne_frist_bleibt_darstellbar(self) -> None:
+        """Der Altbestand aus der Zeit vor der Frist muss ladbar bleiben.
+
+        Ihn zurückzuweisen hieße, genau den Lauf zu verlieren, den eine
+        Wiederaufnahme braucht. Übernommen wird er trotzdem nicht — dafür
+        sorgt die Bedingung in ``reclaim_step``, nicht dieser Vertrag.
+        """
+        s = RunState(current_step=1, claim_id=uuid4())
+        assert s.claimed_at is None
+
+    @pytest.mark.invariant("hung-step-is-reassigned-only-when-provably-idle")
+    def test_eine_frist_ohne_anspruch_faellt_weg_statt_zu_scheitern(self) -> None:
+        """Die einzige Stelle dieser Prüfung, an der nicht laut gescheitert wird.
+
+        Der Fall entsteht im Rollout: Eine ältere Prozessversion gibt einen
+        Anspruch frei, ohne das Feld zu kennen, und lässt die Frist stehen. Ein
+        ``ValidationError`` machte den Lauf dann **unladbar** — im
+        schlechtestmöglichen Moment. Gemessen an einem echten Testfall, der
+        genau so scheiterte, bevor diese Zeile stand.
+
+        Eine Frist ohne Anspruch ist dagegen bedeutungslos: Übernommen wird
+        nur, wo eine ``claim_id`` steht.
+        """
+        s = RunState(claimed_at=datetime(2026, 8, 24, 12, tzinfo=UTC))
+        assert s.claimed_at is None
+
     def test_korrektur_behaelt_unbetroffene_schritte(self) -> None:
         """Der Kern der Korrektursemantik: Ein Abbruch mit Neustart verwürfe
         alles und kostete die volle Latenz erneut."""

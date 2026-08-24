@@ -101,6 +101,27 @@ class RunState(BaseModel):
     laufenden Zustand zu wandern.
     """
 
+    claimed_at: datetime | None = None
+    """Seit wann der Anspruch gilt — die Frist.
+
+    Ein Lauf in ``executing`` mit belegtem ``current_step`` ist entweder gerade
+    in Arbeit oder hängengeblieben, und **von außen sind die beiden nicht
+    unterscheidbar**. Ohne einen Zeitpunkt bleibt nur die Wahl zwischen blind
+    wiederholen (der doppelte Seiteneffekt) und gar nichts tun (der dauerhaft
+    blockierte Lauf).
+
+    **Die Zeit stammt aus der Datenbank und nicht aus dem Arbeitsspeicher des
+    Anspruchstellers.** Wer die Frist misst, muss dieselbe Uhr lesen wie der,
+    der sie gesetzt hat; bei zwei Prozessen auf zwei Rechnern ist das nicht die
+    lokale. ``_CLAIM`` schreibt deshalb ``now()`` in derselben Anweisung, die
+    den Anspruch begründet.
+
+    **``None`` heißt „Anspruch ohne Frist" und ist nicht dasselbe wie „lange
+    her".** Solche Ansprüche stammen aus der Zeit vor diesem Feld. Sie werden
+    nicht automatisch neu vergeben — die Frist ist die einzige Grundlage für
+    diese Entscheidung, und ohne sie gibt es keine.
+    """
+
     awaiting_action_id: UUID | None = None
     """Gesetzt, solange auf eine Bestätigung gewartet wird."""
 
@@ -136,6 +157,25 @@ class RunState(BaseModel):
                 "current_step und claim_id gelten gemeinsam: Ein Anspruch ohne Inhaber "
                 "lässt sich nicht sicher freigeben, ein Inhaber ohne Anspruch bindet nichts."
             )
+        # ``claimed_at`` steht bewusst **nicht** in derselben Bedingung, und
+        # zwar in beide Richtungen:
+        #
+        # *Ein Anspruch ohne Frist ist zulässig.* Er ist der Altbestand aus der
+        # Zeit vor diesem Feld. Ihn zurückzuweisen hieße, ihn beim Laden
+        # unlesbar zu machen — und damit genau den Lauf zu verlieren, der
+        # wiederaufgenommen werden soll.
+        #
+        # *Eine Frist ohne Anspruch wird stillschweigend fallen gelassen* statt
+        # zurückgewiesen. Das ist die einzige Stelle dieser Prüfung, an der
+        # nicht laut gescheitert wird, und der Grund ist ein Rollout: Eine
+        # ältere Prozessversion gibt einen Anspruch frei, ohne das Feld zu
+        # kennen, und ließe die Frist stehen. Ein ``ValueError`` machte den Lauf
+        # dann dauerhaft **unladbar** — im schlechtestmöglichen Moment, nämlich
+        # dem, in dem eine Wiederaufnahme ihn braucht. Eine Frist, die an
+        # nichts hängt, ist dagegen bedeutungslos: Übernommen wird nur, wo ein
+        # ``claim_id`` steht.
+        if self.claimed_at is not None and self.claim_id is None:
+            self.claimed_at = None
         return self
 
     @property
@@ -155,6 +195,7 @@ class RunState(BaseModel):
                 "completed_steps": [*self.completed_steps, outcome],
                 "current_step": None,
                 "claim_id": None,
+                "claimed_at": None,
             }
         )
 

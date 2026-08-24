@@ -5195,6 +5195,19 @@
               "default": null,
               "title": "Claim Id"
             },
+            "claimed_at": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Claimed At"
+            },
             "completed_steps": {
               "items": {
                 "$ref": "#/$defs/StepOutcome"
@@ -5744,6 +5757,19 @@
           ],
           "default": null,
           "title": "Claim Id"
+        },
+        "claimed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claimed At"
         },
         "completed_steps": {
           "items": {

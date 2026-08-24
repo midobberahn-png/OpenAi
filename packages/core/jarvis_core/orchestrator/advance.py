@@ -62,6 +62,7 @@ from jarvis_core.orchestrator.executor import StepStatus, ToolExecutor
 from jarvis_core.orchestrator.plan_arguments import PlanArgumentSource
 from jarvis_core.orchestrator.plan_context import PlanStepUnavailable
 from jarvis_core.orchestrator.plan_response import PlanResponseSource
+from jarvis_core.orchestrator.recovery import Recovery, RecoveryVerdict
 from jarvis_core.policy.engine import PolicyEngine
 from jarvis_core.ports.runs import RunStateConflict, RunStore
 from jarvis_core.tools.registry import ToolRegistry
@@ -130,6 +131,7 @@ class RunAdvancer:
         executor: ToolExecutor,
         arguments: PlanArgumentSource,
         responses: PlanResponseSource,
+        recovery: Recovery | None = None,
         channel: ApprovalChannel = "ui",
     ) -> None:
         self._runs = runs
@@ -138,6 +140,13 @@ class RunAdvancer:
         self._executor = executor
         self._arguments = arguments
         self._responses = responses
+        self._recovery = recovery
+        """Ohne Wiederaufnahme bleibt ein fremder Anspruch eine Sackgasse, und
+        das ist der bisherige Stand: ``None`` heißt „ein beanspruchter Schritt
+        wird abgewiesen, Punkt". Zulässig, weil es die Lage vor diesem Block
+        ist und weil ein Aufrufer ohne Werkzeugprotokoll nichts nachsehen
+        könnte — nicht zulässig ist, das Nachsehen zu erfinden."""
+
         self._channel = channel
 
     async def advance(
@@ -171,11 +180,7 @@ class RunAdvancer:
             lauf.id, schritt.seq, erwarteter_status=status_vorher
         )
         if anspruch is None:
-            raise AdvanceRejected(
-                "step-claimed",
-                f"Schritt {schritt.seq} wird bereits ausgeführt oder der Lauf hat sich "
-                "verändert. Neu laden und nachsehen, was daraus geworden ist.",
-            )
+            anspruch = await self._uebernehmen(lauf, schritt)
 
         tracker = BudgetTracker(lauf.budget, usage=lauf.usage)
         if lauf.status is RunStatus.QUEUED:
@@ -187,6 +192,57 @@ class RunAdvancer:
             return await self._antwort(lauf, tracker, plan, schritt, status_vorher, anspruch)
         return await self._werkzeug(
             lauf, tracker, plan, schritt, status_vorher, vorgegeben, session_id, anspruch
+        )
+
+    async def _uebernehmen(self, lauf: Run, schritt: PlanStep) -> UUID:
+        """② b — der Anspruch gehört jemand anderem. Und jetzt?
+
+        Bis hierher endete der Weg an dieser Stelle: „wird bereits ausgeführt",
+        409, fertig. Das ist die richtige Antwort, solange der andere wirklich
+        arbeitet — und die falsche, sobald er abgestürzt ist. Von außen sind
+        die beiden nicht zu unterscheiden, und **genau deshalb** entscheidet
+        das hier nicht der Ablauf, sondern die Wiederaufnahme: Sie hat die
+        Frist und das Werkzeugprotokoll.
+
+        Drei Ausgänge, und keiner davon wirkt:
+
+        * **Übernommen** — die Frist war abgelaufen und das Protokoll schließt
+          eine Wirkung aus. Der Rückgabewert ist das *neue* Fencing-Token; von
+          hier an läuft der Schritt wie ein frisch beanspruchter.
+        * **In Arbeit** — die Frist läuft. Abweisung wie bisher.
+        * **Entscheidung nötig** — der Schritt hat möglicherweise gewirkt. Auch
+          das ist eine Abweisung, aber eine andere, und sie trägt eine eigene
+          Kennung: Ein Aufrufer, der ``step-unresolved`` sieht, weiß, dass
+          Wiederholen hier nicht die Lösung ist.
+        """
+        if self._recovery is None:
+            raise AdvanceRejected(
+                "step-claimed",
+                f"Schritt {schritt.seq} wird bereits ausgeführt oder der Lauf hat sich "
+                "verändert. Neu laden und nachsehen, was daraus geworden ist.",
+            )
+
+        if lauf.state.current_step != schritt.seq:
+            # Der offene Anspruch gilt einem *anderen* Schritt als dem, der
+            # hier gleich laufen soll. Eine Übernahme brächte ein Token für
+            # den falschen Schritt — und der Ablauf führte damit einen aus,
+            # für den er keinen Anspruch hat. Der Fall ist selten (die Auswahl
+            # nimmt den kleinsten fälligen Schritt), aber er ist nicht
+            # unmöglich, sobald ein Plan verzweigt.
+            raise AdvanceRejected(
+                "step-claimed",
+                f"Der Lauf steht bei Schritt {lauf.state.current_step} und nicht bei "
+                f"{schritt.seq}. Neu laden und nachsehen, was daraus geworden ist.",
+            )
+
+        urteil = await self._recovery.take_over(lauf)
+        if urteil.verdict is RecoveryVerdict.NEU_VERGEBBAR and urteil.claim_id is not None:
+            return urteil.claim_id
+        if urteil.verdict is RecoveryVerdict.ENTSCHEIDUNG_NOETIG:
+            raise AdvanceRejected("step-unresolved", urteil.reason)
+        raise AdvanceRejected(
+            "step-claimed",
+            f"{urteil.reason} Neu laden und nachsehen, was daraus geworden ist.",
         )
 
     # -- ① Auswählen ------------------------------------------------------

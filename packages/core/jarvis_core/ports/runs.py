@@ -43,6 +43,7 @@ Fragen zu verwechseln.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Protocol
 from uuid import UUID
 
@@ -167,6 +168,33 @@ class RunStore(Protocol):
         wurde, lässt sich erneut anstoßen; einer, der zweimal im Kalender
         steht, nicht. Der Weg zurück ist die Wiederaufnahme abgebrochener
         Läufe.
+        """
+        ...
+
+    async def reclaim_step(
+        self, run_id: UUID, seq: int, *, erwarteter_status: RunStatus, frist: timedelta
+    ) -> UUID | None:
+        """Übernimmt einen Anspruch, dessen Frist abgelaufen ist.
+
+        Der Gegenpart zu ``claim_step``, und **bewusst eine zweite Methode**:
+        Dort muss der Schritt frei sein, hier muss er belegt sein. Beides in
+        einem Aufruf hieße, die Übernahme zum Nebeneffekt eines gewöhnlichen
+        Anspruchs zu machen — sie soll eine benannte Entscheidung bleiben, die
+        an der Aufrufstelle sichtbar ist.
+
+        ``frist`` ist eine **Obergrenze für die Dauer eines Schrittes**, nicht
+        ein Timeout. Der Unterschied entscheidet über den doppelten
+        Seiteneffekt: Die Übernahme sperrt den alten Arbeiter vom Schreiben aus
+        (sein Token gilt nicht mehr), sie hält ihn nicht davon ab, zu wirken.
+        Wer die Frist zu knapp wählt, übernimmt Schritte, die noch laufen.
+
+        Ob nach einer Übernahme überhaupt gewirkt werden darf, beantwortet
+        diese Methode **nicht** — dafür ist das Werkzeugprotokoll da
+        (``jarvis_core.orchestrator.recovery``). Sie stellt nur sicher, dass
+        genau einer übernimmt und der Vorgänger ausgesperrt ist.
+
+        Rückgabe ist das neue Fencing-Token, oder ``None``, wenn nicht
+        übernommen wurde.
         """
         ...
 

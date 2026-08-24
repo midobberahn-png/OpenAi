@@ -28,6 +28,13 @@ from .plan_response import (
     ResponseUnavailable,
 )
 from .planner import ExecutionMode, plan_turn, select_mode
+from .recovery import (
+    DEFAULT_LEASE,
+    Recovery,
+    RecoveryVerdict,
+    StepAssessment,
+    ist_haengend,
+)
 from .router import (
     HealthSnapshot,
     NoEligibleModel,
@@ -36,6 +43,7 @@ from .router import (
 )
 
 __all__ = [
+    "DEFAULT_LEASE",
     "TRIVIAL_UTTERANCES",
     "AdvanceOutcome",
     "AdvanceRejected",
@@ -49,13 +57,17 @@ __all__ = [
     "PlanArgumentSource",
     "PlanResponseSource",
     "PlanStepUnavailable",
+    "Recovery",
+    "RecoveryVerdict",
     "ResponseUnavailable",
     "RoutingPreferences",
     "RunAdvancer",
+    "StepAssessment",
     "StepExecution",
     "StepStatus",
     "ToolExecutor",
     "classify",
+    "ist_haengend",
     "plan_turn",
     "route",
     "select_mode",

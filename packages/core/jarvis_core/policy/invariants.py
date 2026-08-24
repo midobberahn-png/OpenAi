@@ -536,6 +536,26 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.db.invocation_store",
     ),
     Invariant(
+        id="hung-step-is-reassigned-only-when-provably-idle",
+        title="Ein hängender Schritt wird nur neu vergeben, wenn er nachweislich nicht wirkte",
+        statement=(
+            "Ein beanspruchter Planschritt wird erst nach Ablauf einer Frist übernommen — "
+            "gemessen an der Uhr der Datenbank — und nur, wenn das Werkzeugprotokoll eine "
+            "Wirkung ausschließt oder das Werkzeug idempotent ist. Die Übernahme vergibt "
+            "ein neues Fencing-Token und sperrt den Vorgänger vom Schreiben aus."
+        ),
+        why=(
+            "Ein Lauf in ``executing`` mit belegtem Schritt ist entweder in Arbeit oder "
+            "hängengeblieben, und von außen nicht unterscheidbar. Ohne Frist bleibt nur "
+            "blind wiederholen (der doppelte Termin) oder gar nichts tun (der dauerhaft "
+            "blockierte Lauf). Die Frist allein genügt nicht: Sie sperrt den alten "
+            "Arbeiter vom Schreiben aus, nicht vom Wirken — deshalb entscheidet erst das "
+            "Protokoll, ob überhaupt erneut gewirkt werden darf."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.orchestrator.recovery",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(

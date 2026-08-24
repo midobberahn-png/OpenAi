@@ -16,6 +16,7 @@ die ein Durchstichtest existiert.
 from __future__ import annotations
 
 from typing import Protocol
+from uuid import UUID
 
 from jarvis_contracts import InvocationStatus, ToolInvocation
 
@@ -42,6 +43,29 @@ class InvocationStore(Protocol):
         Absturz übersteht. Er sieht deshalb nur, was committed ist. Ein
         Protokoll in der Request-Transaktion hieße: kein sichtbarer Anspruch,
         keine Ausführung.
+        """
+        ...
+
+    async def load(self, invocation_id: UUID) -> ToolInvocation | None:
+        """Ein einzelner Aufruf, oder ``None``."""
+        ...
+
+    async def for_run(self, run_id: UUID) -> list[ToolInvocation]:
+        """Alle Aufrufe eines Laufs, älteste zuerst."""
+        ...
+
+    async def for_step(self, run_id: UUID, step_seq: int) -> list[ToolInvocation]:
+        """Die Aufrufe eines **geplanten Schrittes** — die Frage der Wiederaufnahme.
+
+        Diese drei Lesezugriffe standen zuerst nur in der Implementierung, und
+        das war eine stille Lücke im Vertrag: Der Kern konnte das Protokoll
+        nicht befragen, ohne den Postgres-Speicher zu kennen. Ein Anker, den
+        nur der Adapter lesen kann, trägt keine Entscheidung im Kern.
+
+        Eine Liste und kein einzelner Eintrag: Ein Schritt kann mehrfach
+        protokolliert sein, wenn er nach einer folgenlosen Abweisung erneut
+        versucht wurde. Welcher davon zählt, entscheidet die Wiederaufnahme —
+        nicht dieser Speicher.
         """
         ...
 

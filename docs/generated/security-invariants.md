@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 50/51**
+**Security Invariant Coverage: 51/52**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -49,6 +49,7 @@ nicht nachträglich passend machen.
 | `plan-step-claimed-before-effect` | Ein Planschritt wird beansprucht, bevor er wirkt | Ein fälliger Planschritt wird atomar und festgeschrieben beansprucht, bevor Modell oder Werkzeug laufen; ein zweiter Anspruch auf denselben Schritt scheitert vor jeder Wirkung. | `api.db.run_store` |
 | `plan-step-claim-is-fenced` | Nur der Inhaber gibt seinen Anspruch frei und schreibt sein Ergebnis | Freigabe und Fortschreiben eines beanspruchten Planschrittes gelten nur mit der Kennung, unter der er beansprucht wurde. | `api.db.run_store` |
 | `invocation-is-recovery-anchor` | Das Werkzeugprotokoll beantwortet, was aus einem Schritt wurde | Jeder Aufruf eines geplanten Schrittes ist über Lauf und Schrittnummer auffindbar und lesbar, und sein Zustand unterscheidet „ohne Wirkung gescheitert“ von „Wirkung unklar“. | `api.db.invocation_store` |
+| `hung-step-is-reassigned-only-when-provably-idle` | Ein hängender Schritt wird nur neu vergeben, wenn er nachweislich nicht wirkte | Ein beanspruchter Planschritt wird erst nach Ablauf einer Frist übernommen — gemessen an der Uhr der Datenbank — und nur, wenn das Werkzeugprotokoll eine Wirkung ausschließt oder das Werkzeug idempotent ist. Die Übernahme vergibt ein neues Fencing-Token und sperrt den Vorgänger vom Schreiben aus. | `core.orchestrator.recovery` |
 | `tool-result-model-view-is-declared` | Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat | Aus einem ``ToolResult`` erreicht ausschließlich das den Prompt, was ``ToolSpec.model_visible_fields`` benennt — gekappt auf eine feste Grenze. Die Vorgabe ist leer. | `contracts.tools` |
 | `tool-arguments-match-schema` | Argumente werden gegen das Werkzeugschema geprüft | Kein Argumentobjekt erreicht Policy-Entscheidung, Vorschau, Payload-Hash oder Handler, ohne gegen ``ToolSpec.parameters`` geprüft worden zu sein. | `core.orchestrator.executor` |
 | `data-class-hard-filter` | Datenklassifikation ist ein hartes Filter | Ein Kontext, der eine Klasse nicht zulässt, führt kein Werkzeug dieser Klasse aus. | `core.policy.engine` |
