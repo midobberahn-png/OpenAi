@@ -41,6 +41,10 @@ export interface LaufZeile {
   started_at: string;
   finished_at: string | null;
   goal: string | null;
+  /** Die formulierte Antwort. Bei ``GET /runs`` leer — eine Übersicht über
+   * zwanzig Läufe soll nicht zwanzig Antworttexte übertragen. Wird als
+   * **Text** dargestellt und nie als HTML: Er stammt aus einem Modell. */
+  output: string;
   /** Bei ``GET /runs`` leer — der Plan kostet je Schritt eine
    * Berechtigungsabfrage und wird nur für einen einzelnen Lauf gefüllt. */
   plan: PlanSchritt[];

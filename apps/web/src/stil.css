@@ -117,3 +117,11 @@ th { color: var(--gedaempft); font-weight: 500; font-size: 0.8rem; letter-spacin
 .dialog td.wert { word-break: break-word; }
 .dialog tr.warn td.wert { color: var(--warnung); }
 .dialog tr.critical td.wert { color: var(--gefahr); }
+
+/* Gespräch: gesagt und geantwortet, ohne Sprechblasen-Kitsch. */
+.wortwechsel { border-left: 2px solid var(--linie); padding: 0.5rem 0 0.5rem 0.75rem; margin-bottom: 0.75rem; }
+.wortwechsel .gesagt { color: var(--akzent); margin-bottom: 0.35rem; }
+/* ``pre-wrap``: Der Text kommt aus einem Modell und bringt eigene Umbrüche
+   mit. Gerendert wird er als **Text** — kein HTML, keine Ausnahme. */
+.wortwechsel .geantwortet { white-space: pre-wrap; }
+button.klein { font-size: 0.75rem; padding: 0.15rem 0.5rem; margin-top: 0.5rem; }

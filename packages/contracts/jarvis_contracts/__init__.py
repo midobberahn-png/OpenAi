@@ -43,6 +43,7 @@ from .events import (
     RunStarted,
     ServerMessage,
     StepFinished,
+    TokenDelta,
 )
 from .goals import (
     Entity,
@@ -255,6 +256,7 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "RunStarted",
     "ServerMessage",
     "StepFinished",
+    "TokenDelta",
     "HealthEntry",
     # identity & preferences (V1.1)
     "CoreProfile",

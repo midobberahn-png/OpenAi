@@ -644,6 +644,11 @@
             "title": "Is Multi Step",
             "type": "boolean"
           },
+          "output": {
+            "default": "",
+            "title": "Output",
+            "type": "string"
+          },
           "plan": {
             "default": [],
             "items": {

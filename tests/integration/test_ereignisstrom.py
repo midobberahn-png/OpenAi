@@ -166,3 +166,55 @@ class TestUeberHttp:
         assert empfangen, "Der angelegte Lauf hat keinen Hinweis erzeugt."
         assert empfangen[0]["t"] == RunStarted.model_fields["t"].default
         assert "run_id" in empfangen[0]
+
+
+class TestTokenFliessen:
+    """Der Text erscheint, während er entsteht — nicht, wenn er fertig ist.
+
+    **Das ist der ganze Unterschied zum vorigen Stand.** Die Antwort kam
+    bisher am Stück, nachdem der Schritt gelaufen war; für eine Oberfläche
+    heißt das: eine Sekunde Stille, dann ein Absatz. Der Strom macht daraus
+    einen fließenden Text — und derselbe Kanal trägt ihn, der ohnehin offen
+    ist.
+
+    Was sich dabei **nicht** ändert, ist die Prüfung: Der Strom geht durch
+    dasselbe Gate wie ein einzelner Aufruf, und die Zulassung fällt vor dem
+    ersten Stück.
+    """
+
+    @pytest.mark.invariant("event-stream-is-scoped-and-contentless")
+    async def test_die_stuecke_kommen_einzeln_und_ergeben_den_text(
+        self, client: AsyncClient, engine: AsyncEngine, redis: Redis, monkeypatch
+    ) -> None:
+        from jarvis_api.models import model_catalog
+        from jarvis_contracts import CompletionResult, ModelUsage
+        from jarvis_core.providers import ModelGateway
+        from tests.integration.test_http_runs import _Drehbuchanbieter
+
+        modell = _Drehbuchanbieter(
+            CompletionResult(text="Es ist zwölf Uhr mittags.", usage=ModelUsage())
+        )
+        monkeypatch.setattr(
+            "jarvis_api.deps.model_gateway",
+            lambda settings: ModelGateway({"ollama": modell}, model_catalog(settings)),
+        )
+
+        user_id = await _angemeldet(client, engine)
+        bus = RedisEventBus(redis)
+        lauscher = asyncio.create_task(_empfangen(bus, user_id, anzahl=8))
+        await asyncio.sleep(0.2)
+
+        lauf = await client.post("/runs", json={"input": "Wie spät ist es?"})
+        antwort = await client.post(f"/runs/{lauf.json()['id']}/advance", json={})
+        assert antwort.status_code == 200, antwort.text
+
+        empfangen = await lauscher
+        stuecke = [n for n in empfangen if n["t"] == "token.delta"]
+        assert stuecke, f"Kein einziges Stück im Strom: {[n['t'] for n in empfangen]}"
+        assert len(stuecke) > 1, "Ein Stück ist kein Strom."
+        assert "".join(s["text"] for s in stuecke).strip() == "Es ist zwölf Uhr mittags."
+
+        # Und der vollständige Text steht im Lauf — die Stücke sind Anzeige,
+        # kein Zustand.
+        sicht = await client.get(f"/runs/{lauf.json()['id']}")
+        assert sicht.json()["output"] == "Es ist zwölf Uhr mittags."

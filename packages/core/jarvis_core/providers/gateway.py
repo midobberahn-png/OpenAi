@@ -23,13 +23,14 @@ Lehre aus zwei gefundenen Bypässen:
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 
 from jarvis_contracts import (
     CompletionRequest,
     CompletionResult,
     DataClass,
     ModelCapability,
+    StreamChunk,
     TaintLevel,
 )
 from jarvis_core.ports.llm import LLMProvider
@@ -88,6 +89,56 @@ class ModelGateway:
 
         ergebnis = await provider.complete(request)
         return ergebnis.model_copy(update={"taints_context": self._kontaminiert(request, taint)})
+
+    async def stream(
+        self,
+        request: CompletionRequest,
+        *,
+        data_class: DataClass,
+        taint: TaintLevel = TaintLevel.CLEAN,
+    ) -> AsyncIterator[StreamChunk]:
+        """Dieselbe Zulassungsprüfung wie ``complete()`` — Antwort in Stücken.
+
+        **Der Weg fehlte in der Mitte.** Der Ollama-Adapter kann seit jeher
+        streamen und der Vertrag kennt ``StreamChunk``; das Gateway konnte es
+        nicht. Wer Tokens fließen sehen wollte, hätte am Gate vorbeigemusst —
+        und damit an der Prüfung, ob dieses Modell diese Datenklasse überhaupt
+        sehen darf.
+
+        **Die Prüfung steht vor dem ersten Stück und nicht daneben.** Ein
+        Strom, dessen Zulässigkeit sich erst nach dem dritten Token
+        herausstellt, hat die Daten schon übertragen.
+
+        **Werkzeugvorschläge kommen hier nicht vor** — der Vertrag schließt sie
+        aus, weil sie stückweise ankommen und ein halb übertragener Aufruf kein
+        Vorschlag ist. Dieser Weg ist deshalb für den Antwortschritt gedacht,
+        dem ohnehin kein Werkzeug angeboten wird.
+
+        Die Kontamination beantwortet ``kontaminiert()`` — sie hängt an der
+        Anfrage und nicht am Ergebnis, und ein Strom hat kein Ergebnis, an das
+        sich etwas anheften ließe.
+        """
+        modell = self._zugelassen(request.model, data_class)
+        provider = self._providers.get(modell.provider)
+        if provider is None:
+            raise ModelNotPermitted(
+                f"Für {modell.name!r} ist kein Anbieter eingerichtet ({modell.provider}).",
+                code="provider-missing",
+            )
+
+        async for stueck in provider.stream(request):
+            yield stueck
+
+    @staticmethod
+    def kontaminiert(request: CompletionRequest, taint: TaintLevel) -> bool:
+        """Erbt eine Antwort auf diese Anfrage die Kontamination ihres Kontexts?
+
+        Öffentlich, seit es das Streamen gibt: Dort entsteht kein
+        ``CompletionResult``, an das sich die Auskunft anheften ließe, und der
+        Aufrufer muss sie trotzdem bekommen. Eine zweite Fassung derselben
+        Regel neben dieser wäre die zweite Wahrheit über Kontamination.
+        """
+        return ModelGateway._kontaminiert(request, taint)
 
     @staticmethod
     def _kontaminiert(request: CompletionRequest, taint: TaintLevel) -> bool:

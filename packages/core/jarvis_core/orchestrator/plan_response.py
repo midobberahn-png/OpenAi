@@ -35,6 +35,9 @@ er kann die Auskunft liefern, ohne die es niemand kann.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+
 from pydantic import BaseModel, ConfigDict
 
 from jarvis_contracts import CompletionRequest, ModelUsage, PlanStep, Run
@@ -92,6 +95,7 @@ class PlanResponseSource:
         run: Run,
         goal: str,
         model: str,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> FormulatedResponse:
         """Fragt das Modell nach der Antwort für diesen Schritt.
 
@@ -99,6 +103,21 @@ class PlanResponseSource:
         Datenklasse und Taint-Zustand stammen aus dem persistierten Lauf und
         nicht aus Parametern — ein Parameter dafür wäre die Obergrenze als
         Angabe des Aufrufers.
+
+        **``on_token`` macht aus dem Aufruf einen Strom.** Ohne ihn bleibt es
+        bei einem Aufruf und einem Ergebnis; mit ihm fließt der Text, während
+        er entsteht. Ein Rückruf und kein Rückgabewert, weil diese Datei nicht
+        weiß, wohin die Stücke gehen — an einen Browser, in ein Protokoll, in
+        einen Sprachausgabe-Puffer. Was sie weiß, ist der Text.
+
+        **Was sich dadurch nicht ändert: die Prüfungen.** Der Strom geht durch
+        dasselbe Gate (``ModelGateway.stream``), und die Zulassung fällt vor
+        dem ersten Stück. Die Kontamination hängt an der Anfrage und nicht am
+        Ergebnis — ein Strom hat keines, an das sich etwas anheften ließe.
+
+        **Und der Rückruf darf nichts verhindern.** Scheitert er, ist ein Stück
+        Anzeige verloren; der Schritt läuft weiter. Ein Antwortschritt, der an
+        einer Benachrichtigung scheitert, wäre die Umkehrung der Verhältnisse.
         """
         anfrage = CompletionRequest(
             model=model,
@@ -110,11 +129,17 @@ class PlanResponseSource:
         )
 
         try:
-            antwort = await self._gateway.complete(
-                anfrage,
-                data_class=run.data_class,
-                taint=run.taint_level,
-            )
+            if on_token is None:
+                antwort = await self._gateway.complete(
+                    anfrage,
+                    data_class=run.data_class,
+                    taint=run.taint_level,
+                )
+                roh, verbrauch = antwort.text, antwort.usage
+                kontaminiert = antwort.taints_context
+            else:
+                roh, verbrauch = await self._stroemen(anfrage, run, on_token)
+                kontaminiert = self._gateway.kontaminiert(anfrage, run.taint_level)
         except ModelNotPermitted as abgelehnt:
             raise ResponseUnavailable(
                 f"Schritt {step.seq}: Modellaufruf nicht zulässig — {abgelehnt.reason}"
@@ -123,7 +148,7 @@ class PlanResponseSource:
         # Ein etwaiger Werkzeugvorschlag wird hier schlicht nicht gelesen. Es
         # gibt in dieser Datei keinen Weg, aus ``antwort.tool_calls`` etwas zu
         # machen — was das Modell trotz leerem Angebot halluziniert, verfällt.
-        text = antwort.text.strip()
+        text = roh.strip()
         if not text:
             # Ein Lauf, der mit leerem Text als „fertig" gilt, sieht erfolgreich
             # aus und hat nichts geliefert.
@@ -132,4 +157,32 @@ class PlanResponseSource:
                 "Der Schritt bleibt offen."
             )
 
-        return FormulatedResponse(text=text, taints=antwort.taints_context, usage=antwort.usage)
+        return FormulatedResponse(text=text, taints=kontaminiert, usage=verbrauch)
+
+    async def _stroemen(
+        self,
+        anfrage: CompletionRequest,
+        run: Run,
+        on_token: Callable[[str], Awaitable[None]],
+    ) -> tuple[str, ModelUsage]:
+        """Sammelt den Text und reicht jedes Stück weiter.
+
+        Gesammelt wird trotzdem: Was in den Lauf geschrieben wird, ist der
+        vollständige Text — die Stücke sind Anzeige und kein Zustand. Eine
+        Oberfläche, die sich den Text aus Stücken zusammensetzt und ihn als
+        Wahrheit führt, driftet beim ersten verpassten Stück.
+        """
+        stuecke: list[str] = []
+        verbrauch = ModelUsage()
+        async for stueck in self._gateway.stream(
+            anfrage, data_class=run.data_class, taint=run.taint_level
+        ):
+            if stueck.delta:
+                stuecke.append(stueck.delta)
+                with suppress(Exception):
+                    # Ein gescheiterter Rückruf kostet Anzeige, nicht den
+                    # Schritt. Begründung im Docstring von ``for_step``.
+                    await on_token(stueck.delta)
+            if stueck.usage is not None:
+                verbrauch = stueck.usage
+        return "".join(stuecke), verbrauch

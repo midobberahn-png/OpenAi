@@ -7869,6 +7869,37 @@
       "title": "TimeWindow",
       "type": "object"
     },
+    "TokenDelta": {
+      "properties": {
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t": {
+          "const": "token.delta",
+          "default": "token.delta",
+          "title": "T",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "run_id",
+        "text"
+      ],
+      "title": "TokenDelta",
+      "type": "object"
+    },
     "ToolInvocation": {
       "$defs": {
         "DataClass": {

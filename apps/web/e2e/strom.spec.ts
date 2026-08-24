@@ -17,6 +17,7 @@ import { angemeldet } from "./system";
  */
 test("Eine Änderung erscheint, ohne auf den Takt zu warten", async ({ page }) => {
   await angemeldet(page);
+  await page.getByTestId("zu-laeufen").click();
   await expect(page.getByTestId("strom")).toHaveText("· live", { timeout: 10_000 });
 
   // Der Lauf entsteht **außerhalb** dieses Fensters — so, wie ihn der Arbeiter
@@ -36,6 +37,7 @@ test("Ohne Strom bleibt die Oberfläche richtig, nur langsamer", async ({ page }
   // oder ein Redis, der wegbleibt.
   await page.route("**/events", (route) => route.abort());
   await page.reload();
+  await page.getByTestId("zu-laeufen").click();
 
   await expect(page.getByTestId("strom")).toHaveText("· lädt im Takt nach");
   await page.request.post("/runs", { data: { input: "Ohne Strom" } });

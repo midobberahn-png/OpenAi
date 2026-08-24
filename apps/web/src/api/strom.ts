@@ -22,12 +22,20 @@ import { useEffect, useRef, useState } from "react";
  */
 export type Verbindung = "verbunden" | "getrennt" | "aus";
 
-export function useStrom(beiAenderung: () => void): Verbindung {
+export function useStrom(
+  beiAenderung: () => void,
+  beiNachricht?: (nachricht: Record<string, unknown>) => void,
+): Verbindung {
   const [zustand, setZustand] = useState<Verbindung>("getrennt");
   // Als Referenz und nicht als Abhängigkeit: Sonst würde jede neue Fassung
   // der Rückrufmethode die Leitung schließen und neu aufbauen.
   const rueckruf = useRef(beiAenderung);
   rueckruf.current = beiAenderung;
+  // Der zweite Rückruf ist die **einzige** Stelle, an der Ereignisinhalte
+  // überhaupt gelesen werden — und er dient genau einem Zweck: Textstücke
+  // anzuzeigen, während sie entstehen. Alles andere bleibt beim Nachladen.
+  const inhalt = useRef(beiNachricht);
+  inhalt.current = beiNachricht;
 
   useEffect(() => {
     const quelle = new EventSource("/events", { withCredentials: true });
@@ -38,12 +46,23 @@ export function useStrom(beiAenderung: () => void): Verbindung {
     quelle.onmessage = (ereignis) => {
       setZustand("verbunden");
       try {
-        const nachricht = JSON.parse(ereignis.data) as { seq?: number };
+        const nachricht = JSON.parse(ereignis.data) as Record<string, unknown> & {
+          seq?: number;
+        };
+        inhalt.current?.(nachricht);
+        // Die Nummer wird **immer** fortgeschrieben, auch für Textstücke:
+        // Sonst zählte die Lückenerkennung an ihnen vorbei und meldete
+        // Lücken, die keine sind.
         if (typeof nachricht.seq === "number") {
           if (letzte !== 0 && nachricht.seq > letzte + 1) {
             console.warn(`Ereignislücke: ${letzte} → ${nachricht.seq}`);
           }
           letzte = nachricht.seq;
+        }
+        if (nachricht.t === "token.delta") {
+          // Ein Textstück ändert am Zustand nichts — es wird angezeigt und
+          // nicht nachgeladen. Sonst löste jedes Wort einen Rundlauf aus.
+          return;
         }
       } catch {
         // Eine unlesbare Nachricht ist kein Grund, nicht nachzuladen — im

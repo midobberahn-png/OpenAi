@@ -22,6 +22,7 @@ const TERMIN = {
  */
 test("Ein Lauf zeigt seinen Plan", async ({ page }) => {
   await angemeldet(page);
+  await page.getByTestId("zu-laeufen").click();
   await page.getByTestId("eingabe").fill("Blockier mir eine Stunde am Dienstag");
   await page.getByTestId("starten").click();
 
@@ -50,6 +51,7 @@ test("Ein ausgeführter Aufruf lässt sich zurücknehmen", async ({ page }) => {
   expect((await schritt.json()).status).toBe("executed");
 
   await page.reload();
+  await page.getByTestId("zu-laeufen").click();
   await page.getByTestId("lauf").first().click();
   await expect(page.getByTestId("aufruf-calendar.create")).toBeVisible();
 
@@ -88,6 +90,7 @@ test("Eine zweite Rücknahme wird nicht angeboten", async ({ page }) => {
   });
 
   await page.reload();
+  await page.getByTestId("zu-laeufen").click();
   await page.getByTestId("lauf").first().click();
   await page.getByTestId("aufrufliste").getByRole("button", { name: "Rückgängig" }).click();
   await expect(page.getByTestId("aufrufliste")).toContainText("undone");

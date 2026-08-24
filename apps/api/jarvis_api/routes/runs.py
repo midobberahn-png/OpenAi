@@ -29,6 +29,7 @@ behauptet wird.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
@@ -66,6 +67,7 @@ from jarvis_contracts import (
     RunTrigger,
     Session,
     StepFinished,
+    TokenDelta,
     ToolInvocation,
 )
 from jarvis_core.orchestrator import (
@@ -131,6 +133,21 @@ class RunView(BaseModel):
     finished_at: datetime | None
 
     goal: str | None = None
+    output: str = ""
+    """Die formulierte Antwort — der Text, den ein Mensch liest.
+
+    Kommt aus ``RunState.partial_output`` und heißt dort so, weil er auch bei
+    einer Budgetüberschreitung ausgeliefert wird statt verworfen zu werden.
+
+    **Er stammt aus einem Modell und kann Fremdinhalt wiedergeben.** Was ihn
+    folgenlos macht, ist nicht diese Zeile, sondern die Darstellung: Die
+    Oberfläche rendert Text und kein HTML (docs/10-ui.md §5). Ein
+    ``dangerouslySetInnerHTML`` an dieser Stelle wäre der direkte Weg von einer
+    präparierten Datei in eine Anwendung mit Postfachzugriff.
+
+    Bei ``GET /runs`` bewusst leer, wie der Plan: Eine Übersicht über zwanzig
+    Läufe soll nicht zwanzig Antworttexte übertragen."""
+
     plan: list[PlanStepView] = []
     """Leer, solange kein Plan existiert — und bei ``GET /runs`` bewusst nicht
     befüllt: Der Status jedes Schrittes kostet eine Berechtigungsabfrage, und
@@ -224,6 +241,13 @@ def _view(lauf: Run) -> RunView:
         trace_id=lauf.trace_id,
         started_at=lauf.started_at,
         finished_at=lauf.finished_at,
+        # **Das Ziel auch in der Übersicht**, anders als Plan und Antworttext.
+        # Der Grund für deren Zurückhaltung gilt hier nicht: Der Status jedes
+        # Planschrittes kostet eine Berechtigungsabfrage, der Antworttext kann
+        # tausende Zeichen fassen — das Ziel ist eine Zeile, die ohnehin
+        # geladen ist. Ohne sie zeigt ein Gesprächsverlauf nicht, was gesagt
+        # wurde.
+        goal=lauf.plan.goal if lauf.plan else None,
     )
 
 
@@ -340,6 +364,7 @@ async def read_run(
     return sicht.model_copy(
         update={
             "goal": lauf.plan.goal if lauf.plan else None,
+            "output": lauf.state.partial_output,
             "plan": await _planschritte(lauf, angebot=angebot),
         }
     )
@@ -359,6 +384,27 @@ async def _melden(events: Events, session: Session, nachricht: object) -> None:
     if events is None:
         return
     await events.publish(session.user_id, als_nachricht(nachricht))  # type: ignore[arg-type]
+
+
+def _token_melder(
+    events: Events, session: Session, run_id: UUID
+) -> Callable[[str], Awaitable[None]] | None:
+    """Baut den Rückruf, der Textstücke an die Geräte des Nutzers schickt.
+
+    ``None``, wenn es keinen Verteiler gibt: Dann läuft der Schritt ohne
+    Zuschauer, und die Oberfläche sieht die Antwort, wenn sie fertig ist.
+    Ein Rückruf, der ins Leere schriebe, kostete Arbeit ohne Wirkung.
+    """
+    if events is None:
+        return None
+
+    async def melden(stueck: str) -> None:
+        await events.publish(
+            session.user_id,
+            als_nachricht(TokenDelta(seq=0, run_id=run_id, text=stueck)),
+        )
+
+    return melden
 
 
 async def _schritt_melden(
@@ -732,6 +778,10 @@ async def advance_run(
         # Frist abgelaufen ist und ob das Werkzeugprotokoll eine Wirkung
         # ausschließt — und übernimmt nur dann.
         recovery=Recovery(runs=runs, invocations=invocations, tools=tools),
+        # Der Text fließt, während er entsteht — über denselben Kanal, der
+        # ohnehin offen ist. Ein Stück ist Anzeige und kein Zustand: Was in den
+        # Lauf geschrieben wird, ist der vollständige Text.
+        on_token=_token_melder(events, session, lauf.id),
         channel=KANAL,
     )
 

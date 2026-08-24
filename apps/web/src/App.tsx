@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "./api/client";
 import { Anmeldung } from "./seiten/Anmeldung";
+import { Chat } from "./seiten/Chat";
 import { Laeufe } from "./seiten/Laeufe";
 import { Rechte } from "./seiten/Rechte";
 
@@ -18,11 +19,11 @@ import { Rechte } from "./seiten/Rechte";
  * abgelaufene Sitzung und zeigt dann eine Oberfläche, hinter der jeder Aufruf
  * mit 401 endet. ``GET /auth/me`` ist die einzige Stelle, die es weiß.
  */
-type Bereich = "laeufe" | "rechte";
+type Bereich = "chat" | "laeufe" | "rechte";
 
 export function App() {
   const [angemeldet, setAngemeldet] = useState<boolean | null>(null);
-  const [bereich, setBereich] = useState<Bereich>("laeufe");
+  const [bereich, setBereich] = useState<Bereich>("chat");
 
   const pruefen = useCallback(async () => {
     try {
@@ -53,6 +54,13 @@ export function App() {
           <>
             <nav className="zeile">
               <button
+                onClick={() => setBereich("chat")}
+                className={bereich === "chat" ? "haupt" : ""}
+                data-test="zum-chat"
+              >
+                Chat
+              </button>
+              <button
                 onClick={() => setBereich("laeufe")}
                 className={bereich === "laeufe" ? "haupt" : ""}
                 data-test="zu-laeufen"
@@ -75,6 +83,7 @@ export function App() {
       </header>
       {angemeldet === null && <div className="inhalt gedaempft">Verbindung wird geprüft…</div>}
       {angemeldet === false && <Anmeldung fertig={() => void pruefen()} />}
+      {angemeldet === true && bereich === "chat" && <Chat oeffneLauf={() => setBereich("laeufe")} />}
       {angemeldet === true && bereich === "laeufe" && <Laeufe />}
       {angemeldet === true && bereich === "rechte" && <Rechte />}
     </>

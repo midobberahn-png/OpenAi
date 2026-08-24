@@ -41,6 +41,7 @@ abgebrochene Läufe fortsetzt, spricht keins. Ein Schichttest hält das fest.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -171,6 +172,7 @@ class RunAdvancer:
         responses: PlanResponseSource,
         agents: AgentStepRunner | None = None,
         recovery: Recovery | None = None,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
         channel: ApprovalChannel = "ui",
     ) -> None:
         self._runs = runs
@@ -183,6 +185,14 @@ class RunAdvancer:
         """Ohne Agentenquelle bleibt ein ``agent``-Schritt abgewiesen — der
         Stand vor diesem Block. ``None`` ist deshalb kein Notbehelf, sondern
         die ehrliche Auskunft eines Aufrufers, der keinen Agentenkatalog hat."""
+
+        self._on_token = on_token
+        """Wohin der Text fließt, während er entsteht — oder ``None``.
+
+        Der Ablauf weiß nicht, wer zusieht: ein Browser, ein Protokoll, eine
+        Sprachausgabe. Er reicht den Rückruf weiter und mischt sich nicht ein.
+        ``None`` ist der Normalfall für alles, was nicht an einem Bildschirm
+        hängt — der Arbeiter etwa hat keinen Zuschauer."""
 
         self._recovery = recovery
         """Ohne Wiederaufnahme bleibt ein fremder Anspruch eine Sackgasse, und
@@ -504,6 +514,7 @@ class RunAdvancer:
                 run=lauf,
                 goal=plan.goal,
                 model=lauf.routing.model if lauf.routing else "",
+                on_token=self._on_token,
             )
         except PlanStepUnavailable as ohne:
             raise AdvanceRejected("no-response", str(ohne)) from ohne

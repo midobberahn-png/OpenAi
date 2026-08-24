@@ -923,8 +923,25 @@ class _Drehbuchanbieter:
         self.gesehen.append(request)
         return self._antworten.pop(0)
 
-    def stream(self, request: Any) -> Any:  # pragma: no cover - ungenutzt
-        raise NotImplementedError
+    async def stream(self, request: Any) -> Any:
+        """Dieselbe Antwort, in Stücken.
+
+        **Nicht mehr ungenutzt**, seit der Antwortschritt streamt: Eine
+        Attrappe, die weniger kann als die Anwendung, lässt eine Suite grün
+        melden, während der Betrieb an genau dieser Stelle abbricht. Aufgefallen
+        beim Anschließen des Chats — vier Tests schlugen fehl, und alle vier zu
+        Recht.
+
+        Zerlegt wird an Wortgrenzen: Das ist nicht, wie ein Modell tokenisiert,
+        aber es ist stückweise, und geprüft wird das Zusammensetzen.
+        """
+        from jarvis_contracts import StreamChunk
+
+        antwort = self._antworten.pop(0)
+        self.gesehen.append(request)
+        for wort in str(antwort.text).split(" "):
+            yield StreamChunk(delta=wort + " ")
+        yield StreamChunk(finish_reason="stop", usage=antwort.usage)
 
     async def count_tokens(self, request: Any) -> int:  # pragma: no cover
         return 0
