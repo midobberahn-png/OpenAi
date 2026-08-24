@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api, ApiFehler } from "../api/client";
+import { useStrom } from "../api/strom";
 import type { LaufZeile, OffeneAktion } from "../api/typen";
 import { Bestaetigungsdialog } from "../teile/Bestaetigungsdialog";
 import { Laufdetail } from "./Laufdetail";
@@ -39,9 +40,14 @@ export function Laeufe() {
     }
   }, []);
 
+  // Der Strom beschleunigt, der Takt bleibt: Fällt die Leitung aus, wird die
+  // Oberfläche langsamer und nicht falsch (ADR-016). Zehn Sekunden statt drei,
+  // weil der Strom den Normalfall trägt — der Takt ist die Rückfallebene.
+  const verbindung = useStrom(() => void laden());
+
   useEffect(() => {
     void laden();
-    const takt = setInterval(() => void laden(), 3000);
+    const takt = setInterval(() => void laden(), 10_000);
     return () => clearInterval(takt);
   }, [laden]);
 
@@ -65,7 +71,12 @@ export function Laeufe() {
   return (
     <div className="inhalt">
       <div className="karte">
-        <h2>Neuer Vorgang</h2>
+        <h2>
+          Neuer Vorgang
+          <span className="gedaempft" data-test="strom" style={{ marginLeft: "0.75rem" }}>
+            {verbindung === "verbunden" ? "· live" : "· lädt im Takt nach"}
+          </span>
+        </h2>
         <div className="zeile">
           <input
             placeholder="Was soll geschehen?"

@@ -37,13 +37,15 @@ from jarvis_api.deps import (
     Approvals,
     Audit,
     CurrentSession,
+    Events,
     Invocations,
     Policy,
     Runs,
     SessionToken,
     Tools,
 )
-from jarvis_contracts import ApprovalChannel, PendingAction, Session
+from jarvis_api.events import als_nachricht
+from jarvis_contracts import ActionResolved, ApprovalChannel, PendingAction, Session
 from jarvis_core.orchestrator import BudgetTracker, StepExecution, ToolExecutor, utc_now
 from jarvis_core.policy import ApprovalOutcome
 from jarvis_core.ports.runs import RunStateConflict
@@ -280,6 +282,7 @@ async def respond_action(
     policy: Policy,
     invocations: Invocations,
     audit: Audit,
+    events: Events,
 ) -> RespondResult:
     """Erteilt oder verweigert eine Bestätigung — genau einmal.
 
@@ -321,6 +324,21 @@ async def respond_action(
             audit=audit,
         ),
     )
+    # **Auch an die anderen Geräte.** Eine Bestätigung, die hier beantwortet
+    # wurde, steht sonst auf jedem zweiten Bildschirm weiter offen — und wer
+    # dort klickt, bekommt eine verbrauchte Nonce und keine Erklärung.
+    if events is not None:
+        await events.publish(
+            session.user_id,
+            als_nachricht(
+                ActionResolved(
+                    seq=0,
+                    action_id=aktion.id,
+                    result="approved" if ergebnis.approved else "rejected",
+                )
+            ),
+        )
+
     if schritt is None:
         return RespondResult(approved=ergebnis.approved, reason=ergebnis.reason)
 

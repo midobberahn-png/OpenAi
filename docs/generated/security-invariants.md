@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 56/57**
+**Security Invariant Coverage: 57/58**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -55,6 +55,7 @@ nicht nachträglich passend machen.
 | `undo-grant-single-use` | Eine ausgestellte Rücknahme-Erlaubnis nimmt höchstens einmal zurück | Ein ``UndoGrant`` erreicht den Undo-Handler genau einmal. Der Verbrauch liegt an der ``invocation_id``, ist atomar und committet, bevor der Handler läuft — unabhängig davon, wie oft dasselbe Objekt oder eine Kopie davon vorgelegt wird. | `core.tools.registry` |
 | `permissions-change-only-at-the-edge` | Rechte erteilt ein Mensch, kein Werkzeug | Berechtigungen werden ausschließlich an der HTTP-Kante geschrieben — aus einer geprüften Sitzung, gegen den Scope-Katalog, mit scope-eigenen Einschränkungen. Kein Werkzeug trägt einen Berechtigungs-Scope, und kein Kernmodul ruft die schreibenden Methoden. | `api.routes.permissions` |
 | `audit-chain-records-what-happened` | Was geschieht, steht in der verketteten Spur | Jede Werkzeugausführung, jede Bestätigung und jede Rechteänderung schreibt einen Eintrag in das hash-verkettete Audit-Log — serialisiert, append-only und mit einem Weg, die Kette nachzurechnen. | `api.db.audit_store` |
+| `event-stream-is-scoped-and-contentless` | Der Ereignisstrom trägt Hinweise, und zwar nur die eigenen | Ein Ereignisstrom liefert ausschließlich Ereignisse des angemeldeten Nutzers, und er trägt keine Geheimnisse und keinen Fremdinhalt — weder Nonce noch Argumente noch Werkzeugergebnisse. Was gilt, holt die Oberfläche über die API. | `api.events` |
 | `tool-result-model-view-is-declared` | Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat | Aus einem ``ToolResult`` erreicht ausschließlich das den Prompt, was ``ToolSpec.model_visible_fields`` benennt — gekappt auf eine feste Grenze. Die Vorgabe ist leer. | `contracts.tools` |
 | `tool-arguments-match-schema` | Argumente werden gegen das Werkzeugschema geprüft | Kein Argumentobjekt erreicht Policy-Entscheidung, Vorschau, Payload-Hash oder Handler, ohne gegen ``ToolSpec.parameters`` geprüft worden zu sein. | `core.orchestrator.executor` |
 | `data-class-hard-filter` | Datenklassifikation ist ein hartes Filter | Ein Kontext, der eine Klasse nicht zulässt, führt kein Werkzeug dieser Klasse aus. | `core.policy.engine` |

@@ -42,6 +42,7 @@ from jarvis_api.deps import (
     Approvals,
     Audit,
     CurrentSession,
+    Events,
     Invocations,
     ModelArguments,
     ModelResponse,
@@ -49,17 +50,22 @@ from jarvis_api.deps import (
     Runs,
     Tools,
 )
+from jarvis_api.events import als_nachricht
 from jarvis_api.models import model_catalog
 from jarvis_api.settings import Settings, get_settings
 from jarvis_contracts import (
     BUDGET_PRESETS,
     UNDO_TTL,
+    ActionWaiting,
     ApprovalChannel,
     InvocationStatus,
+    PendingAction,
     Run,
+    RunStarted,
     RunStatus,
     RunTrigger,
     Session,
+    StepFinished,
     ToolInvocation,
 )
 from jarvis_core.orchestrator import (
@@ -248,6 +254,7 @@ async def create_run(
     tools: Tools,
     policy: Policy,
     settings: Annotated[Settings, Depends(get_settings)],
+    events: Events,
 ) -> RunView:
     """Legt einen Lauf an — für den angemeldeten Nutzer.
 
@@ -305,6 +312,9 @@ async def create_run(
         started_at=jetzt,
     )
     await runs.create(lauf)
+    # Nach dem Anlegen und nicht davor: Ein Hinweis auf einen Lauf, den es noch
+    # nicht gibt, führt jedes lauschende Gerät auf eine 404.
+    await _melden(events, session, RunStarted(seq=0, run_id=lauf.id, trace_id=lauf.trace_id))
     return _view(lauf)
 
 
@@ -333,6 +343,44 @@ async def read_run(
             "plan": await _planschritte(lauf, angebot=angebot),
         }
     )
+
+
+async def _melden(events: Events, session: Session, nachricht: object) -> None:
+    """Schickt einen Hinweis an die Geräte des Nutzers — falls es einen Weg gibt.
+
+    **Nach** der Wirkung und nie davor: Ein Ereignis, das eine Ausführung
+    ankündigt, die anschließend scheitert, ist eine Falschaussage an alle
+    angemeldeten Geräte.
+
+    Und ohne Rückwirkung: Fehlt der Verteiler oder ist Redis weg, geschieht
+    nichts. Der Strom ist eine Beschleunigung, keine Zusage — die Oberfläche
+    lädt ohnehin im Takt nach.
+    """
+    if events is None:
+        return
+    await events.publish(session.user_id, als_nachricht(nachricht))  # type: ignore[arg-type]
+
+
+async def _schritt_melden(
+    events: Events, session: Session, run_id: UUID, stand: str, wartend: PendingAction | None
+) -> None:
+    """Zwei Hinweise aus einem Ausgang — und der zweite ist der wichtigere.
+
+    ``StepFinished`` sagt „der Lauf hat sich bewegt". ``ActionWaiting`` sagt
+    „hier steht jetzt ein Mensch zwischen Absicht und Wirkung", und das ist der
+    Moment, für den es diesen Strom überhaupt gibt: Drei Sekunden Pollintervall
+    sind bei einer Aktion mit Außenwirkung drei Sekunden zu viel.
+
+    ``latency_ms=0``: Die Zahl steht im Vertrag, und dieser Weg misst sie
+    nicht. Sie zu schätzen wäre schlimmer als sie wegzulassen — eine erfundene
+    Messung sieht aus wie eine echte. Wer sie braucht, misst sie dort, wo der
+    Schritt läuft, und nicht an der Kante.
+    """
+    await _melden(
+        events, session, StepFinished(seq=0, run_id=run_id, step_seq=0, status=stand, latency_ms=0)
+    )
+    if wartend is not None:
+        await _melden(events, session, ActionWaiting(seq=0, run_id=run_id, action_id=wartend.id))
 
 
 class InvocationView(BaseModel):
@@ -476,6 +524,7 @@ async def execute_step(
     approvals: Approvals,
     invocations: Invocations,
     audit: Audit,
+    events: Events,
 ) -> StepView:
     """Führt einen Werkzeugschritt aus — Glieder ⑤ bis ⑦ über HTTP.
 
@@ -560,6 +609,7 @@ async def execute_step(
         ) from konflikt
 
     ergebnis = schritt.result
+    await _schritt_melden(events, session, lauf.id, schritt.status, schritt.pending)
     return StepView(
         status=schritt.status,
         reason=schritt.reason,
@@ -635,6 +685,7 @@ async def advance_run(
     antworten: ModelResponse,
     agenten: Agents,
     audit: Audit,
+    events: Events,
 ) -> StepView:
     """Führt den nächsten fälligen Schritt des Plans aus.
 
@@ -692,6 +743,7 @@ async def advance_run(
             detail=abgewiesen.reason,
         ) from abgewiesen
 
+    await _schritt_melden(events, session, lauf.id, ausgang.status, ausgang.pending)
     return StepView(
         status=ausgang.status,
         reason=ausgang.reason,

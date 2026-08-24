@@ -22,6 +22,7 @@ from .permissions import PendingAction
 from .runs import Intent, PlanStep, RunStatus, Usage
 
 __all__ = [
+    "ActionWaiting",
     "CameraState",
     "ClientMessage",
     "CoreState",
@@ -248,6 +249,33 @@ class ActionPending(_ServerMsg):
     action: PendingAction
 
 
+class ActionWaiting(_ServerMsg):
+    """Es wartet eine Bestätigung — **ohne** die Bestätigung selbst.
+
+    Der Unterschied zu ``ActionPending`` ist die Nonce, und er ist
+    sicherheitsrelevant.
+
+    ``PendingAction`` trägt sie, und sie ist an **eine Sitzung** gebunden:
+    ``ApprovalGateway.respond()`` weist eine fremde ab, und ``GET /actions``
+    gibt sie deshalb nur der Sitzung heraus, in der die Vorschau erschien. Der
+    Ereignisstrom geht an den **Nutzer** — an jedes seiner angemeldeten Geräte.
+    Eine vollständige ``PendingAction`` darüber zu schicken hieße, das
+    Geheimnis genau an die Sitzungen zu verteilen, denen es nicht gehört.
+
+    Diese Nachricht sagt deshalb nur, *dass* etwas wartet. Was wartet, holt die
+    Oberfläche über ``GET /actions`` — dort entscheidet die Sitzung, was sie zu
+    sehen bekommt.
+
+    ``ActionPending`` bleibt im Protokoll: Für einen sitzungsgebundenen Kanal
+    (der Sprachkanal wird einer) ist es die richtige Nachricht. Über den
+    nutzerweiten Strom geht sie nicht.
+    """
+
+    t: Literal["action.waiting"] = "action.waiting"
+    run_id: UUID
+    action_id: UUID
+
+
 class ActionResolved(_ServerMsg):
     t: Literal["action.resolved"] = "action.resolved"
     action_id: UUID
@@ -313,6 +341,7 @@ ServerMessage = Annotated[
     | StepFinished
     | TokenDelta
     | ActionPending
+    | ActionWaiting
     | ActionResolved
     | RunFinished
     | RunError

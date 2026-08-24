@@ -1464,6 +1464,26 @@
         ]
       }
     },
+    "/events": {
+      "get": {
+        "description": "Der Ereignisstrom des angemeldeten Nutzers.\n\n**Die Kennung kommt aus der Sitzung.** Es gibt keinen Parameter, mit dem\nsich ein fremder Strom abonnieren ließe — dieselbe Regel wie überall\n(``identity-derives-from-session``), und hier mit besonderem Gewicht: Ein\nStrom ist eine dauerhafte Leitung, und was einmal falsch verbunden ist,\nbleibt es.\n\n**Ohne ``id:``-Feld, und das ist Absicht.** SSE kennt eine Wiederaufnahme\nüber ``Last-Event-ID``; Redis Pub/Sub hat aber kein Gedächtnis, und was der\nBrowser nachfordern würde, gäbe es nicht mehr. Ein Feld, das eine\nWiederaufnahme verspricht, die niemand einlösen kann, ist schlechter als\nkeines: Der Browser hörte auf, selbst nachzuladen. Die Lückenerkennung\nläuft deshalb über ``seq`` im Rumpf — bemerkt der Client eine Lücke, lädt\ner neu und ist danach richtig statt ungefähr.",
+        "operationId": "stream_events_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stream",
+        "tags": [
+          "events"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "description": "Erreichbarkeit. Bewusst ohne Datenbankzugriff und ohne Details —\nein Health-Endpunkt, der die Umgebung ausplaudert, ist eine\nAufklärungshilfe.",

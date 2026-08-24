@@ -88,6 +88,75 @@
       "title": "ActionPreview",
       "type": "object"
     },
+    "ActionResolved": {
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "approved",
+            "rejected",
+            "expired"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t": {
+          "const": "action.resolved",
+          "default": "action.resolved",
+          "title": "T",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "action_id",
+        "result"
+      ],
+      "title": "ActionResolved",
+      "type": "object"
+    },
+    "ActionWaiting": {
+      "description": "Es wartet eine Bestätigung — **ohne** die Bestätigung selbst.\n\nDer Unterschied zu ``ActionPending`` ist die Nonce, und er ist\nsicherheitsrelevant.\n\n``PendingAction`` trägt sie, und sie ist an **eine Sitzung** gebunden:\n``ApprovalGateway.respond()`` weist eine fremde ab, und ``GET /actions``\ngibt sie deshalb nur der Sitzung heraus, in der die Vorschau erschien. Der\nEreignisstrom geht an den **Nutzer** — an jedes seiner angemeldeten Geräte.\nEine vollständige ``PendingAction`` darüber zu schicken hieße, das\nGeheimnis genau an die Sitzungen zu verteilen, denen es nicht gehört.\n\nDiese Nachricht sagt deshalb nur, *dass* etwas wartet. Was wartet, holt die\nOberfläche über ``GET /actions`` — dort entscheidet die Sitzung, was sie zu\nsehen bekommt.\n\n``ActionPending`` bleibt im Protokoll: Für einen sitzungsgebundenen Kanal\n(der Sprachkanal wird einer) ist es die richtige Nachricht. Über den\nnutzerweiten Strom geht sie nicht.",
+      "properties": {
+        "action_id": {
+          "format": "uuid",
+          "title": "Action Id",
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t": {
+          "const": "action.waiting",
+          "default": "action.waiting",
+          "title": "T",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "run_id",
+        "action_id"
+      ],
+      "title": "ActionWaiting",
+      "type": "object"
+    },
     "AgentRequest": {
       "$defs": {
         "ContextBundle": {
@@ -5660,6 +5729,160 @@
       "title": "RunBudget",
       "type": "object"
     },
+    "RunFinished": {
+      "$defs": {
+        "RunStatus": {
+          "enum": [
+            "queued",
+            "planning",
+            "executing",
+            "awaiting_confirmation",
+            "verifying",
+            "completed",
+            "failed",
+            "cancelled",
+            "interrupted",
+            "budget_exceeded"
+          ],
+          "title": "RunStatus",
+          "type": "string"
+        },
+        "Usage": {
+          "description": "Verbrauch eines Laufs. Wird fortlaufend gegen das Budget geprüft.",
+          "properties": {
+            "cost_eur": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                }
+              ],
+              "default": "0",
+              "title": "Cost Eur"
+            },
+            "elapsed_s": {
+              "default": 0.0,
+              "title": "Elapsed S",
+              "type": "number"
+            },
+            "steps": {
+              "default": 0,
+              "title": "Steps",
+              "type": "integer"
+            },
+            "tokens_in": {
+              "default": 0,
+              "title": "Tokens In",
+              "type": "integer"
+            },
+            "tokens_out": {
+              "default": 0,
+              "title": "Tokens Out",
+              "type": "integer"
+            },
+            "tool_calls": {
+              "default": 0,
+              "title": "Tool Calls",
+              "type": "integer"
+            }
+          },
+          "title": "Usage",
+          "type": "object"
+        }
+      },
+      "properties": {
+        "cost_eur": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Cost Eur"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/RunStatus"
+        },
+        "t": {
+          "const": "run.finished",
+          "default": "run.finished",
+          "title": "T",
+          "type": "string"
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        }
+      },
+      "required": [
+        "seq",
+        "run_id",
+        "status",
+        "usage",
+        "cost_eur"
+      ],
+      "title": "RunFinished",
+      "type": "object"
+    },
+    "RunStarted": {
+      "properties": {
+        "conversation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Conversation Id"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "t": {
+          "const": "run.started",
+          "default": "run.started",
+          "title": "T",
+          "type": "string"
+        },
+        "trace_id": {
+          "title": "Trace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "run_id",
+        "trace_id"
+      ],
+      "title": "RunStarted",
+      "type": "object"
+    },
     "RunState": {
       "$defs": {
         "Correction": {
@@ -6323,6 +6546,39 @@
             "result"
           ],
           "title": "ActionResolved",
+          "type": "object"
+        },
+        "ActionWaiting": {
+          "description": "Es wartet eine Bestätigung — **ohne** die Bestätigung selbst.\n\nDer Unterschied zu ``ActionPending`` ist die Nonce, und er ist\nsicherheitsrelevant.\n\n``PendingAction`` trägt sie, und sie ist an **eine Sitzung** gebunden:\n``ApprovalGateway.respond()`` weist eine fremde ab, und ``GET /actions``\ngibt sie deshalb nur der Sitzung heraus, in der die Vorschau erschien. Der\nEreignisstrom geht an den **Nutzer** — an jedes seiner angemeldeten Geräte.\nEine vollständige ``PendingAction`` darüber zu schicken hieße, das\nGeheimnis genau an die Sitzungen zu verteilen, denen es nicht gehört.\n\nDiese Nachricht sagt deshalb nur, *dass* etwas wartet. Was wartet, holt die\nOberfläche über ``GET /actions`` — dort entscheidet die Sitzung, was sie zu\nsehen bekommt.\n\n``ActionPending`` bleibt im Protokoll: Für einen sitzungsgebundenen Kanal\n(der Sprachkanal wird einer) ist es die richtige Nachricht. Über den\nnutzerweiten Strom geht sie nicht.",
+          "properties": {
+            "action_id": {
+              "format": "uuid",
+              "title": "Action Id",
+              "type": "string"
+            },
+            "run_id": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            },
+            "seq": {
+              "minimum": 0,
+              "title": "Seq",
+              "type": "integer"
+            },
+            "t": {
+              "const": "action.waiting",
+              "default": "action.waiting",
+              "title": "T",
+              "type": "string"
+            }
+          },
+          "required": [
+            "seq",
+            "run_id",
+            "action_id"
+          ],
+          "title": "ActionWaiting",
           "type": "object"
         },
         "CoreState": {
@@ -7230,6 +7486,7 @@
         "mapping": {
           "action.pending": "#/$defs/ActionPending",
           "action.resolved": "#/$defs/ActionResolved",
+          "action.waiting": "#/$defs/ActionWaiting",
           "core.state": "#/$defs/CoreStateChanged",
           "pong": "#/$defs/Pong",
           "proactive": "#/$defs/Proactive",
@@ -7270,6 +7527,9 @@
         },
         {
           "$ref": "#/$defs/ActionPending"
+        },
+        {
+          "$ref": "#/$defs/ActionWaiting"
         },
         {
           "$ref": "#/$defs/ActionResolved"
@@ -7416,6 +7676,47 @@
         "ref"
       ],
       "title": "Source",
+      "type": "object"
+    },
+    "StepFinished": {
+      "properties": {
+        "latency_ms": {
+          "title": "Latency Ms",
+          "type": "integer"
+        },
+        "run_id": {
+          "format": "uuid",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "seq": {
+          "minimum": 0,
+          "title": "Seq",
+          "type": "integer"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "step_seq": {
+          "title": "Step Seq",
+          "type": "integer"
+        },
+        "t": {
+          "const": "step.finished",
+          "default": "step.finished",
+          "title": "T",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "run_id",
+        "step_seq",
+        "status",
+        "latency_ms"
+      ],
+      "title": "StepFinished",
       "type": "object"
     },
     "StepOutcome": {

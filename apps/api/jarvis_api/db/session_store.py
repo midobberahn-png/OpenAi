@@ -18,7 +18,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_contracts import Session
 
@@ -73,8 +73,16 @@ def _to_session(row: Any) -> Session:
 
 
 class PostgresSessionStore:
-    def __init__(self, conn: AsyncConnection) -> None:
+    """Sitzungen — Anlegen und Widerrufen im Request, ``touch`` daneben."""
+
+    def __init__(self, conn: AsyncConnection, *, engine: AsyncEngine | None = None) -> None:
         self._conn = conn
+        self._engine = engine
+        """Für ``touch()`` und **nur** dafür — Begründung dort.
+
+        ``None`` bleibt zulässig: Wer den Speicher nur zum Anlegen oder
+        Widerrufen baut, braucht keine zweite Transaktion, und ein
+        Pflichtparameter zwänge sie jedem Test auf."""
 
     async def create(self, session: Session, token_hash: str) -> None:
         await self._conn.execute(
@@ -96,7 +104,35 @@ class PostgresSessionStore:
         return _to_session(row) if row is not None else None
 
     async def touch(self, session_id: UUID, now: datetime) -> None:
-        await self._conn.execute(_TOUCH, {"id": session_id, "now": now})
+        """Setzt ``last_seen_at`` fort — in **eigener**, kurzer Transaktion.
+
+        **Der Befund, der das erzwungen hat.** Jede Sitzungsprüfung schreibt
+        diese Zeile, und in der Transaktion des Requests bleibt sie bis zu
+        dessen Ende gesperrt. Bei kurzen Requests war das ein Kuriosum: Zwei
+        Aufrufe derselben Sitzung liefen hintereinander, ohne dass das jemand
+        entworfen hätte — nachzulesen in ``tests/integration/test_step_claim.py``,
+        wo eine ganze Testkonstruktion darum herum gebaut ist.
+
+        Mit dem Ereignisstrom wurde daraus ein Stillstand. Ein SSE-Request
+        endet nicht; seine Transaktion bleibt offen, die Zeilensperre auch —
+        und **jeder weitere Aufruf derselben Sitzung wartet auf ein Ende, das
+        nicht kommt.** Gemessen beim ersten Browsertest des Stroms: Die
+        Oberfläche verband sich, und danach ging nichts mehr.
+
+        Deshalb eine eigene Transaktion, dieselbe Bauart wie beim
+        Grant-Verbrauch. Was daran hängt: ``last_seen_at`` überlebt jetzt einen
+        zurückgerollten Request. Das ist die richtige Richtung — der Zeitstempel
+        beantwortet „wann wurde diese Sitzung zuletzt benutzt", und benutzt
+        wurde sie auch dann, wenn der Aufruf scheiterte.
+
+        Ohne Engine bleibt es beim alten Weg: Ein Speicher, der nur anlegt oder
+        widerruft, soll keine zweite Verbindung fordern.
+        """
+        if self._engine is None:
+            await self._conn.execute(_TOUCH, {"id": session_id, "now": now})
+            return
+        async with self._engine.begin() as conn:
+            await conn.execute(_TOUCH, {"id": session_id, "now": now})
 
     async def revoke(self, session_id: UUID, now: datetime) -> None:
         await self._conn.execute(_REVOKE, {"id": session_id, "now": now})

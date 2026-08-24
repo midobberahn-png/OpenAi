@@ -31,13 +31,18 @@ from .context import (
 )
 from .errors import ErrorCode, JarvisError, Problem, Remediation
 from .events import (
+    ActionResolved,
+    ActionWaiting,
     CameraState,
     ClientMessage,
     CoreState,
     HealthEntry,
     InterruptKind,
     MicState,
+    RunFinished,
+    RunStarted,
     ServerMessage,
+    StepFinished,
 )
 from .goals import (
     Entity,
@@ -244,7 +249,12 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "MicState",
     "CameraState",
     "ClientMessage",
+    "ActionResolved",
+    "ActionWaiting",
+    "RunFinished",
+    "RunStarted",
     "ServerMessage",
+    "StepFinished",
     "HealthEntry",
     # identity & preferences (V1.1)
     "CoreProfile",

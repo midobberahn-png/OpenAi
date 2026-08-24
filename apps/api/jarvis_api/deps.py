@@ -31,6 +31,7 @@ from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.db.session import engine_for
 from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_api.db.webauthn_store import PostgresChallengeStore, PostgresCredentialStore
+from jarvis_api.events import RedisEventBus
 from jarvis_api.providers import model_gateway
 from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
@@ -75,6 +76,7 @@ __all__ = [
     "db_connection",
     "db_engine",
     "dispose_redis",
+    "event_bus",
     "invocation_store",
     "passkey_service",
     "permission_store",
@@ -170,8 +172,15 @@ def permission_store(engine: DbEngine) -> PostgresPermissionStore:
 Permissions = Annotated[PostgresPermissionStore, Depends(permission_store)]
 
 
-def session_manager(conn: DbConnection) -> SessionManager:
-    return SessionManager(PostgresSessionStore(conn))
+def session_manager(conn: DbConnection, engine: DbEngine) -> SessionManager:
+    """Der Sitzungsmanager — mit beidem: Request-Verbindung und Engine.
+
+    Anlegen und Widerrufen gehören in die Transaktion des Requests: Eine
+    Anmeldung, die scheitert, soll keine Sitzung hinterlassen. ``touch()``
+    gehört daneben — sonst hält ein Request die Zeile gesperrt, solange er
+    läuft, und ein Ereignisstrom läuft für immer.
+    """
+    return SessionManager(PostgresSessionStore(conn, engine=engine))
 
 
 Sessions = Annotated[SessionManager, Depends(session_manager)]
@@ -428,6 +437,25 @@ def _redis(url: str) -> Redis:
     if _redis_client is None:
         _redis_client = Redis.from_url(url, decode_responses=True)
     return _redis_client
+
+
+def event_bus(settings: Annotated[Settings, Depends(get_settings)]) -> RedisEventBus | None:
+    """Der Ereignisverteiler — oder ``None``, wenn Redis nicht eingerichtet ist.
+
+    ``None`` und keine Attrappe: Ein stiller Verteiler sähe für die Oberfläche
+    aus wie eine offene, ereignislose Leitung — und sie hörte auf, im Takt
+    nachzuladen. Der Endpunkt antwortet stattdessen mit 503, und die Oberfläche
+    macht weiter wie bisher.
+
+    Ob Redis tatsächlich erreichbar ist, entscheidet sich beim ersten Aufruf;
+    ein Verbindungsversuch hier machte aus jeder Abhängigkeit eine Wartezeit.
+    """
+    if not settings.redis_url:
+        return None
+    return RedisEventBus(_redis(settings.redis_url))
+
+
+Events = Annotated["RedisEventBus | None", Depends(event_bus)]
 
 
 async def dispose_redis() -> None:

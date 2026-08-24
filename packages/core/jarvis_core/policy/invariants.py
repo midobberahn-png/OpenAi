@@ -651,6 +651,25 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.db.audit_store",
     ),
     Invariant(
+        id="event-stream-is-scoped-and-contentless",
+        title="Der Ereignisstrom trägt Hinweise, und zwar nur die eigenen",
+        statement=(
+            "Ein Ereignisstrom liefert ausschließlich Ereignisse des angemeldeten "
+            "Nutzers, und er trägt keine Geheimnisse und keinen Fremdinhalt — weder "
+            "Nonce noch Argumente noch Werkzeugergebnisse. Was gilt, holt die "
+            "Oberfläche über die API."
+        ),
+        why=(
+            "Ein Strom ist eine dauerhafte Leitung: Was einmal falsch verbunden ist, "
+            "bleibt es, und eine Oberfläche mit fremden Ereignissen sieht aus wie eine, "
+            "die funktioniert. Und eine ``PendingAction`` über einen nutzerweiten Kanal "
+            "verteilte eine sitzungsgebundene Nonce an alle Geräte — genau das, was "
+            "``GET /actions`` vermeidet."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.events",
+    ),
+    Invariant(
         id="tool-result-model-view-is-declared",
         title="Ein Modell sieht von einem Ergebnis nur, was das Werkzeug erklärt hat",
         statement=(
