@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 21.08.2026, Commit `b81f061` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `a3474a4` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 56, Remote auf GitHub |
-| Tests | **1102** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **50/51** |
+| Commits | 58, Remote auf GitHub |
+| Tests | **1137** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **51/52** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
@@ -79,6 +79,50 @@ Zwei Dinge daran sind wichtiger als die Verdrahtung selbst:
    Das ist der Unterschied zu allem davor: Bisher war dieser Ablauf an
    Attrappen belegt, und die Attrappe tat, was der Test ihr sagte. Jetzt tut
    es ein echtes Modell aus eigenem Antrieb.
+
+**Die Wiederaufnahme steht** (`44738f6`, `a3474a4`) — zwei Blöcke, und der
+Zuschnitt kam beide Male aus einer Messung.
+
+Zuerst wurde das **Werkzeugprotokoll zum Anker**: `ToolInvocation.step_seq`
+statt einer nie gesetzten UUID, drei Lesezugriffe (`load`, `for_run`,
+`for_step`) auf einem Speicher, der bis dahin **kein einziges SELECT** hatte,
+und `EFFECT_UNKNOWN` als eigener Zustand. `_mark(FAILED)` stand vorher für zwei
+entgegengesetzte Lagen — „das Gate hat vor dem Handler abgewiesen" und „der
+Handler ist geflogen". Für den Betrieb gleichgültig, für „darf ich
+wiederholen?" der Unterschied zwischen *ja* und *auf keinen Fall*.
+
+Dann die **Frist**. `RunState.claimed_at` trennt „in Arbeit" von
+„hängengeblieben", `reclaim_step()` übernimmt einen abgelaufenen Anspruch und
+vergibt dabei ein neues Fencing-Token.
+
+Drei Dinge daran sind wichtiger als die Verdrahtung:
+
+1. **Die Frist ist keine Zeitüberschreitung.** Die Übernahme sperrt den alten
+   Arbeiter vom *Schreiben* aus; sie hält ihn nicht davon ab, zu *wirken*. Ein
+   Prozess im Handler legt den Termin an, gleichgültig, wem der Anspruch
+   gehört. `DEFAULT_LEASE` ist deshalb eine **Obergrenze für die Dauer eines
+   Schrittes** (15 Minuten), großzügig gewählt: Wartezeit ist die billigere
+   Seite.
+2. **Die Frist allein entscheidet nichts.** Ob nach der Übernahme gewirkt
+   werden darf, beantwortet das Protokoll — `recovery.py` liest
+   `InvocationStatus.may_retry`, statt die Frage neu zu beantworten, und
+   ergänzt `ToolSpec.idempotent`. `pending`/`approved` sind dabei die
+   stillsten Sperrgründe: Sie stehen für einen Aufruf, der *gerade* unterwegs
+   ist.
+3. **Nach der Übernahme wird erneut nachgesehen.** Zwischen Urteil und
+   Übernahme kann der alte Arbeiter den Handler betreten haben. Fällt die
+   zweite Prüfung ungünstig aus, **bleibt der Anspruch beim Übernehmer** — ihn
+   freizugeben öffnete den Schritt für den nächsten Anwärter.
+
+Gemessen über HTTP: hängender Lauf → 409 → Frist abgelaufen → 200 `executed` →
+**ein** Kalendereintrag. Gegenprobe mit einem Eintrag in `effect_unknown`: 409
+`step-unresolved`, kein Termin.
+
+Zwei Befunde fielen dabei an, beide aus fehlgeschlagenen Tests: `_RELEASE` ließ
+`claimed_at` stehen, und der Vertrag wies diesen Zustand zunächst *laut*
+zurück — was im Rollout einen Lauf **unladbar** gemacht hätte, genau dann, wenn
+die Wiederaufnahme ihn braucht. Er wird jetzt normalisiert; ein Anspruch *ohne*
+Frist bleibt zulässig und wird nur nie automatisch übernommen.
 
 **Ein fünfter Bypass, aus einem Prüfbericht** (`50a12be`). Der Anspruch auf
 einen Planschritt stand *hinter* der Wirkung: Sechs parallele `advance` auf
@@ -741,17 +785,40 @@ erledigt geführt, weil der nächste Zuschnitt daran hängt.
 * **Das Fencing-Token** (`91c1f43`) — Freigabe und Fortschreiben gelten nur
   mit der Kennung, unter der beansprucht wurde.
 
-**Was daraus für die Wiederaufnahme folgt**, denn sie ist der Grund für das
-Token: Ein Lauf in `executing` mit belegtem `current_step` ist entweder gerade
-in Arbeit oder hängengeblieben — von außen nicht unterscheidbar. Wer die
-Wiederaufnahme baut, braucht deshalb eine Frist (`claimed_at` oder ein Lease)
-und muss beantworten, was mit einem Schritt geschieht, dessen Wirkung unklar
-ist. Das Token sorgt nur dafür, dass die Neuvergabe den alten Arbeiter
-aussperrt; *wann* neu vergeben wird, ist noch nicht entschieden.
+**Und die Wiederaufnahme, die der Grund für das Token war, steht** (`a3474a4`).
+Beide Fragen sind beantwortet: Die Frist (`RunState.claimed_at`, Vorgabe 15
+Minuten) sagt *wann*, das Werkzeugprotokoll sagt *ob*. Was offen bleibt, steht
+in Abschnitt 4a — nicht die Entscheidung, sondern ihr Antrieb.
+
+### 3a. Offen: Wer stößt die Wiederaufnahme an, und wer entscheidet den Rest
+
+Die Mechanik steht und hat einen einzigen Aufrufer: `POST /runs/{id}/advance`.
+Wer denselben Lauf noch einmal anfasst, bekommt ihn zurück. Wer es nicht tut,
+hat einen Lauf, der bis in alle Ewigkeit in `executing` steht — **niemand sieht
+nach.** Zwei Lücken, und beide brauchen eine Entscheidung, keine Zeile Code:
+
+* **Ein Antrieb.** Ein Arbeiter, der `ist_haengend()` über die Läufe eines
+  Nutzers laufen lässt, wäre die naheliegende Fassung. Er ist derselbe
+  Arbeiter, den die Agentenschleife braucht (Abschnitt 6) — deshalb gehört die
+  Entscheidung darüber dorthin und nicht hierher.
+* **Ein Weg für `ENTSCHEIDUNG_NOETIG`.** Ein Schritt, dessen Wirkung unklar
+  ist, wird übernommen und **gehalten**: Der Lauf ist damit gesperrt, und zwar
+  absichtlich. Was ein Mensch daraus macht — den Schritt als erledigt
+  verbuchen, ihn freigeben, den Lauf abbrechen —, ist heute nicht ausdrückbar.
+  Das Material dafür liegt bereit (`ToolInvocation` mit Argumenten, Zeit und
+  Zustand); es fehlt der Endpunkt und die Frage, wer so etwas entscheiden darf.
+
+**Was ausdrücklich nicht fehlt: ein Automat, der es allein löst.** Ein Termin,
+der vielleicht im Kalender steht, ist keine Lage, die sich durch Nachdenken
+auflöst — es muss jemand nachsehen.
 
 ### 4. Erledigt: Werkzeugergebnisse im Modellkontext (ADR-014)
 
-**Das ist jetzt der Engpass, und er ist beim Messen aufgefallen.** Der
+> Der Abschnitt steht unverändert, weil die **Begründung** trägt — sie ist der
+> Grund für `model_visible_fields` und die Kappung. Der beschriebene Zustand
+> gilt nicht mehr: Er ist mit `c3a50f1` behoben.
+
+**Das war der Engpass, und er ist beim Messen aufgefallen.** Der
 Durchstich oben lief technisch sauber und lieferte diese Antwort:
 
 > „Der Vorgang bestand darin, eine Datei namens „notiz.md" zu lesen. Die Datei
@@ -833,8 +900,9 @@ oben. Was fehlt, ist der Weg hinein und die Antwort auf zwei Fragen:
 
 * **Wer treibt sie an?** Ein HTTP-Aufruf, der bis zu `max_iterations` Runden
   läuft, hält eine Verbindung über Minuten. Das ist die Stelle, an der ein
-  Worker fällig wird — und damit die Wiederaufnahme abgebrochener Läufe, die
-  ohnehin auf der Liste steht.
+  Worker fällig wird — und derselbe Worker fehlt der Wiederaufnahme
+  (Abschnitt 3a). Sie ist gebaut und hat einen einzigen Aufrufer: den nächsten
+  `advance`. Wer den Worker baut, löst beides.
 * **Was passiert bei `NEEDS_CONFIRMATION`?** Die Schleife endet und der Lauf
   wartet. Der Weg zurück führt über `POST /actions/{id}/respond` — und danach
   müsste jemand die Schleife *fortsetzen*, nicht neu starten. `RunState` trägt
