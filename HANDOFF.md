@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `1d61619` auf `main`.** Dieses Dokument ist der
+> **Stand: 24.08.2026, Commit `f271cac` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -42,9 +42,9 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 64, Remote auf GitHub |
-| Tests | **1193** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
-| **Security Invariant Coverage** | **52/53** |
+| Commits | 65, Remote auf GitHub |
+| Tests | **1212** gesamt — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| **Security Invariant Coverage** | **53/54** |
 | mypy | `strict`, sauber über 108 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
@@ -960,28 +960,35 @@ Vier Befunde fielen beim Anschließen an, und keiner davon war vorhergesehen:
   Werkzeuge. Ein Agent, der delegiert, bräuchte ein Werkzeug „delegiere an X",
   und das ist eine eigene Entscheidung.
 
-### 7. Undo — oder die Zusage zurücknehmen
+### 7. Erledigt: Undo — die Zusage wird eingelöst
 
-`ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein
-Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf
-`supports_undo=False`: Der Wert speist `ActionPreview.reversible` — den Satz
-„das kannst du rückgängig machen", den ein Mensch **vor** seiner Bestätigung
-liest. Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren
-kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat.
+Gebaut statt gestrichen. `POST /invocations/{id}/undo`, `UndoGateway`,
+`UndoGrant`, `ToolRegistry.undo()`, Undo-Handler für `calendar.create`.
+`supports_undo` steht damit auf `True`, und die Vorschau darf die Rücknahme
+nennen.
 
-Zwei Wege, und die Entscheidung steht aus:
+**Die eigentliche Frage war nicht, wie man löscht, sondern warum das kein
+Löschrecht ist.** Der bestehende Weg passte nicht: `ExecutionGrant`
+autorisiert einen Aufruf mit Argumenten gegen einen Payload-Hash und einen
+Scope; eine Rücknahme hat weder das eine noch das andere, und wer sie über
+`calendar.create` bekäme, hätte `calendar.delete` durch die Hintertür.
 
-* **Undo bauen.** Ein Endpunkt, der ein `undo_token` einlöst, mit derselben
-  Zugehörigkeitsprüfung wie alles andere und einer Frist (15 Minuten laut
-  Vertrag). Dann darf `supports_undo=True` stehen, und MEDIUM-Aktionen werden
-  spürbar leichter — ein angebotenes Undo ist für den Nutzer oft wertvoller als
-  ein weiterer Dialog.
-* **Das Feld streichen.** Wenn Undo auf absehbare Zeit nicht kommt, ist ein
-  Vertragsfeld, das nie gesetzt wird, eine Einladung, sich später darauf zu
-  verlassen.
+Die Antwort ist **Verengung statt Erlaubnis** — vier Bedingungen in *einer*
+Anweisung (`claim_undo`): eigener, ausgeführter, protokollierter Aufruf,
+innerhalb von 15 Minuten, höchstens einmal. Der Rücknahmepunkt kommt aus der
+Datenbank und nie vom Aufrufer; ein Token, das der Client zurückschickt, wäre
+eine Fähigkeit, die sich raten lässt.
 
-Was nicht geht: den Wert auf `True` stellen, ohne den Weg zu bauen.
+**Was Undo nicht kann:** eine verschickte Einladung zurückholen. `reversible`
+heißt „der Eintrag verschwindet", nicht „es ist nichts passiert" — das steht so
+in `calendar.py`, weil eine Vorschau nicht mehr versprechen darf als der Weg
+hält.
 
+**Offen geblieben:** Scheitert der Undo-Handler nach dem Anspruch, ist der Weg
+verbraucht und der Termin steht möglicherweise noch. Die Alternative — erst
+wirken, dann vermerken — ließe zwei gleichzeitige Rücknahmen beide durch. Ein
+zweiter Versuch bräuchte einen Anspruch, der sich zurückgeben lässt; das ist
+dieselbe Frage wie bei `release_step` und noch nicht entschieden.
 
 ### 8. Web-UI, Grundfassung
 
