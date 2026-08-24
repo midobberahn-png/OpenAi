@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 24.08.2026, Commit `24870a3` auf `main`.** Dieses Dokument ist der
+> **Stand: 25.08.2026, Commit `1e5f723` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -1217,10 +1217,16 @@ nicht gelaufen. Der Weg ist ab jetzt:
 ```bash
 git switch -c block/<name>
 git push -u origin block/<name>
-gh pr create --fill && gh pr merge --squash --auto
+gh pr create --fill && gh pr merge --squash --auto --delete-branch
+# nach dem Merge — der Squash erzeugt einen neuen Hash:
+git switch main && git fetch origin && git reset --hard origin/main
 ```
 
-`--auto` merged, sobald beide Prüfungen grün sind. Reviews sind **nicht**
+`--auto` merged, sobald beide Prüfungen grün sind (`allow_auto_merge` musste
+dafür einmalig am Repository freigeschaltet werden). Die letzte Zeile ist kein
+Beiwerk: Nach einem Squash weicht der lokale Commit vom entfernten ab, und
+`git pull` bricht mit „divergent branches" ab — beim ersten Mal prompt
+passiert. Reviews sind **nicht**
 verlangt (`required_pull_request_reviews: null`) — bei einem Entwickler wäre
 das eine Zeremonie ohne Prüfer; verlangt ist die CI.
 
