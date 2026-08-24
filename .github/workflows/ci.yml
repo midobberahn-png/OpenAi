@@ -6,7 +6,14 @@ on:
   pull_request:
 
 env:
-  UV_VERSION: "0.16.3"
+  # **Diese Version muss es geben.** Sie stand seit dem ersten Commit auf
+  # "0.16.3" — eine Nummer, die uv nie hatte. ``setup-uv`` lädt sie direkt vom
+  # Release-Tag, bekam 404 und brach ab: **45 Läufe, kein einziger grüner, und
+  # kein einziger ausgeführter Test.** Beim Anheften einer Version gehört
+  # deshalb die Frage dazu, ob es sie gibt — eine falsche Nummer scheitert
+  # nicht beim Testen, sondern davor, und sieht dabei aus wie ein
+  # Infrastrukturproblem.
+  UV_VERSION: "0.12.5"
   DATABASE_URL: postgresql+asyncpg://jarvis:jarvis_dev@localhost:5432/jarvis
   REDIS_URL: redis://localhost:6379/0
 
