@@ -17,7 +17,16 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from webauthn import generate_authentication_options, generate_registration_options, options_to_json
+from webauthn import (
+    generate_authentication_options,
+    generate_registration_options,
+    options_to_json,
+)
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
+)
 
 from jarvis_api.db.webauthn_store import PostgresCredentialStore
 from jarvis_api.deps import CurrentSession, DbConnection, Passkeys, Sessions, rate_limited
@@ -82,6 +91,32 @@ class SessionView(BaseModel):
     last_seen_at: str
     expires_at: str
     is_current: bool
+
+
+_AUSWAHL = AuthenticatorSelectionCriteria(
+    resident_key=ResidentKeyRequirement.REQUIRED,
+    user_verification=UserVerificationRequirement.REQUIRED,
+)
+"""Was ein Authenticator mitbringen muss — und warum beides nötig ist.
+
+**``resident_key=REQUIRED`` ist keine Feinheit, sondern die Voraussetzung der
+Anmeldung.** ``login/start`` schickt bewusst keine Kandidatenliste
+(``allow_credentials`` bleibt leer, sonst wäre sie ein Verzeichnis), und der
+Authenticator soll selbst wählen, welcher Passkey zu dieser Herkunft passt.
+Wählen kann er nur unter **auffindbaren** Schlüsseln. Ohne diese Zeile durfte
+er einen nicht-auffindbaren anlegen — die Registrierung gelänge, und die
+Anmeldung fände nichts.
+
+Aufgefallen ist das im ersten Browsertest: Registrierung ``201``, Anmeldung
+gestartet, und dann kam nie eine Antwort vom Authenticator. In der
+pytest-Suite war es nicht zu sehen, weil die Attrappe dort auf jede Anfrage
+antwortet — sie hat keinen Speicher, in dem etwas fehlen könnte. Genau dafür
+gibt es den Durchstich im echten Browser.
+
+**``user_verification=REQUIRED``** verlangt PIN, Biometrie oder Entsperrung.
+Ein Passkey ohne sie ist ein Besitzfaktor allein: Wer das Gerät hat, ist
+angemeldet. Für ein System mit Postfach- und Kalenderzugriff ist das zu wenig.
+"""
 
 
 def _b64(value: bytes) -> str:
@@ -179,6 +214,7 @@ async def bootstrap(
         user_name=payload.email,
         user_display_name=payload.display_name,
         challenge=challenge.value,
+        authenticator_selection=_AUSWAHL,
     )
     return CeremonyOptions(options=_options_dict(options), challenge=_b64(challenge.value))
 
@@ -217,6 +253,7 @@ async def register_start(
     options = generate_registration_options(
         rp_id=settings.webauthn_rp_id,
         rp_name=settings.webauthn_rp_name,
+        authenticator_selection=_AUSWAHL,
         user_id=str(session.user_id).encode(),
         user_name=row.email,
         user_display_name=row.display_name,

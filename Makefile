@@ -93,6 +93,39 @@ gate: lint types gen-check ## Vollständiges Gate inkl. erzwungener Integrations
 	JARVIS_REQUIRE_SERVICES=1 $(UV) run pytest -m integration -q
 	$(UV) run pytest -m security -q
 	$(UV) run pytest tests/unit/test_invariant_coverage.py -q -s
+	$(MAKE) gate-web
+
+.PHONY: gate-web
+gate-web: ## Die Oberfläche im Gate: bauen, dann im Browser durchspielen
+	@# Getrennt und nicht in einer Zeile, weil hier zwei verschiedene Dinge
+	@# schiefgehen können: ein Bau, der nicht typprüft, und ein Durchstich, der
+	@# nicht durchläuft. Eine gemeinsame Zeile verstecke das eine hinter dem
+	@# anderen.
+	@if [ ! -d apps/web/node_modules ]; then \
+		echo "✗ apps/web/node_modules fehlt — 'make web' ausführen."; exit 1; \
+	fi
+	cd apps/web && npm run build
+	@# Die API wird für den Durchstich selbst gestartet: Ein Gate, das eine
+	@# laufende Instanz voraussetzt, prüft je nach Umgebung etwas anderes.
+	@# ``WEBAUTHN_ORIGINS`` muss zu der Adresse passen, unter der der Browser
+	@# die Seite öffnet — daran hängt die Passkey-Bindung, und ein Test, der
+	@# das ignoriert, prüfte eine Anmeldung ohne Herkunftsprüfung.
+	@JARVIS_WEB_URL=http://localhost:8000 \
+	 WEBAUTHN_ORIGINS=http://localhost:8000 \
+	 $(UV) run uvicorn jarvis_api.main:app --host 127.0.0.1 --port 8000 --log-level warning & \
+	 API=$$!; \
+	 for i in $$(seq 1 40); do curl -sf localhost:8000/health >/dev/null && break || sleep 0.25; done; \
+	 (cd apps/web && JARVIS_WEB_URL=http://localhost:8000 npx playwright test); \
+	 ERGEBNIS=$$?; kill $$API 2>/dev/null; exit $$ERGEBNIS
+
+.PHONY: web
+web: ## Oberfläche bauen (nach apps/web/dist, wird von der API ausgeliefert)
+	cd apps/web && npm ci --silent && npm run build
+
+.PHONY: e2e
+e2e: ## Durchstiche im Browser gegen eine laufende API
+	@echo "→ erwartet eine API auf $${JARVIS_WEB_URL:-http://localhost:8000}"
+	cd apps/web && npx playwright test
 
 .PHONY: check
 check: lint types test ## Vollständige lokale Prüfung

@@ -1,0 +1,119 @@
+/*
+ * Kommandozentrum, nicht Chatfenster (docs/10-ui.md §1).
+ *
+ * Ruhe im Normalzustand: Bewegung entsteht durch Aktivität, nicht durch
+ * Leerlauf. Deshalb gibt es hier keine Dauer-Animation — der „AI Core" als
+ * zustandsgebundener Shader kommt später; was jetzt steht, ist die Fassung,
+ * die das Dokument ohnehin als Pflicht führt (prefers-reduced-motion, kein
+ * WebGL): Zustandsfarben statt Bewegung.
+ */
+
+:root {
+  --grund: #0b0f14;
+  --flaeche: #121820;
+  --linie: #1f2a36;
+  --schrift: #d7e2ee;
+  --gedaempft: #7b8ea3;
+  --akzent: #4bb3fd;
+  --warnung: #f0a44b;
+  --gefahr: #f26d6d;
+  --gut: #5fd39a;
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--grund);
+  color: var(--schrift);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.leiste {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--linie);
+  background: var(--flaeche);
+}
+
+.leiste h1 { font-size: 1rem; letter-spacing: 0.18em; margin: 0; font-weight: 600; }
+.leiste .abstand { margin-left: auto; }
+
+.inhalt { padding: 1.25rem; max-width: 60rem; margin: 0 auto; }
+
+.karte {
+  border: 1px solid var(--linie);
+  background: var(--flaeche);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.karte h2 { margin: 0 0 0.5rem; font-size: 0.9rem; letter-spacing: 0.1em; }
+
+button {
+  font: inherit;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid var(--linie);
+  background: transparent;
+  color: var(--schrift);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--akzent); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.haupt { border-color: var(--akzent); color: var(--akzent); }
+button.gefahr { border-color: var(--gefahr); color: var(--gefahr); }
+
+input {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  background: var(--grund);
+  border: 1px solid var(--linie);
+  color: var(--schrift);
+  width: 100%;
+}
+
+.zeile { display: flex; gap: 0.75rem; align-items: center; }
+.gedaempft { color: var(--gedaempft); }
+.fehler { color: var(--gefahr); }
+
+/* Zustandsfarben statt Animation — der Kern des Fallbacks. */
+.punkt { width: 0.6rem; height: 0.6rem; border-radius: 50%; display: inline-block; }
+.punkt.idle { background: var(--gedaempft); }
+.punkt.executing { background: var(--akzent); }
+.punkt.awaiting_confirmation { background: var(--warnung); }
+.punkt.completed { background: var(--gut); }
+.punkt.failed,
+.punkt.cancelled,
+.punkt.budget_exceeded { background: var(--gefahr); }
+
+.marke {
+  border: 1px solid var(--linie);
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+}
+.marke.tainted { border-color: var(--warnung); color: var(--warnung); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--linie); }
+th { color: var(--gedaempft); font-weight: 500; font-size: 0.8rem; letter-spacing: 0.08em; }
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 10, 0.72);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+.dialog .karte { max-width: 34rem; width: 100%; margin: 0; }
+.dialog .titel { display: flex; gap: 0.5rem; align-items: center; color: var(--warnung); }
+.dialog .fuss { display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 1rem; }
+.dialog td.wert { word-break: break-word; }
+.dialog tr.warn td.wert { color: var(--warnung); }
+.dialog tr.critical td.wert { color: var(--gefahr); }
