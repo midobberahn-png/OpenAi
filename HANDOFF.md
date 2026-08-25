@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 25.08.2026, Commit `76b0545` auf `main`.** Dieses Dokument ist der
+> **Stand: 25.08.2026, Commit `443b941` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -44,10 +44,10 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 104, Remote auf GitHub |
-| Tests | **1431** Python + 21 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
-| **Security Invariant Coverage** | **60/61** |
-| mypy | `strict`, sauber über 127 Dateien |
+| Commits | 106, Remote auf GitHub |
+| Tests | **1506** Python + 21 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| **Security Invariant Coverage** | **61/62** |
+| mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
@@ -1238,6 +1238,33 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   (wie lange darf ein Schritt dauern) und `DEFAULT_IDLE` (wie lange darf ein
   Lauf stillstehen). Die Gegenprobe ist der wichtigere Test — ein Lauf, den die
   Oberfläche gerade treibt, bleibt unberührt.
+* **Eine Fremdschlüsselverletzung im Browserlauf — neu und ungeklärt**
+  (25.08.2026). Bei jedem `make gate` erscheint im API-Protokoll während der
+  Browserdurchstiche mindestens einmal:
+
+  ```
+  INSERT INTO model_calls (…) — Key (run_id)=(…) is not present in table "runs"
+  ```
+
+  Immer mit `purpose='response'`, immer `ollama`. **Zweimal von zwei
+  Gate-Läufen reproduziert**, im zweiten dreimal. Alle 21 Browsertests bestehen
+  trotzdem — der Fehler wird protokolliert und erreicht die Oberfläche nicht.
+
+  Was das bedeutet, ist **noch nicht gemessen**, und deshalb steht es hier als
+  Befund und nicht als Diagnose. Sicher ist nur: Diese Hauptbuchzeile ist nicht
+  entstanden. `ModelGateway._buchen()` sagt in seinem Docstring ausdrücklich
+  „Fehler schlagen durch — ein verschluckter Schreibfehler wäre ein Loch in der
+  Abrechnung"; irgendwo zwischen dort und dem Request fängt sie jemand.
+  Kandidaten sind die drei `except BaseException` in `advance.py`.
+
+  Was **ausgeschlossen** ist: Es liegt nicht an der Kettenprüfung dieses Blocks
+  (die rührt weder Läufe noch Hauptbuch an), und es ist keine Aufräumfixture —
+  die Browsertests löschen nichts, es gibt keinen Löschendpunkt für Nutzer.
+  Wer weitermacht, startet `make gate-web` allein und sieht dem einen Lauf zu;
+  in einem vollen Gate ist die Datenbank hinterher schon wieder leergeräumt,
+  und dann lässt sich nichts mehr nachsehen. Das hat mich hier eine Runde
+  gekostet.
+
 * **Ein Flackern im Browsertest.** Einmal in etwa dreißig Durchgängen scheiterte
   die Anmeldung in `laufdetail.spec.ts` („nicht angemeldet" nach 20 s). Die
   Ursache ist nicht gefunden; ein Retry wäre die falsche Antwort (die
@@ -1293,9 +1320,17 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
 
 Was **unabhängig** davon fehlt und jede Fassung braucht:
 
-* **Ein Ereignisstrom für Lauffortschritt.** Heute gibt es nur Polling über
-  `GET /runs/{id}`. Das UI-Dokument beschreibt WebSocket mit Sequenznummern
-  und Nachladen; nichts davon existiert.
+* ~~Ein Ereignisstrom für Lauffortschritt.~~ **Diese Zeile war falsch, und
+  zwar seit `2b74b18`.** Sie führte „heute gibt es nur Polling … nichts davon
+  existiert", während zwei Absätze weiter oben im selben Abschnitt der
+  SSE-Strom als erledigt steht (ADR-016). Nachgesehen statt geglaubt:
+  `apps/api/jarvis_api/routes/events.py` liefert `text/event-stream`,
+  `apps/web/src/api/strom.ts` hängt mit `EventSource` daran.
+
+  Dasselbe Muster wie beim Modulkopf aus §12 — ein Dokument, das seinem
+  eigenen Inhalt widerspricht, wird an der falschen Stelle geglaubt. Eine
+  Liste „was fehlt noch" veraltet schneller als der Rest, weil sie nur beim
+  *Hinzufügen* gepflegt wird und nicht beim Erledigen.
 * ~~Die Audit-Kette ist im Betrieb nirgends verdrahtet.~~ **Erledigt**
   (`a67dd30`): `PostgresAuditSink` war die fehlende Hälfte — Kette, Trigger,
   Port und Tests waren da, `ToolExecutor(audit=...)` bekam überall `None`.
@@ -1304,10 +1339,8 @@ Was **unabhängig** davon fehlt und jede Fassung braucht:
   nach, `GET /audit` zeigt die eigenen Einträge. Gemessen am Betrieb: Eine am
   Trigger vorbei veränderte Zeile fällt auf.
 
-  Was daran offen bleibt: **Niemand prüft die Kette von sich aus.** Der
-  Endpunkt existiert, und wer ihn nie aufruft, merkt einen Bruch nie. Ein
-  Durchgang des Arbeiters wäre der naheliegende Ort — und dann stellt sich die
-  Frage, was ein Fund auslöst, solange es keine Benachrichtigung gibt.
+  ~~Was daran offen bleibt: **Niemand prüft die Kette von sich aus.**~~
+  **Erledigt** (ADR-018, Abschnitt 13).
 
 ### 9. Erledigt: Anthropic und OpenAI — und der Vertrag, der die Wolke begrenzt
 
@@ -1598,6 +1631,75 @@ Zwei Zahlen, die übereinstimmen müssen, und niemand rechnete sie gegeneinander
 — dasselbe Muster wie bei den Vertragsfeldern ohne Leser. Der Rahmen ist jetzt
 Teil des Budgets, und eine eigene Testklasse rechnet beide Zahlen
 gegeneinander.
+
+### 13. Erledigt: Die Kette prüft sich selbst
+
+**Der Befund stand im Dossier und war kein Fund, sondern ein Satz, den niemand
+ernst genommen hat.** Die Invariante `audit-tamper-evident` lautet „Manipulation
+ist **erkennbar**". Sie war es: `verify_chain` rechnet nach, der Trigger hält
+dagegen, Tests belegen beides. Nur hatte `verify()` genau einen Aufrufer —
+`GET /audit/verify`, einen Endpunkt ohne Oberfläche und ohne Anlass. Nachgesehen
+statt vermutet: `grep` über den ganzen Baum findet keinen zweiten.
+
+Damit ist „erkennbar" die dritte Fassung desselben Fehlers. Die ersten beiden
+stehen in diesem Dokument: 45 rote CI-Läufe, die nichts blockierten, und
+`zero_retention` — ein Vertragsfeld, das kein Leser hatte. **Die brauchbare
+Frage lautet nicht „steht die Prüfung da?", sondern „wer führt sie aus, und was
+folgt daraus?"**
+
+**Die offene Frage war nicht die Schleife, sondern die Folge.** Das vorige
+Dossier stellte sie selbst: *was löst ein Fund aus, solange es keine
+Benachrichtigung gibt?* Eine Prüfung, die nur meldet, verschiebt das Nichtstun
+von „niemand sieht nach" nach „niemand liest die Meldung". Deshalb erst ADR-018
+(`docs/23-kettenbruch-adr.md`), dann Code.
+
+**Entschieden ist:**
+
+* **Der Arbeiter prüft die ganze Kette in eigenem Takt** (Vorgabe eine Stunde,
+  `JARVIS_AUDIT_INTERVAL`), einmal sofort beim Start. Ohne `limit`: Ein
+  Ausschnitt beantwortet „seit Eintrag N", gefragt ist „überhaupt".
+* **Ein Fund hält den Arbeiter an.** Kein weiterer Laufdurchgang, nichts mit
+  Außenwirkung. Der Grund ist nicht die Kette, sondern was ein Bruch über das
+  System aussagt: Der Trigger lässt `UPDATE` nicht zu, ein Bruch heißt also,
+  dass jemand *an der Anwendung vorbei* an der Datenbank war — und wer das
+  kann, setzt auch Berechtigungen und fälscht Bestätigungen. Einmal
+  angehalten, bleibt angehalten; zurück führt nur eine Untersuchung, und die
+  kann ein Automat nicht führen.
+* **Der Fund steht danach in der Kette, die er betrifft** (`actor="scheduler"`,
+  `action="audit.chain-break"`). In eine beschädigte Kette zu schreiben klingt
+  verkehrt und ist es nicht: Anfügen hängt nicht vom Prüfen ab, und wer den
+  Fund später entfernt, bricht die Kette ein zweites Mal. Ein Logeintrag hat
+  diese Eigenschaft nicht.
+* **Kein Schalter, der den Halt aufhebt.** Er wäre die erste Zeile, die jemand
+  setzt, wenn der Betrieb klemmt — genau dann, wenn die Meldung ernst ist.
+* **Die HTTP-Schicht läuft weiter**, und das steht als bewusste Hälfte im ADR:
+  Der Arbeiter wirkt ohne Zeugen, sein Halt fällt niemandem zur Unzeit auf. Die
+  API abzuschalten hieße, einem Menschen den Dienst zu verweigern, **ohne ihm
+  sagen zu können, warum** — der Kanal dafür existiert nicht. Sobald es eine
+  Statusleiste für Systemzustände gibt, gehört die Entscheidung neu getroffen.
+
+Neue Invariante `audit-chain-break-is-detected`, Kennzahl **61/62**.
+
+**Zwei Dinge fielen beim Bauen an, beide klein und beide lehrreich:**
+
+1. **Der Halt landete zuerst als `if` in der Schleife** — in genau der
+   Schleife, von der ihr eigener Modulkopf sagt, dass in ihr nichts steht, was
+   zu prüfen wäre. Er steht jetzt als `durchgang()` daneben, und der Test misst
+   die Zusage statt sie zu behaupten: Nach einem Bruch fragt niemand mehr nach
+   überfälligen Läufen (Gegenprobe: ohne Bruch fragt jemand).
+
+2. **Der Kern protokolliert nirgends** — `grep getLogger` über
+   `packages/core` fand vor diesem Block **null** Treffer. Die erste Fassung
+   von `ChainWatch` hätte das gebrochen. Jetzt gibt sie einen `ChainReport`
+   zurück, und die API-Schicht meldet ihn, wie sie es beim `SweepReport` tut.
+   Der fehlgeschlagene Schreibversuch ist deshalb ein **Feld** und keine
+   Logzeile: Was niemand zurückbekommt, kann auch niemand prüfen.
+
+**Und eine Zeile in diesem Dokument war falsch geworden** — die Liste „was
+unabhängig davon fehlt" führte den Ereignisstrom als nicht existent, zwei
+Absätze unter dem Eintrag, der ihn als erledigt meldet. Dasselbe Muster wie beim
+Modulkopf aus §12. Eine Liste offener Punkte wird beim Hinzufügen gepflegt und
+beim Erledigen vergessen.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
