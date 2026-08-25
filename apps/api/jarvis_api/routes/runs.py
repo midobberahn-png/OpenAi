@@ -38,6 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from jarvis_api.db.run_store import PostgresRunStore
+from jarvis_api.db.spend_store import PostgresSpendReader
 from jarvis_api.deps import (
     Agents,
     Approvals,
@@ -49,6 +50,7 @@ from jarvis_api.deps import (
     ModelResponse,
     Policy,
     Runs,
+    Spend,
     Tools,
 )
 from jarvis_api.events import als_nachricht
@@ -59,6 +61,7 @@ from jarvis_contracts import (
     UNDO_TTL,
     ActionWaiting,
     ApprovalChannel,
+    DailySpend,
     InvocationStatus,
     PendingAction,
     Run,
@@ -71,6 +74,7 @@ from jarvis_contracts import (
     ToolInvocation,
 )
 from jarvis_core.audit.chain import AuditEntry
+from jarvis_core.clock import tagesbeginn
 from jarvis_core.orchestrator import (
     AdvanceRejected,
     BudgetTracker,
@@ -171,6 +175,19 @@ class RunView(BaseModel):
     Nur beim einzelnen Lauf und nicht in der Übersicht — wie Plan und
     Antworttext, und aus demselben Grund: Die Auskunft kostet eine Abfrage im
     Werkzeugprotokoll."""
+
+    model: str | None = None
+    """Das gewählte Modell — nur beim einzelnen Lauf.
+
+    **Der Grund steht daneben, und beides gehört zusammen.**
+    ``RoutingDecision`` führt seit dem ersten Entwurf ein ``reason``, und es
+    war ausdrücklich für die Oberfläche gedacht: „Ich nutze gerade ein anderes
+    Modell" ohne Grund ist für einen Nutzer nicht überprüfbar — und damit ist
+    die Zusage, dass P3 lokal bleibt, nicht nachvollziehbar. Gelesen hat es
+    trotzdem nie jemand. Seit das Tagesbudget die Wahl verengen kann, fällt
+    das auf: Ein Nutzer sähe eine schlechtere Antwort und keinen Grund."""
+
+    model_reason: str | None = None
 
     plan: list[PlanStepView] = []
     """Leer, solange kein Plan existiert — und bei ``GET /runs`` bewusst nicht
@@ -344,6 +361,21 @@ async def _eigener_lauf(run_id: UUID, session: Session, runs: PostgresRunStore) 
     return lauf
 
 
+async def _tagesbudget_erschoepft(spend: PostgresSpendReader, settings: Settings) -> bool:
+    """Ist die Tagesgrenze erreicht?
+
+    Gezählt wird über die Läufe des Nutzers seit Tagesbeginn — die Begründung,
+    warum es dafür kein eigenes Hauptbuch gibt, steht in ``db/spend_store.py``.
+    """
+    seit = tagesbeginn(settings.timezone)
+    stand = DailySpend(
+        spent_eur=await spend.spent_since(seit),
+        limit_eur=settings.daily_budget_eur,
+        since=seit,
+    )
+    return stand.exhausted
+
+
 # --------------------------------------------------------------------------
 # Endpunkte
 # --------------------------------------------------------------------------
@@ -357,6 +389,7 @@ async def create_run(
     tools: Tools,
     policy: Policy,
     settings: Annotated[Settings, Depends(get_settings)],
+    spend: Spend,
     events: Events,
 ) -> RunView:
     """Legt einen Lauf an — für den angemeldeten Nutzer.
@@ -378,8 +411,22 @@ async def create_run(
     # nicht geroutet". Ein als P1 eingestufter Lauf könnte damit kein Werkzeug
     # ausführen, das P2 liefert. Erst die Routing-Entscheidung sagt, was das
     # tatsächlich gewählte Modell verarbeiten darf.
+    # **Das Tagesbudget wirkt hier — als Verengung, nicht als Abbruch.**
+    #
+    # Ein Lauf, der sein eigenes Budget reißt, endet; beim Tagesbudget wäre das
+    # falsch. Es soll nicht der Assistent ausfallen, sondern der teure Weg
+    # (docs/04-orchestrator.md §7: „bei 100 % nur noch lokale Modelle").
+    #
+    # Geprüft wird beim **Anlegen** und nicht vor jedem Modellaufruf. Der
+    # Preis dafür ist benannt: Ein bereits laufender Lauf gibt noch bis zu
+    # seinem eigenen Budget aus, die Überschreitung ist also um ein
+    # Laufbudget begrenzt. Eine Prüfung mitten im Lauf hieße, die Modellwahl
+    # eines laufenden Auftrags zu ändern — und damit die Datenklassen-Obergrenze
+    # zu verschieben, unter der er gestartet ist.
+    erschoepft = await _tagesbudget_erschoepft(spend, settings)
+
     try:
-        routing = route(einstufung, model_catalog(settings))
+        routing = route(einstufung, model_catalog(settings), local_only=erschoepft)
     except NoEligibleModel as keines:
         # Kein zugelassenes Modell ist eine Konfigurationslage, kein
         # Serverfehler: Der Katalog passt nicht zur Anfrage — etwa P3-Daten
@@ -451,6 +498,10 @@ async def read_run(
             "output": lauf.state.partial_output,
             "plan": await _planschritte(lauf, angebot=angebot),
             "unresolved": await _offener_vorgang(lauf, invocations),
+            # Nur hier und nicht in der Übersicht: Die Begründung ist ein Satz
+            # je Lauf, und zwanzig davon in einer Liste liest niemand.
+            "model": lauf.routing.model if lauf.routing else None,
+            "model_reason": lauf.routing.reason if lauf.routing else None,
         }
     )
 

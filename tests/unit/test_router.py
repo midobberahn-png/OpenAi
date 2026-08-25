@@ -168,3 +168,91 @@ class TestAbwaegung:
         decision = route(_classification(DataClass.P2), FLEET)
         assert decision.reason.strip().endswith(".")
         assert str(DataClass.P2) in decision.reason
+
+
+class TestTagesbudget:
+    """Die Wirkung eines erschöpften Tagesbudgets: nur noch lokale Modelle.
+
+    Das Dokument sagt „bei 100 % nur noch lokale Modelle" (§7) und daneben,
+    warum: Ohne die Grenze ist eine fehlerhafte Agentenschleife ein
+    finanzielles Risiko, kein Bug.
+    """
+
+    def test_erschoepft_bleibt_nur_das_lokale_modell(self) -> None:
+        entscheidung = route(_classification(), FLEET, local_only=True)
+
+        assert entscheidung.model == LOCAL.name
+        assert entscheidung.provider == "ollama"
+
+    def test_die_begruendung_nennt_den_grund(self) -> None:
+        """„Ich nutze gerade ein anderes Modell" ohne Grund ist für einen
+        Nutzer nicht überprüfbar — und bei einer Kostengrenze ist der Grund
+        genau die Auskunft, die er sucht."""
+        entscheidung = route(_classification(), FLEET, local_only=True)
+
+        assert "Tagesbudget" in entscheidung.rejected[CLOUD_FAST.name]
+        assert "Tagesbudget" in entscheidung.rejected[CLOUD_STRONG.name]
+
+    def test_ein_ausdruecklicher_wunsch_hebt_die_grenze_nicht_auf(self) -> None:
+        """Der Wunsch wirkt **innerhalb** der Kandidatenmenge.
+
+        Wäre es anders, genügte ein Satz im Nutzertext, um die Kostengrenze zu
+        umgehen — dieselbe Lücke, die bei der Datenklasse den Router zerlegte.
+        """
+        entscheidung = route(_classification(wish="cloud-strong"), FLEET, local_only=True)
+
+        assert entscheidung.model == LOCAL.name
+
+    def test_ohne_erschoepfung_bleibt_alles_beim_alten(self) -> None:
+        """Die Gegenprobe, und sie ist die wichtigere: Eine Verengung, die
+        immer gälte, hätte die Cloud-Anbindung wieder abgeschafft.
+
+        Gemessen an einer Lage, in der die Cloud **gewinnt**. Ein einfacher
+        P1-Auftrag geht ohnehin lokal — daran wäre dieser Test grün gewesen,
+        ohne die Verengung zu berühren. (Erster Anlauf tat genau das.)
+        """
+        nur_wolke = _classification(capabilities=[Capability.VISION])
+
+        entscheidung = route(nur_wolke, FLEET, local_only=False)
+
+        assert entscheidung.model == CLOUD_STRONG.name
+
+    def test_eine_fehlende_faehigkeit_wird_gelockert_die_grenze_nicht(self) -> None:
+        """Der Zusammenstoß beider Regeln, und der Ausgang ist richtig.
+
+        Gebraucht wird Vision, die nur ein Cloud-Modell hat; das Tagesbudget
+        ist erschöpft. Der Fallback lockert **Fähigkeiten** und niemals die
+        harten Grenzen: Es bleibt beim lokalen Modell, und der Nutzer bekommt
+        eine schlechtere Antwort statt einer teuren.
+        """
+        nur_wolke = _classification(capabilities=[Capability.VISION])
+
+        entscheidung = route(nur_wolke, FLEET, local_only=True)
+
+        assert entscheidung.model == LOCAL.name
+
+    def test_die_verengung_ist_ein_filter_und_kein_gewicht(self) -> None:
+        """``prefer_local`` gibt einen Bonus, den ein besseres Modell
+        überbietet. Ein erschöpftes Tagesbudget ist keine Vorliebe — sonst
+        gäbe die Kostengrenze bei genügend Qualitätsvorsprung nach.
+        """
+        gewichte = RoutingPreferences(
+            prefer_local=True,
+            quality={"cloud-strong": 1.0, "llama-3.1-8b": 0.1},
+            quality_weight=10.0,
+        )
+
+        mit_bonus = route(_classification(DataClass.P2), FLEET, prefs=gewichte)
+        mit_grenze = route(_classification(DataClass.P2), FLEET, prefs=gewichte, local_only=True)
+
+        assert mit_bonus.model == CLOUD_STRONG.name, "Der Bonus lässt sich überbieten."
+        assert mit_grenze.model == LOCAL.name, "Die Grenze nicht."
+
+    def test_ohne_lokales_modell_gibt_es_kein_ergebnis(self) -> None:
+        """Kein stiller Rückfall auf ein Cloud-Modell.
+
+        Lieber kein Ergebnis als eine Rechnung, die niemand mehr begrenzt —
+        dieselbe Entscheidung wie bei der Datenklasse.
+        """
+        with pytest.raises(NoEligibleModel):
+            route(_classification(), (CLOUD_FAST, CLOUD_STRONG), local_only=True)

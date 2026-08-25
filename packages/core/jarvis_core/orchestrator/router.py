@@ -94,19 +94,29 @@ def route(
     *,
     health: HealthSnapshot | None = None,
     prefs: RoutingPreferences | None = None,
+    local_only: bool = False,
 ) -> RoutingDecision:
     """Wählt ein Modell für diesen Turn.
 
     Deterministisch: Dieselbe Klassifikation, dieselbe Modellliste und
     dieselben Gewichte ergeben dieselbe Entscheidung — bis hin zur
     Reihenfolge bei Punktgleichheit.
+
+    ``local_only`` verengt die Kandidatenmenge auf Modelle, die auf diesem
+    Gerät laufen. Es steht bei den **harten Filtern** und nicht bei den
+    Gewichten, und das ist die ganze Entscheidung: ``prefs.prefer_local`` gibt
+    einen Bonus, den ein besseres Cloud-Modell überbietet — ein erschöpftes
+    Tagesbudget ist keine Vorliebe. Wer es als Gewicht führte, hätte eine
+    Kostengrenze, die bei genügend Qualitätsvorsprung nachgibt.
     """
     snapshot = health or HealthSnapshot()
     weights = prefs or RoutingPreferences()
 
     rejected: dict[str, str] = {}
     candidates = [
-        model for model in models if _admit(model, classification, snapshot, rejected=rejected)
+        model
+        for model in models
+        if _admit(model, classification, snapshot, rejected=rejected, local_only=local_only)
     ]
 
     if not candidates:
@@ -152,6 +162,7 @@ def _admit(
     health: HealthSnapshot,
     *,
     rejected: dict[str, str],
+    local_only: bool = False,
 ) -> bool:
     """Drei Filter, jeder mit Begründung für die Oberfläche.
 
@@ -184,6 +195,14 @@ def _admit(
 
     if not health.is_up(model.provider):
         rejected[model.name] = f"Anbieter {model.provider} ist nicht erreichbar."
+        return False
+
+    if local_only and not model.is_local:
+        # Die Begründung landet in der Oberfläche. „Ich nutze gerade ein
+        # anderes Modell" ohne Grund ist für einen Nutzer nicht überprüfbar —
+        # und bei einer *Kosten*grenze ist der Grund die Auskunft, die er
+        # eigentlich sucht.
+        rejected[model.name] = "Tagesbudget erschöpft — bis Mitternacht nur lokale Modelle."
         return False
 
     return True
