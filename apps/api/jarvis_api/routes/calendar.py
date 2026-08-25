@@ -25,7 +25,7 @@ Hand es nicht kann.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -98,11 +98,16 @@ async def list_events(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="to muss nach from liegen.",
             )
-        if (bis - beginn).days > MAX_FENSTER_TAGE:
+        if bis - beginn > timedelta(days=MAX_FENSTER_TAGE):
             # Nicht aus Prinzip: ``limit`` begrenzt die Antwort ohnehin. Aber
             # ein Fenster über Jahrzehnte ist ein Scan über die Tabelle, dessen
             # Ergebnis danach auf 200 Zeilen fällt — teuer für eine Auskunft,
             # die so niemand gemeint hat.
+            #
+            # Verglichen wird die **volle Dauer** und nicht ``.days``: Das
+            # schneidet den Bruchteil ab, und ein Fenster von 400 Tagen und
+            # 23:59:59 ginge durch, obwohl die Zeile 400 zusagt. Gemeldet von
+            # einer Prüfung durch Codex.
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Das Fenster ist auf {MAX_FENSTER_TAGE} Tage begrenzt.",

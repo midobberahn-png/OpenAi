@@ -55,15 +55,20 @@ TERMIN = {
 }
 
 
-async def _schritt_altern_lassen(engine: AsyncEngine, run_id: str, *, sekunden: int) -> None:
-    """Verschiebt das Ende des letzten erledigten Schrittes zurück.
+async def _dokument_in_die_zukunft_setzen(
+    engine: AsyncEngine, run_id: str, *, stunden: int
+) -> None:
+    """Stellt das ``finished_at`` im Zustandsdokument in die Zukunft.
 
-    **In der Datenbank gerechnet, und das ist der Punkt.** Ein in Python
-    gebildeter Zeitstempel wäre wieder die Prozessuhr, und genau deren Versatz
-    zur Datenbankuhr soll dieser Umweg aus dem Test heraushalten.
+    **Nachgestellt wird eine vorgehende Prozessuhr** — der Fall, an dem die
+    Leerlaufmessung zweimal gescheitert ist: Der Prozess schreibt einen
+    Zeitpunkt, den die Datenbank noch nicht erreicht hat, und ein gerade
+    beendeter Schritt ist aus ihrer Sicht nie „vorbei".
 
-    ``jsonb_set`` auf dem letzten Element von ``completed_steps``: Der
-    Arbeiter liest genau dieses (``state -> 'completed_steps' -> -1``).
+    Eine Stunde statt Millisekunden, weil ein Test, der auf einen echten
+    Versatz wartet, nichts belegt: Entweder die Messung hängt am Dokument —
+    dann scheitert sie hier eindeutig — oder sie hängt an ``last_step_at``,
+    dann ist dieser Wert gleichgültig.
     """
     async with engine.begin() as conn:
         await conn.execute(
@@ -77,8 +82,7 @@ async def _schritt_altern_lassen(engine: AsyncEngine, run_id: str, *, sekunden: 
                                'finished_at'],
                          to_jsonb(
                            to_char(
-                             ((state -> 'completed_steps' -> -1 ->> 'finished_at')::timestamptz
-                              - CAST(:um AS interval)) AT TIME ZONE 'UTC',
+                             (now() + CAST(:um AS interval)) AT TIME ZONE 'UTC',
                              'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'
                            )
                          )
@@ -86,7 +90,7 @@ async def _schritt_altern_lassen(engine: AsyncEngine, run_id: str, *, sekunden: 
                  WHERE id = :r
                 """
             ),
-            {"r": uuid.UUID(run_id), "um": timedelta(seconds=sekunden)},
+            {"r": uuid.UUID(run_id), "um": timedelta(hours=stunden)},
         )
 
 
@@ -372,31 +376,95 @@ class TestEinLiegengebliebenerLauf:
         assert zustand.status == "executing"
         assert zustand.state.get("claim_id") is None, "Kein Anspruch — und das ist der Punkt."
 
-        # **Der Lauf wird um fünf Sekunden gealtert — in der Datenbank.**
+        # ``idle=0``: Gemessen wird das Aufgreifen, nicht das Warten. Dass die
+        # Frist trennt, prüft der Test darunter.
         #
-        # Vorher stand hier ``idle=timedelta(0)`` mit der Begründung „gemessen
-        # wird das Aufgreifen, nicht das Warten". Die Absicht stimmt, die
-        # Umsetzung war eine Wette auf zwei Uhren: ``finished_at`` schreibt der
-        # **Prozess**, ``now()`` liefert die **Datenbank**, und bei Toleranz
-        # null entscheidet der Versatz zwischen beiden. Gemessen am 25.08.2026:
-        # Läuft die Datenbankuhr vor, ist der Test grün (8 von 8); läuft sie
-        # 42 ms nach, ist er rot (3 von 3) — der Schritt liegt aus Sicht der
-        # Datenbank dann in der Zukunft und ist nie „vorbei".
-        #
-        # Das Altern rechnet die Datenbank aus dem gespeicherten Wert, also in
-        # **einer** Uhr. Gemessen wird weiterhin dasselbe: ein Lauf mitten im
-        # Plan, ohne Anspruch, wird aufgegriffen.
-        await _schritt_altern_lassen(engine, run_id, sekunden=5)
-
-        bericht = await worker_for(
-            engine, get_settings(), lease=FRIST, idle=timedelta(seconds=1)
-        ).sweep()
+        # **Dass diese Zeile wieder dastehen kann, ist der Ertrag von
+        # ``last_step_at``.** Sie war zwischenzeitlich durch ein künstliches
+        # Altern ersetzt, weil der Vergleich zwei Uhren mischte: Bei 42 ms
+        # nachgehender Datenbankuhr lag ein gerade beendeter Schritt in deren
+        # Zukunft (3 von 3 rot), bei 100 ms vorgehender nicht (8 von 8 grün).
+        # Jetzt stempelt die Datenbank den Zeitpunkt selbst.
+        bericht = await worker_for(engine, get_settings(), lease=FRIST, idle=timedelta(0)).sweep()
 
         gemeldet = [e for e in bericht.ergebnisse if e.run_id == run_id]
         assert gemeldet, (
             "Der Arbeiter hat einen Lauf mitten im Plan nicht aufgegriffen. "
             f"Gefunden: {bericht.ergebnisse}"
         )
+
+    @pytest.mark.invariant("hung-step-is-reassigned-only-when-provably-idle")
+    async def test_eine_vorgehende_prozessuhr_versteckt_keinen_lauf(
+        self, client: AsyncClient, engine: AsyncEngine, drehbuch: Drehbuchmodell
+    ) -> None:
+        """Der Fehlerfall, zweimal erlebt und jetzt nachgestellt.
+
+        Die Leerlaufmessung las bis dahin ``finished_at`` aus dem
+        Zustandsdokument — geschrieben vom **Prozess** — und verglich es gegen
+        ``now()`` aus der **Datenbank**. Geht die Prozessuhr vor, liegt ein
+        gerade beendeter Schritt aus Sicht der Datenbank in der Zukunft und ist
+        nie „vorbei": Der Lauf wird nicht gefunden, und niemand greift ihn je
+        auf.
+
+        Hier steht der Zeitpunkt im Dokument eine **Stunde** in der Zukunft.
+        Gefunden werden muss der Lauf trotzdem, denn gemessen wird an
+        ``last_step_at``, und das setzt die Datenbank.
+        """
+        user_id = await _angemeldet(client, engine)
+        await _kalenderrecht(engine, user_id=user_id, mode="allow")
+        run_id = await _lauf_mit_terminschritt(client, engine)
+
+        erster = await client.post(f"/runs/{run_id}/advance", json={"arguments": TERMIN})
+        assert erster.json()["status"] == "executed", erster.json()
+
+        await _dokument_in_die_zukunft_setzen(engine, run_id, stunden=1)
+
+        bericht = await worker_for(engine, get_settings(), lease=FRIST, idle=timedelta(0)).sweep()
+
+        gemeldet = [e for e in bericht.ergebnisse if e.run_id == run_id]
+        assert gemeldet, (
+            "Ein Zeitstempel aus einer vorgehenden Prozessuhr hat den Lauf versteckt — "
+            f"die Messung hängt wieder am Dokument. Gefunden: {bericht.ergebnisse}"
+        )
+
+    async def test_der_zeitstempel_kommt_aus_der_datenbank(
+        self, client: AsyncClient, engine: AsyncEngine, drehbuch: Drehbuchmodell
+    ) -> None:
+        """Und er wird nur gestempelt, wenn ein Schritt hinzukommt.
+
+        Bliebe er bei jedem Schreiben stehen, sähe ein Lauf, der nur seinen
+        Status ändert, frisch aus, obwohl er steht — dann wäre die Frist
+        wirkungslos. Bliebe er umgekehrt bei jedem Schreiben aktuell, wäre sie
+        es auch.
+        """
+        user_id = await _angemeldet(client, engine)
+        await _kalenderrecht(engine, user_id=user_id, mode="allow")
+        run_id = await _lauf_mit_terminschritt(client, engine)
+
+        async with engine.begin() as conn:
+            vorher = (
+                await conn.execute(
+                    text("SELECT last_step_at FROM runs WHERE id = :r"), {"r": uuid.UUID(run_id)}
+                )
+            ).scalar_one()
+        assert vorher is None, "Vor dem ersten Schritt gibt es nichts zu stempeln."
+
+        await client.post(f"/runs/{run_id}/advance", json={"arguments": TERMIN})
+
+        async with engine.begin() as conn:
+            zeile = (
+                await conn.execute(
+                    text(
+                        "SELECT last_step_at, now() - last_step_at AS alter_wert "
+                        "FROM runs WHERE id = :r"
+                    ),
+                    {"r": uuid.UUID(run_id)},
+                )
+            ).one()
+        assert zeile.last_step_at is not None
+        # Beide Seiten aus der Datenbank: Der Abstand ist eine Aussage über
+        # den Lauf und nicht über den Versatz zweier Uhren.
+        assert timedelta(0) <= zeile.alter_wert < timedelta(minutes=1), zeile.alter_wert
 
     @pytest.mark.invariant("hung-step-is-reassigned-only-when-provably-idle")
     async def test_ein_lauf_der_gerade_getrieben_wird_bleibt_unberuehrt(

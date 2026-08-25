@@ -174,6 +174,7 @@ class AnthropicProvider:
         system, nachrichten = self._nachrichten(request)
         tokens_ein = 0
         gelesen_aus_cache = 0
+        geschrieben_in_cache = 0
         try:
             strom = await self._client.messages.create(
                 model=request.model,
@@ -189,6 +190,7 @@ class AnthropicProvider:
                 if ereignis.type == "message_start":
                     tokens_ein = ereignis.message.usage.input_tokens
                     gelesen_aus_cache = ereignis.message.usage.cache_read_input_tokens or 0
+                    geschrieben_in_cache = ereignis.message.usage.cache_creation_input_tokens or 0
                 elif ereignis.type == "content_block_delta" and ereignis.delta.type == "text_delta":
                     yield StreamChunk(delta=ereignis.delta.text)
                 elif ereignis.type == "message_delta":
@@ -200,6 +202,7 @@ class AnthropicProvider:
                             tokens_in=tokens_ein,
                             tokens_out=ereignis.usage.output_tokens or 0,
                             cached_tokens_in=gelesen_aus_cache,
+                            cache_write_tokens_in=geschrieben_in_cache,
                         ),
                     )
         except anthropic.APIError as fehler:
@@ -346,6 +349,10 @@ class AnthropicProvider:
             tokens_in=usage.input_tokens,
             tokens_out=usage.output_tokens,
             cached_tokens_in=usage.cache_read_input_tokens or 0,
+            # Gelesenes **und** Geschriebenes. Nur das Lesen zu zählen war eine
+            # Asymmetrie, die still zu niedrig gerechnet hätte, sobald jemand
+            # ``cache_control`` einschaltet.
+            cache_write_tokens_in=usage.cache_creation_input_tokens or 0,
         )
 
     @staticmethod

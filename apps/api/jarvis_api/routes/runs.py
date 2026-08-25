@@ -369,7 +369,7 @@ async def _tagesbudget_erschoepft(spend: PostgresSpendReader, settings: Settings
     """
     seit = tagesbeginn(settings.timezone)
     stand = DailySpend(
-        spent_eur=await spend.spent_since(seit),
+        committed_eur=await spend.committed_since(seit),
         limit_eur=settings.daily_budget_eur,
         since=seit,
     )
@@ -417,12 +417,22 @@ async def create_run(
     # falsch. Es soll nicht der Assistent ausfallen, sondern der teure Weg
     # (docs/04-orchestrator.md §7: „bei 100 % nur noch lokale Modelle").
     #
-    # Geprüft wird beim **Anlegen** und nicht vor jedem Modellaufruf. Der
-    # Preis dafür ist benannt: Ein bereits laufender Lauf gibt noch bis zu
-    # seinem eigenen Budget aus, die Überschreitung ist also um ein
-    # Laufbudget begrenzt. Eine Prüfung mitten im Lauf hieße, die Modellwahl
-    # eines laufenden Auftrags zu ändern — und damit die Datenklassen-Obergrenze
-    # zu verschieben, unter der er gestartet ist.
+    # Geprüft wird beim **Anlegen** und nicht vor jedem Modellaufruf. Eine
+    # Prüfung mitten im Lauf hieße, die Modellwahl eines laufenden Auftrags zu
+    # ändern — und damit die Datenklassen-Obergrenze zu verschieben, unter der
+    # er gestartet ist.
+    #
+    # **Gerechnet wird mit dem Zugesagten, nicht mit dem Verbuchten.** Hier
+    # stand einmal „die Überschreitung ist um ein Laufbudget begrenzt"; das war
+    # zu großzügig, und eine Prüfung durch Codex hat es aufgedeckt: Solange nur
+    # das Verbuchte zählte, durfte bei 4,99 € von 5,00 € *jeder* weitere Lauf
+    # in die Wolke, und zehn davon gaben zehn Budgets aus. Ein angelegter Lauf
+    # steht sofort in der Datenbank und bringt sein Budget damit sofort in die
+    # Rechnung ein.
+    #
+    # Was bleibt, ist ein Wettlauf von der Breite eines Requests: Zwei
+    # gleichzeitige Anlagen lesen denselben Stand. Das ließe sich mit einer
+    # Sperre je Nutzer schließen; heute ist es genannt und nicht behauptet.
     erschoepft = await _tagesbudget_erschoepft(spend, settings)
 
     try:

@@ -1255,22 +1255,25 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   beide Richtungen; über 40 s wurden Werte zwischen +4 ms und +129 ms gemessen,
   Stunden später −42 ms.
 
-  **Behoben im Test, nicht in der Abfrage.** Der Lauf wird jetzt um fünf
-  Sekunden gealtert, und zwar **in der Datenbank** (`jsonb_set` über
-  `completed_steps -> -1`), damit nur eine Uhr im Spiel ist. Gemessen wird
-  weiterhin dasselbe: Ein Lauf mitten im Plan, ohne Anspruch, wird
-  aufgegriffen. Im Betrieb steht `idle` auf 60 Sekunden — dort sind 42 ms
-  folgenlos.
+  **Behoben an der Wurzel** (`d4e5f6a7b8c9`): Die Spalte `runs.last_step_at`
+  wird von der **Datenbank** gestempelt (`now()` in `save()`, sobald ein
+  Schritt hinzukommt), und die Leerlaufbedingung vergleicht sie gegen `now()`.
+  Beide Seiten stehen damit auf derselben Uhr — dieselbe Entscheidung wie bei
+  `claimed_at`. Der Behelf im Test (künstliches Altern) ist damit hinfällig;
+  `idle=0` trägt wieder, und ein Regressionstest stellt den Fehlerfall nach:
+  Er setzt `finished_at` im Dokument **eine Stunde in die Zukunft** und
+  verlangt, dass der Lauf trotzdem gefunden wird. Gegengeprüft — mit der alten
+  Bedingung schlägt er fehl.
 
-  **Was daran offen bleibt und größer ist als dieser Test:** Dieselbe Mischung
-  aus zwei Uhren steckt in der **Anspruchsfrist** (`claimed_at < now() -
-  frist`), und dort zeigt der ungünstige Versatz in die andere Richtung. Läuft
-  die Datenbankuhr **vor**, laufen Ansprüche zu früh ab, und ein Schritt könnte
-  übernommen werden, während sein Inhaber noch arbeitet — die Invariante
-  `hung-step-is-reassigned-only-when-provably-idle` hängt an einem Vergleich,
-  dessen beide Seiten aus verschiedenen Quellen stammen. Bei 42 ms gegen eine
-  Frist von 15 Minuten ist das folgenlos; die saubere Antwort wäre, solche
-  Zeitstempel von der Datenbank setzen zu lassen. Das ist ein eigener Block.
+  **Eine Korrektur an meiner eigenen Notiz von vorhin:** Ich hatte hier
+  geschrieben, dieselbe Mischung stecke auch in der **Anspruchsfrist** und
+  könne Ansprüche zu früh ablaufen lassen. **Das ist falsch, und zwar
+  nachgesehen statt vermutet:** `claimed_at` kommt seit jeher aus `now()` der
+  Datenbank — mit genau dieser Begründung im Docstring von `_CLAIM` („damit
+  Anfang und Ende der Messung auf derselben Uhr stehen"). Auch die Undo-Frist
+  ist konsistent: Dort stammen `executed_at` und der Vergleichszeitpunkt beide
+  vom Aufrufer. Die Leerlaufmessung war die **einzige** Stelle, die zwei Uhren
+  mischte — und sie ist es nicht mehr.
 * **Kein Router in der Oberfläche.** Zwei Bereiche und ein Laufdetail kommen
   mit einem Zustand aus. Sobald ein Laufdetail eine Adresse braucht, die sich
   weitergeben und neu laden lässt, ist das die Gelegenheit für einen — dann mit
@@ -1440,11 +1443,39 @@ hat es je ausgeliefert. `GET /runs/{id}` führt jetzt `model` und
 `model_reason`; ohne sie sähe ein Nutzer bei erschöpftem Budget eine
 schlechtere Antwort und keinen Grund.
 
-**Was offen bleibt:** Die Kosten stehen im Lauf und im Tagesstand, aber
-**nirgends je Modell oder je Anbieter** — die Frage „wofür ist das Geld
-draufgegangen?" beantwortet heute niemand. Dafür bräuchte es das Hauptbuch, das
-oben aus gutem Grund nicht gebaut wurde; die Abwägung wäre neu zu treffen,
-sobald jemand die Frage tatsächlich stellt.
+**Nachgeschärft nach einer Prüfung durch Codex** (25.08.2026). Zwei der drei
+Kostenbefunde waren berechtigt, einer heute folgenlos:
+
+* **Die Tagesgrenze war weich.** Geprüft wurde das **Verbuchte**, also durfte
+  bei 4,99 € von 5,00 € jeder weitere Lauf in die Wolke — und zehn davon gaben
+  zehn Laufbudgets aus. Die Notiz daneben („höchstens ein Laufbudget
+  Überschreitung") war zu großzügig; sie stammte von mir. Gerechnet wird
+  jetzt mit dem **Zugesagten**: Ein laufender Lauf zählt mit seinem
+  `max_cost_eur`, und weil ein angelegter Lauf sofort in der Datenbank steht,
+  bringt er sein Budget sofort in die Rechnung ein. Ohne zweite Tabelle —
+  Verbrauch, Zusage und Zustand stehen alle in `runs`. Was bleibt, ist ein
+  Wettlauf von der Breite eines Requests (zwei gleichzeitige Anlagen lesen
+  denselben Stand); eine Sperre je Nutzer schlösse ihn, und bis dahin ist er
+  genannt statt behauptet.
+* **Cache-Schreiben wurde nicht abgerechnet.** Gelesenes zählte, Geschriebenes
+  nicht — und bei Anthropic ist Schreiben *teurer* als gewöhnliche Eingabe.
+  Heute ist das Feld immer null, weil niemand `cache_control` setzt; sobald es
+  jemand einschaltet, hätte die Rechnung still zu niedrig gelegen. Neu:
+  `ModelUsage.cache_write_tokens_in`, ein eigener Preis, und ohne ihn gilt der
+  volle Eingabepreis — null wäre hier die falsche Richtung.
+* **Kosten nach Mitternacht fallen weiter auf den Tag des Laufbeginns.** Der
+  Befund stimmt und bleibt offen: Ein Lauf, der über Mitternacht weiterrechnet,
+  belastet den Vortag. Das ließe sich nur mit einem Zeitstempel **je Aufruf**
+  lösen — also mit dem Hauptbuch.
+
+**Was damit weiterhin offen ist — und es ist eine Frage, keine Aufgabe:** Die
+Kosten stehen im Lauf und im Tagesstand, aber **nirgends je Modell oder je
+Anbieter**. „Wofür ist das Geld draufgegangen?" beantwortet niemand, die
+Mitternachtsgrenze bleibt schief, und eine wirklich atomare Reservierung
+bräuchte ebenfalls eine eigene Zeile je Aufruf. Dreimal dieselbe Antwort —
+ein Hauptbuch. Dagegen stand und steht: eine zweite Wahrheit über denselben
+Sachverhalt. Wer sie baut, macht `runs.usage` zur **abgeleiteten** Sicht und
+belegt die Übereinstimmung mit einem Test.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 

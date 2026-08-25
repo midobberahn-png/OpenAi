@@ -201,6 +201,11 @@
       "BudgetView": {
         "description": "Der Tagesstand, wie ihn die Oberfläche zeigt.",
         "properties": {
+          "committed_eur": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Committed Eur",
+            "type": "string"
+          },
           "exhausted": {
             "title": "Exhausted",
             "type": "boolean"
@@ -231,6 +236,7 @@
         },
         "required": [
           "spent_eur",
+          "committed_eur",
           "limit_eur",
           "since",
           "share",

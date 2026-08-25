@@ -226,6 +226,16 @@ class DailySpend(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     spent_eur: Decimal = Decimal("0")
+    """Was tatsächlich verbucht ist."""
+
+    committed_eur: Decimal = Decimal("0")
+    """Verbucht **plus** zugesagt: die Budgets der Läufe, die gerade laufen.
+
+    An dieser Zahl hängt die Grenze, und der Unterschied entscheidet, ob sie
+    eine ist. Wer nur das Verbuchte prüft, lässt bei 4,99 € von 5,00 € beliebig
+    viele weitere Läufe in die Wolke — jeder von ihnen darf danach sein volles
+    Budget ausgeben. Aufgefallen in einer Prüfung durch Codex."""
+
     limit_eur: Decimal = Decimal("0")
     since: datetime | None = None
     """Beginn des laufenden Tages. Steht in der Antwort, weil „heute" ohne
@@ -233,14 +243,20 @@ class DailySpend(BaseModel):
 
     @property
     def share(self) -> float:
-        """Anteil des verbrauchten Budgets (0…1+). Ohne Grenze: 0."""
+        """Anteil des **zugesagten** Budgets (0…1+). Ohne Grenze: 0.
+
+        Bewusst auf ``committed_eur`` und nicht auf ``spent_eur``: Die Anzeige
+        soll dasselbe sagen wie die Entscheidung. Sonst zeigte die Leiste
+        „60 % verbraucht", während das Routing bereits lokal bleibt — und
+        wieder wäre eine Wirkung ohne Erklärung sichtbar.
+        """
         if self.limit_eur <= 0:
             return 0.0
-        return float(self.spent_eur / self.limit_eur)
+        return float(self.committed_eur / self.limit_eur)
 
     @property
     def exhausted(self) -> bool:
-        return self.limit_eur > 0 and self.spent_eur >= self.limit_eur
+        return self.limit_eur > 0 and self.committed_eur >= self.limit_eur
 
     @property
     def warning(self) -> bool:
@@ -345,6 +361,14 @@ class ModelCapability(BaseModel):
     supports_vision: bool = False
     cost_per_1m_in: Decimal = Decimal("0")
     cost_per_1m_out: Decimal = Decimal("0")
+    cost_per_1m_cache_write: Decimal | None = None
+    """Preis für Tokens, die **in** den Prompt-Cache geschrieben werden.
+
+    ``None`` heißt wieder „wie ``cost_per_1m_in``" und nicht „umsonst". Bei
+    Anthropic liegt der Cache-Schreibpreis über dem gewöhnlichen Eingabepreis;
+    wer ihn nicht einträgt, rechnet also zu niedrig — deshalb ist die Vorgabe
+    der volle Eingabepreis und nicht null."""
+
     cost_per_1m_cached_in: Decimal | None = None
     """Preis für Eingabetokens, die aus dem Prompt-Cache gelesen wurden.
 
@@ -371,7 +395,14 @@ class ModelCapability(BaseModel):
         """
         return self.cost_per_1m_in > 0 and self.cost_per_1m_out > 0
 
-    def cost_for(self, *, tokens_in: int, tokens_out: int, cached_tokens_in: int = 0) -> Decimal:
+    def cost_for(
+        self,
+        *,
+        tokens_in: int,
+        tokens_out: int,
+        cached_tokens_in: int = 0,
+        cache_write_tokens_in: int = 0,
+    ) -> Decimal:
         """Was dieser Verbrauch kostet — in Euro.
 
         Die Rechnung steht **hier** und nicht im Adapter: Ein Adapter, der
@@ -388,9 +419,15 @@ class ModelCapability(BaseModel):
             if self.cost_per_1m_cached_in is not None
             else self.cost_per_1m_in
         )
+        in_cache = (
+            self.cost_per_1m_cache_write
+            if self.cost_per_1m_cache_write is not None
+            else self.cost_per_1m_in
+        )
         gesamt = (
             Decimal(tokens_in) * self.cost_per_1m_in
             + Decimal(cached_tokens_in) * aus_cache
+            + Decimal(cache_write_tokens_in) * in_cache
             + Decimal(tokens_out) * self.cost_per_1m_out
         )
         return gesamt / Decimal(1_000_000)
