@@ -34,6 +34,19 @@ __all__ = ["router"]
 router = APIRouter(prefix="/budget", tags=["budget"])
 
 
+class Posten(BaseModel):
+    """Eine Zeile der Aufschlüsselung."""
+
+    provider: str
+    model: str
+    purpose: str
+    """``arguments``, ``response`` oder ``agent`` — der Schritt, der bezahlt
+    hat. Ohne ihn sieht man, *welches* Modell teuer war, aber nicht *wobei*."""
+
+    calls: int
+    cost_eur: Decimal
+
+
 class BudgetView(BaseModel):
     """Der Tagesstand, wie ihn die Oberfläche zeigt."""
 
@@ -58,6 +71,13 @@ class BudgetView(BaseModel):
     exhausted: bool
     """Ab hier wählt der Router nur noch lokale Modelle."""
 
+    by_model: list[Posten] = []
+    """**Wofür** das Geld draufgegangen ist.
+
+    Die Frage, für die es das Hauptbuch gibt. Ein Summenfeld beantwortet sie
+    nicht: Welches Modell, welcher Anbieter, welcher Schritt — nichts davon
+    lässt sich aus einer Zahl herauslesen."""
+
 
 @router.get("", response_model=BudgetView)
 async def read_budget(
@@ -74,6 +94,7 @@ async def read_budget(
         since=seit,
     )
     return BudgetView(
+        by_model=[Posten.model_validate(p) for p in await spend.by_model_since(seit)],
         spent_eur=stand.spent_eur,
         committed_eur=stand.committed_eur,
         limit_eur=stand.limit_eur,

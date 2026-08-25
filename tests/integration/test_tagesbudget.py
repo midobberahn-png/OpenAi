@@ -36,12 +36,16 @@ async def _lauf_mit_kosten(
     kosten: str,
     gestartet: datetime | None = None,
 ) -> uuid.UUID:
-    """Ein abgeschlossener Lauf mit gebuchten Kosten.
+    """Ein abgeschlossener Lauf mit gebuchten Kosten — **samt Posten**.
 
     Direkt in die Datenbank: Kosten entstehen an einem Modellaufruf, und der
-    braucht ein Modell. Nachgestellt wird deshalb das **Ergebnis** — der
-    Verbrauch, wie ihn der Tracker hinterlässt —, nicht der Weg dorthin. Was
-    hier geprüft wird, ist die Summe darüber.
+    braucht ein Modell. Nachgestellt wird deshalb das **Ergebnis**, nicht der
+    Weg dorthin.
+
+    Seit es das Hauptbuch gibt, gehört zum Ergebnis beides: die Summe im Lauf
+    **und** die Zeile je Aufruf. Nur den Lauf zu schreiben, hieße einen
+    Zustand nachzustellen, den das System nicht erzeugen kann — und der Test
+    prüfte dann eine Lage, die es nicht gibt.
     """
     run_id = uuid.uuid4()
     async with engine.begin() as conn:
@@ -57,6 +61,21 @@ async def _lauf_mit_kosten(
                 "b": "{}",
                 "v": f'{{"cost_eur": "{kosten}", "tokens_in": 10, "tokens_out": 5}}',
                 "t": f"trace-{run_id}",
+                "s": gestartet or datetime.now(UTC),
+            },
+        )
+        # Der Posten im Hauptbuch — mit demselben Zeitpunkt wie der Lauf,
+        # damit ein „gestriger" Lauf auch gestrige Kosten hat.
+        await conn.execute(
+            text(
+                "INSERT INTO model_calls "
+                "(user_id, run_id, provider, model, purpose, cost_eur, occurred_at) "
+                "VALUES (:u, :r, 'anthropic', 'claude-sonnet-5', 'response', :k, :s)"
+            ),
+            {
+                "u": user_id,
+                "r": run_id,
+                "k": kosten,
                 "s": gestartet or datetime.now(UTC),
             },
         )

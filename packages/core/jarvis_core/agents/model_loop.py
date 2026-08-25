@@ -44,6 +44,7 @@ from jarvis_contracts import (
     escalate,
 )
 from jarvis_core.agents.runtime import AgentSession
+from jarvis_core.ports.spend import SpendContext
 from jarvis_core.providers.gateway import ModelGateway, ModelNotPermitted
 from jarvis_core.tools.registry import ToolRegistry, UnknownTool
 
@@ -115,6 +116,17 @@ class ModelLoop:
                     # kann nur steigen.
                     data_class=escalate(self._data_class, session.run.data_class),
                     taint=session.run.taint_level,
+                    # **Auch die Schleife eines Sub-Agenten bucht.** Sie ist
+                    # die dritte Stelle, an der Kosten entstehen, und die
+                    # unauffälligste: Ihr Verbrauch wird beim Elternlauf nur
+                    # als Summe übernommen (``tracker.absorb``). Ohne diese
+                    # Zeile hätte das Hauptbuch genau dort ein Loch, wo ein
+                    # Lauf am meisten ausgeben kann.
+                    abrechnung=SpendContext(
+                        user_id=session.run.user_id,
+                        run_id=session.run.id,
+                        purpose="agent",
+                    ),
                 )
             except ModelNotPermitted as abgelehnt:
                 return AgentResult(

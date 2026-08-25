@@ -54,6 +54,7 @@ from jarvis_contracts import (
     ToolSpec,
 )
 from jarvis_core.orchestrator.plan_context import PlanStepUnavailable, schritt_nachrichten
+from jarvis_core.ports.spend import SpendContext
 from jarvis_core.providers.gateway import ModelGateway, ModelNotPermitted
 
 __all__ = ["ArgumentsUnavailable", "FormulatedArguments", "PlanArgumentSource"]
@@ -153,6 +154,10 @@ class PlanArgumentSource:
                 anfrage,
                 data_class=run.data_class,
                 taint=run.taint_level,
+                # Der Abrechnungskontext kommt aus dem **Lauf** und nicht vom
+                # Aufrufer: Wem der Aufruf gehört, ist keine Angabe, die
+                # jemand mitbringt.
+                abrechnung=SpendContext(user_id=run.user_id, run_id=run.id, purpose="arguments"),
             )
         except ModelNotPermitted as abgelehnt:
             # Die Ablehnung wird zur Abweisung des Schrittes und nicht zu einem

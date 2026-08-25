@@ -42,6 +42,7 @@ from pydantic import BaseModel, ConfigDict
 
 from jarvis_contracts import CompletionRequest, ModelUsage, PlanStep, Run
 from jarvis_core.orchestrator.plan_context import PlanStepUnavailable, schritt_nachrichten
+from jarvis_core.ports.spend import SpendContext
 from jarvis_core.providers.gateway import ModelGateway, ModelNotPermitted
 
 __all__ = ["FormulatedResponse", "PlanResponseSource", "ResponseUnavailable"]
@@ -134,6 +135,7 @@ class PlanResponseSource:
                     anfrage,
                     data_class=run.data_class,
                     taint=run.taint_level,
+                    abrechnung=SpendContext(user_id=run.user_id, run_id=run.id, purpose="response"),
                 )
                 roh, verbrauch = antwort.text, antwort.usage
                 kontaminiert = antwort.taints_context
@@ -175,7 +177,10 @@ class PlanResponseSource:
         stuecke: list[str] = []
         verbrauch = ModelUsage()
         async for stueck in self._gateway.stream(
-            anfrage, data_class=run.data_class, taint=run.taint_level
+            anfrage,
+            data_class=run.data_class,
+            taint=run.taint_level,
+            abrechnung=SpendContext(user_id=run.user_id, run_id=run.id, purpose="response"),
         ):
             if stueck.delta:
                 stuecke.append(stueck.delta)

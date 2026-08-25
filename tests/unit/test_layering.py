@@ -317,3 +317,41 @@ def test_der_werkzeugspeicher_des_kalenders_kann_nicht_lesen() -> None:
 
     assert not hasattr(PostgresCalendarStore, "list_events")
     assert hasattr(PostgresCalendarReader, "list_events")
+
+
+def test_jeder_modellaufruf_bucht() -> None:
+    """Kein Weg zum Modell ohne Abrechnungskontext.
+
+    ``abrechnung`` ist am Gateway optional — sonst müsste jeder Test eine
+    Buchung mitbringen. Ein optionaler Parameter, den niemand prüft, wird aber
+    irgendwann weggelassen, und dann fehlt im Hauptbuch genau der Aufruf, den
+    jemand sucht. Geprüft wird deshalb am Quelltext: **Jeder** Aufruf von
+    ``gateway.complete``/``gateway.stream`` außerhalb der Tests nennt ihn.
+
+    Dieselbe Bauart wie ``test_execution_grant_wird_nur_im_gateway_erzeugt``:
+    Der Strukturtest schlägt auch dann fehl, wenn in einem Jahr jemand einen
+    vierten Aufrufort ergänzt, für den niemand einen Test schreibt.
+    """
+    verfehlt: list[str] = []
+    for pfad in _python_files(CORE) + _python_files(REPO / "apps" / "api"):
+        baum = ast.parse(pfad.read_text(encoding="utf-8"), filename=str(pfad))
+        for knoten in ast.walk(baum):
+            if not isinstance(knoten, ast.Call):
+                continue
+            funktion = knoten.func
+            if not isinstance(funktion, ast.Attribute):
+                continue
+            if funktion.attr not in {"complete", "stream"}:
+                continue
+            # Nur Aufrufe am Gateway: Ein ``provider.complete`` im Adapter ist
+            # etwas anderes und bucht zu Recht nicht.
+            ziel = funktion.value
+            if not (isinstance(ziel, ast.Attribute) and "gateway" in ziel.attr.lower()):
+                continue
+            if not any(k.arg == "abrechnung" for k in knoten.keywords):
+                verfehlt.append(f"{pfad.relative_to(REPO)}:{knoten.lineno}")
+
+    assert not verfehlt, (
+        "Modellaufruf ohne Abrechnungskontext — diese Kosten landen in keinem "
+        f"Hauptbuch: {verfehlt}"
+    )
