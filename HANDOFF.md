@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 104, Remote auf GitHub |
-| Tests | **1431** Python + 21 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten.** |
+| Tests | **1431** Python + 21 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **59/60** |
 | mypy | `strict`, sauber über 127 Dateien |
 | Ruff | sauber (check + format) |
@@ -1500,6 +1500,15 @@ desselben Tages.
 
 **Was offen bleibt:** die wirklich atomare Reservierung. Zwei gleichzeitige
 Laufanlagen lesen denselben Stand; eine Sperre je Nutzer schlösse das. Und:
+**Und eine Lehre über Tests, die erst die CI gefunden hat:** Die beiden
+Prüfungen „was der Lauf als Summe führt, steht im Hauptbuch als Posten"
+brauchen einen **echten** Modellaufruf — gestellte Zeilen bewiesen nur, dass
+`INSERT` funktioniert. Lokal lief Ollama, in der Pipeline nicht, und der
+Antwortschritt scheiterte an einer Verbindung statt an einer Aussage. Ein Test,
+der je nach Maschine etwas anderes prüft, ist keiner; sie stehen jetzt hinter
+`JARVIS_REQUIRE_OLLAMA` wie `test_ollama_live.py`. **Das lokale Gate war grün,
+die CI nicht** — der umgekehrte Fall zu dem, was das Dossier sonst notiert.
+
 **Ein fehlgeschlagener Eintrag lässt den Modellaufruf scheitern** — bezahlt ist
 dann bezahlt, aber der Nutzer bekommt keine Antwort. Das ist die bewusste
 Richtung („lieber sichtbar scheitern als still falsch rechnen"); wer sie
