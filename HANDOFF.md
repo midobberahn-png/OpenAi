@@ -565,6 +565,11 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 ### Bekannte kleinere Mängel
 
 - `PostgresApprovalStore.open_for_user()` hat ein N+1. Vor der UI zu beheben.
+- **Rauschen im Browserlauf, jetzt lauter:** Seit dem Hauptbuch kommen zu den
+  `RunNotStored`-Tracebacks Fremdschlüsselverletzungen auf `model_calls` —
+  dieselbe Ursache, ein Lauf, dessen Nutzer der nächste Test schon geräumt hat.
+  Für einen gelöschten Lauf ist das Scheitern **richtig**; für die Lesbarkeit
+  des Protokolls bleibt es schlecht.
 - **Rauschen im Browserlauf:** Der Server protokolliert je Durchgang zweimal
   `RunNotStored` samt Traceback. Der Chat treibt einen Lauf weiter, während
   `frischesSystem()` des nächsten Tests die Nutzer bereits geräumt hat. Kein
@@ -1468,14 +1473,37 @@ Kostenbefunde waren berechtigt, einer heute folgenlos:
   belastet den Vortag. Das ließe sich nur mit einem Zeitstempel **je Aufruf**
   lösen — also mit dem Hauptbuch.
 
-**Was damit weiterhin offen ist — und es ist eine Frage, keine Aufgabe:** Die
-Kosten stehen im Lauf und im Tagesstand, aber **nirgends je Modell oder je
-Anbieter**. „Wofür ist das Geld draufgegangen?" beantwortet niemand, die
-Mitternachtsgrenze bleibt schief, und eine wirklich atomare Reservierung
-bräuchte ebenfalls eine eigene Zeile je Aufruf. Dreimal dieselbe Antwort —
-ein Hauptbuch. Dagegen stand und steht: eine zweite Wahrheit über denselben
-Sachverhalt. Wer sie baut, macht `runs.usage` zur **abgeleiteten** Sicht und
-belegt die Übereinstimmung mit einem Test.
+**Und dann wurde das Hauptbuch doch gebaut** (`e5f6a7b8c9d0`). Der Einwand
+gegen eine zweite Tabelle war ernst gemeint und ist nicht verschwunden — er ist
+beantwortet:
+
+* **Geschrieben wird an einer Stelle**, im Model Gateway, dem einzigen Weg zu
+  einem Sprachmodell und der Stelle, an der die Kosten ohnehin errechnet
+  werden. Ein Aufruf, der das Hauptbuch verfehlt, müsste am Gateway vorbei.
+  Dass jeder Aufrufer einen Abrechnungskontext mitgibt, hält ein
+  **Strukturtest** fest (`test_layering.py`) — gegengeprüft: Nimmt man ihn an
+  einer Stelle weg, wird der Test rot.
+* **Es gab drei Schreiber, nicht zwei.** Argumente, Antwort — und die Schleife
+  eines Sub-Agenten, deren Verbrauch beim Elternlauf nur als Summe ankommt
+  (`tracker.absorb`). Genau dort hätte ein Hauptbuch mit Schreibweg beim
+  Aufrufer sein Loch gehabt, und zwar an der Stelle, an der ein Lauf am meisten
+  ausgeben kann.
+* **`runs.usage` ist ab jetzt die abgeleitete Sicht**, und ein Test rechnet sie
+  gegen das Hauptbuch nach — über einen echten Lauf, nicht über gestellte
+  Zeilen.
+
+Damit sind zwei der offenen Punkte erledigt: Die Frage „wofür ist das Geld
+draufgegangen?" beantwortet `GET /budget` (`by_model`: Anbieter, Modell,
+Zweck, Anzahl, Kosten), und **Kosten zählen zum Tag ihres Aufrufs** statt zum
+Tag des Laufbeginns — der Zeitstempel kommt aus `now()`, nach der Lehre
+desselben Tages.
+
+**Was offen bleibt:** die wirklich atomare Reservierung. Zwei gleichzeitige
+Laufanlagen lesen denselben Stand; eine Sperre je Nutzer schlösse das. Und:
+**Ein fehlgeschlagener Eintrag lässt den Modellaufruf scheitern** — bezahlt ist
+dann bezahlt, aber der Nutzer bekommt keine Antwort. Das ist die bewusste
+Richtung („lieber sichtbar scheitern als still falsch rechnen"); wer sie
+umdreht, braucht einen Weg, verlorene Buchungen nachzuholen.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
