@@ -76,13 +76,81 @@ export async function mitVirtuellemAuthenticator(page: Page): Promise<void> {
   });
 }
 
-/** Erstinbetriebnahme über die Oberfläche — der Weg, den ein Mensch nimmt. */
+/**
+ * Erstinbetriebnahme über die Oberfläche — der Weg, den ein Mensch nimmt.
+ *
+ * **Warum hier so viel Aufwand um eine Fehlermeldung getrieben wird.** Diese
+ * Funktion flackert: etwa einmal in dreißig Durchgängen bleibt die Leiste auf
+ * „nicht angemeldet" stehen. Die erste Fassung wartete schlicht 20 Sekunden auf
+ * „angemeldet" und meldete danach genau das — *dass* es nicht da war, nie
+ * *warum*. Die Oberfläche zeigt den Grund die ganze Zeit an (die Fehlerkarte
+ * steht direkt darunter), und der Test sah nicht hin. Jeder Fehlschlag kostete
+ * damit einen Durchgang und brachte kein Material.
+ *
+ * Deshalb sammelt sie drei Dinge und legt sie in die Fehlermeldung:
+ *
+ * 1. **Die Fehlerkarte der Oberfläche** — der Grund, den Server oder
+ *    Authenticator genannt haben.
+ * 2. **Alle Anmelde-Aufrufe mit ihrem Ausgang**, ungefiltert und in der
+ *    Reihenfolge — auch die, die gar nicht ankamen.
+ * 3. **Den zuletzt gesehenen Zustand der Leiste**, damit „stand auf …" nicht
+ *    aus der Erinnerung rekonstruiert werden muss.
+ *
+ * Ein Retry wäre die falsche Antwort und steht deshalb auch nicht in der
+ * Konfiguration: Er verdeckt genau das, was hier gesucht wird.
+ */
 export async function angemeldet(page: Page): Promise<void> {
   frischesSystem();
   await mitVirtuellemAuthenticator(page);
+
+  // **Jeder** Anmelde-Aufruf mit seinem Ausgang, in der Reihenfolge.
+  //
+  // Die erste Fassung filterte das reguläre ``401 /auth/me`` vor der Anmeldung
+  // heraus — und versteckte damit ausgerechnet den Hauptverdächtigen: Die
+  // Leiste fragt **einmal**, und ein 401 auf diese eine Frage lässt sie für
+  // immer auf „nicht angemeldet" stehen. Beim ersten reproduzierten Fehlschlag
+  // stand deshalb da: keine Fehlerkarte, kein abgewiesener Aufruf, keine
+  // Erklärung. Wer filtert, entscheidet vorab, was die Ursache nicht ist.
+  const verlauf: string[] = [];
+  page.on("response", (antwort) => {
+    const pfad = new URL(antwort.url()).pathname;
+    if (pfad.startsWith("/auth/")) verlauf.push(`${antwort.status()} ${pfad}`);
+  });
+  page.on("requestfailed", (anfrage) => {
+    const pfad = new URL(anfrage.url()).pathname;
+    // Ein Aufruf, der gar nicht ankommt, erzeugt **keine** Antwort — ohne
+    // diese Zeile wäre er in der Auswertung schlicht nicht vorhanden.
+    if (pfad.startsWith("/auth/")) {
+      verlauf.push(`GESCHEITERT ${pfad} (${anfrage.failure()?.errorText ?? "ohne Grund"})`);
+    }
+  });
+
   await page.goto("/");
   await page.getByTestId("email").fill(`e2e-${Date.now()}@example.test`);
   await page.getByTestId("name").fill("Playwright");
   await page.getByTestId("einrichten").click();
-  await expect(page.getByTestId("verbindung")).toHaveText("angemeldet", { timeout: 20_000 });
+
+  // Der Vergleich bleibt schmal, die Auskunft steht im Fehlerfall. Die erste
+  // Fassung hängte die abgewiesenen Aufrufe an den Vergleichswert — und
+  // **jeder** Durchgang beginnt mit einem regulären ``401 /auth/me``, denn
+  // genau so fragt die Oberfläche, ob jemand angemeldet ist. Der Wert konnte
+  // damit nie „angemeldet" lauten: 19 von 21 Tests rot, und zwar zu Recht.
+  try {
+    await expect(page.getByTestId("verbindung")).toHaveText("angemeldet", { timeout: 20_000 });
+  } catch (problem) {
+    throw new Error(
+      [
+        "Die Erstinbetriebnahme kam nicht durch.",
+        `Leiste: "${(await page.getByTestId("verbindung").innerText()).trim()}"`,
+        (await page.getByTestId("fehler").count()) > 0
+          ? `Grund laut Oberfläche: ${(await page.getByTestId("fehler").innerText()).trim()}`
+          : "Keine Fehlerkarte — die Oberfläche hat den Versuch nicht als gescheitert gesehen.",
+        `Anmelde-Aufrufe: ${verlauf.length > 0 ? verlauf.join(" → ") : "keine"}`,
+        "Zu lesen ist die Kette so: Das erste 401 auf /auth/me ist die Frage der Leiste " +
+          "vor der Anmeldung und gehört dazu. Endet die Kette mit einem zweiten 401 auf " +
+          "/auth/me, war die Zeremonie erfolgreich und die Sitzung trotzdem nicht gültig.",
+        `Ursprünglich: ${problem instanceof Error ? problem.message.split("\n")[0] : problem}`,
+      ].join(" · "),
+    );
+  }
 }
