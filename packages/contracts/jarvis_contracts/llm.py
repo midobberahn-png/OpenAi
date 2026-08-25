@@ -133,8 +133,19 @@ class ModelUsage(BaseModel):
     tokens_in: int = Field(default=0, ge=0)
     tokens_out: int = Field(default=0, ge=0)
     cached_tokens_in: int = Field(default=0, ge=0)
-    """Prompt-Caching (Anthropic, OpenAI). Getrennt geführt, weil es anders
-    abgerechnet wird — sonst stimmt die Kostenrechnung nicht."""
+    """Aus dem Prompt-Cache **gelesene** Tokens (Anthropic, OpenAI). Getrennt
+    geführt, weil sie anders abgerechnet werden — sonst stimmt die
+    Kostenrechnung nicht."""
+
+    cache_write_tokens_in: int = Field(default=0, ge=0)
+    """In den Prompt-Cache **geschriebene** Tokens.
+
+    Ergänzt, weil das Fehlen eine Asymmetrie war: Gelesenes wurde gezählt,
+    Geschriebenes nicht — und Cache-Schreiben ist bei Anthropic **teurer** als
+    gewöhnliche Eingabe. Solange niemand ``cache_control`` setzt, ist das Feld
+    null; sobald es jemand einschaltet, hätte die Rechnung sonst still zu
+    niedrig gelegen, und zwar in der gefährlichen Richtung. Gemeldet von einer
+    Prüfung durch Codex."""
 
     cost_eur: Decimal = Decimal("0")
     latency_ms: int = Field(default=0, ge=0)

@@ -151,6 +151,7 @@ class TestAntwortLesen:
         assert ergebnis.usage.tokens_out == 17
         # Getrennt geführt, weil es anders abgerechnet wird.
         assert ergebnis.usage.cached_tokens_in == 8
+        assert ergebnis.usage.cache_write_tokens_in == 0
 
     @pytest.mark.invariant("model-tool-calls-are-proposals")
     async def test_werkzeugaufrufe_werden_zu_vorschlaegen(self) -> None:
@@ -190,6 +191,42 @@ class TestAntwortLesen:
 
         ergebnis = await provider.complete(_anfrage())
         assert ergebnis.finish_reason is FinishReason.CONTENT_FILTER
+
+
+class TestCacheTokens:
+    """Gelesenes **und** Geschriebenes.
+
+    Nur das Lesen zu zählen war eine Asymmetrie in der gefährlichen Richtung:
+    Cache-Schreiben ist bei Anthropic teurer als gewöhnliche Eingabe, und wer
+    ``cache_control`` einschaltet, hätte still zu niedrig gerechnet. Gemeldet
+    von einer Prüfung durch Codex.
+    """
+
+    async def test_geschriebene_cachetokens_werden_gemeldet(self) -> None:
+        mit_cache = json.loads(json.dumps(ANTWORT_TEXT))
+        mit_cache["usage"]["cache_creation_input_tokens"] = 1234
+        provider, _ = _provider(lambda _: httpx2.Response(200, json=mit_cache))
+
+        ergebnis = await provider.complete(_anfrage())
+
+        assert ergebnis.usage.cache_write_tokens_in == 1234
+        # Und sie stehen **neben** den Eingabetokens, nicht darin — anders als
+        # bei OpenAI, wo ``prompt_tokens`` alles enthält.
+        assert ergebnis.usage.tokens_in == 42
+
+    async def test_auch_im_strom(self) -> None:
+        strom = json.loads(json.dumps(STROM))
+        strom[0]["message"]["usage"]["cache_creation_input_tokens"] = 77
+        provider, _ = _provider(
+            lambda _: httpx2.Response(
+                200, text=_sse(strom), headers={"content-type": "text/event-stream"}
+            )
+        )
+
+        stuecke = [s async for s in provider.stream(_anfrage())]
+
+        assert stuecke[-1].usage is not None
+        assert stuecke[-1].usage.cache_write_tokens_in == 77
 
 
 class TestWasHinausgeht:

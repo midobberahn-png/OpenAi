@@ -95,7 +95,7 @@ def _fremdes_modell(settings: Settings, anbieter: str) -> ModelCapability | None
     if not modell or not _schluessel(settings, anbieter):
         return None
 
-    preis_ein, preis_aus, preis_cache = _preise(settings, anbieter)
+    preis_ein, preis_aus, preis_cache, preis_cache_schreiben = _preise(settings, anbieter)
     if preis_ein <= 0 or preis_aus <= 0:
         return None
 
@@ -116,23 +116,34 @@ def _fremdes_modell(settings: Settings, anbieter: str) -> ModelCapability | None
         cost_per_1m_in=preis_ein,
         cost_per_1m_out=preis_aus,
         cost_per_1m_cached_in=preis_cache,
+        cost_per_1m_cache_write=preis_cache_schreiben,
         zero_retention=ohne_vorhaltung,
         is_local=False,
     )
 
 
-def _preise(settings: Settings, anbieter: str) -> tuple[Decimal, Decimal, Decimal | None]:
-    """Euro je einer Million Tokens — Eingabe, Ausgabe, aus dem Cache gelesen."""
+def _preise(
+    settings: Settings, anbieter: str
+) -> tuple[Decimal, Decimal, Decimal | None, Decimal | None]:
+    """Euro je einer Million Tokens.
+
+    Eingabe, Ausgabe, aus dem Cache gelesen, in den Cache geschrieben. Die
+    beiden letzten sind optional; ohne Angabe gilt jeweils der volle
+    Eingabepreis — die vorsichtige Richtung, denn Cache-Schreiben ist bei
+    Anthropic teurer als gewöhnliche Eingabe.
+    """
     if anbieter == "anthropic":
         return (
             settings.anthropic_cost_per_1m_in,
             settings.anthropic_cost_per_1m_out,
             settings.anthropic_cost_per_1m_cached_in,
+            settings.anthropic_cost_per_1m_cache_write,
         )
     return (
         settings.openai_cost_per_1m_in,
         settings.openai_cost_per_1m_out,
         settings.openai_cost_per_1m_cached_in,
+        settings.openai_cost_per_1m_cache_write,
     )
 
 

@@ -459,6 +459,47 @@ class TestKostenrechnung:
 
         assert ergebnis.usage.cost_eur == Decimal("0.30")
 
+    async def test_in_den_cache_geschriebene_tokens_kosten_auch(self) -> None:
+        """Die Asymmetrie, die eine Prüfung durch Codex gefunden hat.
+
+        Gelesenes wurde gezählt, Geschriebenes nicht — und Cache-Schreiben ist
+        bei Anthropic **teurer** als gewöhnliche Eingabe. Solange niemand
+        ``cache_control`` setzt, ist das Feld null; sobald es jemand
+        einschaltet, hätte die Rechnung still zu niedrig gelegen.
+        """
+        mit_schreibpreis = CLOUD_MIT_VORHALTUNG.model_copy(
+            update={"cost_per_1m_cache_write": Decimal("0.375")}
+        )
+        antwort = CompletionResult(
+            text="fertig",
+            provider="anbieter_a",
+            usage=ModelUsage(cache_write_tokens_in=1_000_000),
+        )
+        gateway = ModelGateway(
+            {"anbieter_a": NotierenderProvider("anbieter_a", antwort=antwort)},
+            [mit_schreibpreis],
+        )
+
+        ergebnis = await gateway.complete(_anfrage("cloud-p1-mit-zusage"), data_class=DataClass.P1)
+
+        assert ergebnis.usage.cost_eur == Decimal("0.375")
+
+    async def test_ohne_schreibpreis_gilt_der_volle_eingabepreis(self) -> None:
+        """Und nicht null: Cache-Schreiben kostet mehr als Eingabe, nicht
+        weniger. Ein fehlender Preis darf nicht wie „umsonst" wirken."""
+        antwort = CompletionResult(
+            text="fertig",
+            provider="anbieter_a",
+            usage=ModelUsage(cache_write_tokens_in=1_000_000),
+        )
+        gateway = ModelGateway(
+            {"anbieter_a": NotierenderProvider("anbieter_a", antwort=antwort)}, [CLOUD_P1]
+        )
+
+        ergebnis = await gateway.complete(_anfrage("cloud-fast"), data_class=DataClass.P0)
+
+        assert ergebnis.usage.cost_eur == Decimal("0.30")
+
     async def test_ein_lokales_modell_kostet_nichts(self) -> None:
         """Keine Schönfärberei: Der Kostenzähler begrenzt Ausgaben an Dritte.
         Ihn mit geschätzten Stromkosten zu füllen, machte das Budget

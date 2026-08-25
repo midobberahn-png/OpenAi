@@ -38,6 +38,13 @@ class BudgetView(BaseModel):
     """Der Tagesstand, wie ihn die Oberfläche zeigt."""
 
     spent_eur: Decimal
+    """Was verbucht ist."""
+
+    committed_eur: Decimal
+    """Verbucht plus zugesagt — daran hängt die Entscheidung, und deshalb
+    steht auch die Anzeige darauf. Sonst zeigte die Leiste „60 % verbraucht",
+    während das Routing schon lokal bleibt."""
+
     limit_eur: Decimal
     since: datetime
     share: float
@@ -62,11 +69,13 @@ async def read_budget(
     seit = tagesbeginn(settings.timezone)
     stand = DailySpend(
         spent_eur=await spend.spent_since(seit),
+        committed_eur=await spend.committed_since(seit),
         limit_eur=settings.daily_budget_eur,
         since=seit,
     )
     return BudgetView(
         spent_eur=stand.spent_eur,
+        committed_eur=stand.committed_eur,
         limit_eur=stand.limit_eur,
         since=seit,
         share=stand.share,

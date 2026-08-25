@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     anthropic_cost_per_1m_cached_in: Decimal | None = Field(
         default=None, alias="ANTHROPIC_COST_PER_1M_CACHED_IN"
     )
+    anthropic_cost_per_1m_cache_write: Decimal | None = Field(
+        default=None, alias="ANTHROPIC_COST_PER_1M_CACHE_WRITE"
+    )
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="", alias="OPENAI_MODEL")
@@ -86,6 +89,9 @@ class Settings(BaseSettings):
     openai_cost_per_1m_out: Decimal = Field(default=Decimal("0"), alias="OPENAI_COST_PER_1M_OUT")
     openai_cost_per_1m_cached_in: Decimal | None = Field(
         default=None, alias="OPENAI_COST_PER_1M_CACHED_IN"
+    )
+    openai_cost_per_1m_cache_write: Decimal | None = Field(
+        default=None, alias="OPENAI_COST_PER_1M_CACHE_WRITE"
     )
     """Preise in **Euro je einer Million Tokens**.
 

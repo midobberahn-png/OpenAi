@@ -167,6 +167,54 @@ class TestWasDerEndpunktSagt:
         assert (await client.get("/budget")).status_code == 401
 
 
+class TestDieGrenzeHaelt:
+    """Der Befund aus der Codex-Prüfung, nachgestellt.
+
+    Solange nur das **Verbuchte** zählte, war die Tagesgrenze weich: Bei
+    4,99 € von 5,00 € durfte jeder weitere Lauf in die Wolke, und zehn davon
+    gaben zehn Laufbudgets aus. Ein angelegter Lauf bringt sein Budget jetzt
+    sofort in die Rechnung ein.
+    """
+
+    async def test_ein_laufender_lauf_zaehlt_mit_seinem_budget(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        nutzer = await _angemeldet(client, engine)
+        grenze = get_settings().daily_budget_eur
+        # Knapp unter der Grenze verbucht — vorher stand hier „noch nicht
+        # erschöpft", und genau das war die Lücke.
+        await _lauf_mit_kosten(engine, user_id=nutzer, kosten=str(grenze - Decimal("0.01")))
+
+        vorher = (await client.get("/budget")).json()
+        assert vorher["exhausted"] is False, "Ohne laufenden Lauf ist noch Luft."
+
+        lauf = await client.post("/runs", json={"input": "Was gibt es Neues?"})
+        assert lauf.status_code == 201, lauf.text
+
+        nachher = (await client.get("/budget")).json()
+        assert Decimal(nachher["spent_eur"]) == grenze - Decimal("0.01"), (
+            "Verbucht ist nichts dazugekommen — der Lauf hat noch nichts ausgegeben."
+        )
+        assert Decimal(nachher["committed_eur"]) > Decimal(nachher["spent_eur"]), (
+            "Das Budget des laufenden Laufs muss in der Rechnung stehen."
+        )
+        assert nachher["exhausted"] is True
+
+    async def test_die_anzeige_sagt_dasselbe_wie_die_entscheidung(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """Sonst zeigte die Leiste „60 % verbraucht", während das Routing
+        bereits lokal bleibt — eine Wirkung ohne Erklärung."""
+        nutzer = await _angemeldet(client, engine)
+        await _lauf_mit_kosten(
+            engine, user_id=nutzer, kosten=str(get_settings().daily_budget_eur * 2)
+        )
+
+        stand = (await client.get("/budget")).json()
+        assert stand["share"] >= 2.0
+        assert stand["exhausted"] is True
+
+
 class TestDieWirkung:
     async def test_ein_neuer_lauf_wird_lokal_geroutet(
         self, client: AsyncClient, engine: AsyncEngine

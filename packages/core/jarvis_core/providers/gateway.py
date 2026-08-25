@@ -160,6 +160,7 @@ class ModelGateway:
                     tokens_in=verbrauch.tokens_in,
                     tokens_out=verbrauch.tokens_out,
                     cached_tokens_in=verbrauch.cached_tokens_in,
+                    cache_write_tokens_in=verbrauch.cache_write_tokens_in,
                 )
             }
         )
