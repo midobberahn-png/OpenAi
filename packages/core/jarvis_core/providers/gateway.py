@@ -35,6 +35,7 @@ from jarvis_contracts import (
     TaintLevel,
 )
 from jarvis_core.ports.llm import LLMProvider
+from jarvis_core.ports.spend import ModelSpendSink, SpendContext
 
 __all__ = ["ModelGateway", "ModelNotPermitted"]
 
@@ -61,9 +62,23 @@ class ModelGateway:
         self,
         providers: Mapping[str, LLMProvider],
         catalog: Sequence[ModelCapability],
+        *,
+        spend: ModelSpendSink | None = None,
     ) -> None:
         self._providers = dict(providers)
         self._catalog = {model.name: model for model in catalog}
+        self._spend = spend
+        """Das Kostenhauptbuch — **hier** und nicht beim Aufrufer.
+
+        Das Gateway ist der einzige Weg zu einem Sprachmodell und die Stelle,
+        an der die Kosten errechnet werden. Ein Hauptbuch, das woanders
+        geschrieben würde, hätte drei Schreiber (Argumente, Antwort,
+        Agentenschleife) und damit drei Gelegenheiten, einen zu vergessen.
+
+        ``None`` ist zulässig, damit Tests ein Gateway ohne Datenbank bauen
+        können. Dass jeder **echte** Aufrufer einen Abrechnungskontext
+        mitgibt, hält ein Strukturtest fest — ein optionaler Parameter, den
+        niemand prüft, wird irgendwann weggelassen."""
 
     async def complete(
         self,
@@ -71,6 +86,7 @@ class ModelGateway:
         *,
         data_class: DataClass,
         taint: TaintLevel = TaintLevel.CLEAN,
+        abrechnung: SpendContext | None = None,
     ) -> CompletionResult:
         """Ruft ein Modell auf — nach der Zulassungsprüfung.
 
@@ -89,10 +105,12 @@ class ModelGateway:
             )
 
         ergebnis = await provider.complete(request)
+        verbrauch = self._bepreist(modell, ergebnis.usage)
+        await self._buchen(modell, verbrauch, abrechnung)
         return ergebnis.model_copy(
             update={
                 "taints_context": self._kontaminiert(request, taint),
-                "usage": self._bepreist(modell, ergebnis.usage),
+                "usage": verbrauch,
             }
         )
 
@@ -102,6 +120,7 @@ class ModelGateway:
         *,
         data_class: DataClass,
         taint: TaintLevel = TaintLevel.CLEAN,
+        abrechnung: SpendContext | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Dieselbe Zulassungsprüfung wie ``complete()`` — Antwort in Stücken.
 
@@ -139,7 +158,32 @@ class ModelGateway:
             if stueck.usage is None:
                 yield stueck
             else:
-                yield stueck.model_copy(update={"usage": self._bepreist(modell, stueck.usage)})
+                verbrauch = self._bepreist(modell, stueck.usage)
+                # Gebucht wird am Verbrauchsstück, nicht am Ende der Schleife:
+                # Ein Strom, den der Empfänger abbricht, hat trotzdem gekostet.
+                await self._buchen(modell, verbrauch, abrechnung)
+                yield stueck.model_copy(update={"usage": verbrauch})
+
+    async def _buchen(
+        self, modell: ModelCapability, verbrauch: ModelUsage, abrechnung: SpendContext | None
+    ) -> None:
+        """Schreibt eine Zeile ins Hauptbuch — oder tut nichts.
+
+        **Fehler schlagen durch.** Ein verschluckter Schreibfehler wäre ein
+        Loch in der Abrechnung, das erst auffällt, wenn jemand eine Rechnung
+        nachvollziehen will. Der Aufruf ist dann bereits bezahlt; ihn
+        unverbucht zu lassen und dabei zu schweigen, macht aus einem
+        Betriebsproblem eine falsche Zahl.
+        """
+        if self._spend is None or abrechnung is None:
+            return
+        await self._spend.record(
+            abrechnung,
+            provider=modell.provider,
+            model=modell.name,
+            usage=verbrauch,
+            cost_eur=verbrauch.cost_eur,
+        )
 
     @staticmethod
     def _bepreist(modell: ModelCapability, verbrauch: ModelUsage) -> ModelUsage:

@@ -7,6 +7,7 @@ from .llm import LLMProvider
 from .permissions import PermissionStore, RateLimiter, ToolLookup
 from .runs import RunNotStored, RunStateConflict, RunStore
 from .sessions import SessionStore
+from .spend import ModelSpendSink, SpendContext
 from .webauthn import AttestationVerifier, ChallengeStore, CredentialStore
 
 __all__ = [
@@ -20,11 +21,13 @@ __all__ = [
     "CredentialStore",
     "InvocationStore",
     "LLMProvider",
+    "ModelSpendSink",
     "PermissionStore",
     "RateLimiter",
     "RunNotStored",
     "RunStateConflict",
     "RunStore",
     "SessionStore",
+    "SpendContext",
     "ToolLookup",
 ]

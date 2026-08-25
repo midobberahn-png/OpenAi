@@ -201,6 +201,14 @@
       "BudgetView": {
         "description": "Der Tagesstand, wie ihn die Oberfläche zeigt.",
         "properties": {
+          "by_model": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Posten"
+            },
+            "title": "By Model",
+            "type": "array"
+          },
           "committed_eur": {
             "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
             "title": "Committed Eur",
@@ -514,6 +522,41 @@
           "status"
         ],
         "title": "PlanStepView",
+        "type": "object"
+      },
+      "Posten": {
+        "description": "Eine Zeile der Aufschlüsselung.",
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_eur": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Eur",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "purpose": {
+            "title": "Purpose",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "purpose",
+          "calls",
+          "cost_eur"
+        ],
+        "title": "Posten",
         "type": "object"
       },
       "PreviewFieldView": {

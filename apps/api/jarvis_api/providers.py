@@ -30,6 +30,8 @@ Adapter und in keine Meldung, kein Protokoll, keine Antwort.
 
 from __future__ import annotations
 
+from jarvis_api.db.session import engine_for
+from jarvis_api.db.spend_store import PostgresModelSpendStore
 from jarvis_api.models import model_catalog
 from jarvis_api.settings import Settings
 from jarvis_core.ports.llm import LLMProvider
@@ -65,4 +67,12 @@ def model_gateway(settings: Settings) -> ModelGateway:
     Voraussetzung dafür, dass ein fehlender Adapter zu einer Abweisung führt
     und nicht zu einer stillen Ersatzwahl.
     """
-    return ModelGateway(provider_map(settings), model_catalog(settings))
+    return ModelGateway(
+        provider_map(settings),
+        model_catalog(settings),
+        # **Das Hauptbuch hängt am Gateway und nicht am Aufrufer.** Hier ist
+        # die einzige Stelle, an der ein Modellaufruf stattfindet und seine
+        # Kosten berechnet werden; ein Buchungsweg woanders hätte drei
+        # Schreiber und damit drei Gelegenheiten, einen zu vergessen.
+        spend=PostgresModelSpendStore(engine_for(settings.database_url)),
+    )
