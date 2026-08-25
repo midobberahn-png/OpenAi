@@ -126,3 +126,61 @@ test("Der Antworttext wird als Text dargestellt, nicht als HTML", async ({ page 
   expect(await page.evaluate(() => (window as never as Record<string, unknown>).__geknackt)).toBeUndefined();
   expect(await antwort.locator("img").count()).toBe(0);
 });
+
+/**
+ * Quelltext: eingefärbt, kopierbar — und weiterhin Text.
+ *
+ * Die Einfärbung ist der erste Ort, an dem eine fremde Bibliothek Markup für
+ * Modellinhalt erzeugen *könnte*. Deshalb steht hier neben „sieht schön aus"
+ * die Frage, auf die es ankommt: Entsteht aus dem Quelltext ein Element?
+ */
+test("Ein Quelltextblock wird eingefärbt und nennt seine Sprache", async ({ page }) => {
+  await angemeldet(page);
+  await mitAntwort(page, 'So geht es:\n\n```python\ndef gruss(name):\n    return f"Hallo {name}"\n```');
+
+  const block = page.getByTestId("quelltext");
+  await expect(block).toHaveAttribute("data-sprache", "python");
+  await expect(block).toContainText("def gruss(name):");
+  // Eingefärbt heißt: Die Token tragen Farben. Ohne Shiki stünde der Text als
+  // ein Stück da — dann gäbe es keine gefärbten Abschnitte.
+  await expect
+    .poll(async () => block.locator("code span[style*='color']").count(), { timeout: 10_000 })
+    .toBeGreaterThan(3);
+});
+
+test("Der Kopierknopf legt genau den Quelltext in die Zwischenablage", async ({ page }) => {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await angemeldet(page);
+  await mitAntwort(page, "```bash\nmake gate\n```");
+
+  await page.getByTestId("kopieren").click();
+
+  await expect(page.getByTestId("kopieren")).toHaveText("kopiert");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("make gate");
+});
+
+test("Auch eingefärbter Quelltext bleibt Text", async ({ page }) => {
+  await angemeldet(page);
+  // Der Weg, den eine präparierte Datei nähme: HTML **im** Quelltextblock, wo
+  // eine Bibliothek gleich Markup erzeugt. Über Token statt HTML kann daraus
+  // kein Element werden — das prüft dieser Test und nicht die Absicht.
+  await mitAntwort(page, '```html\n<img src=x onerror="window.__geknackt=1">\n```');
+
+  const block = page.getByTestId("quelltext");
+  await expect(block).toContainText("<img src=x");
+  expect(await block.locator("img").count()).toBe(0);
+  expect(
+    await page.evaluate(() => (window as never as Record<string, unknown>).__geknackt),
+  ).toBeUndefined();
+});
+
+test("Ein Block ohne bekannte Sprache bleibt schlicht und vollständig", async ({ page }) => {
+  await angemeldet(page);
+  await mitAntwort(page, "```klingonisch\nnuqneH\n```");
+
+  const block = page.getByTestId("quelltext");
+  await expect(block).toContainText("nuqneH");
+  // Nicht geraten: Eine falsche Einfärbung wäre eine Aussage über den Text,
+  // die niemand geprüft hat.
+  expect(await block.locator("code span[style*='color']").count()).toBe(0);
+});
