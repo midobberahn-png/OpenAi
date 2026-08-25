@@ -190,9 +190,7 @@ class AnthropicProvider:
                 if ereignis.type == "message_start":
                     tokens_ein = ereignis.message.usage.input_tokens
                     gelesen_aus_cache = ereignis.message.usage.cache_read_input_tokens or 0
-                    geschrieben_in_cache = (
-                        ereignis.message.usage.cache_creation_input_tokens or 0
-                    )
+                    geschrieben_in_cache = ereignis.message.usage.cache_creation_input_tokens or 0
                 elif ereignis.type == "content_block_delta" and ereignis.delta.type == "text_delta":
                     yield StreamChunk(delta=ereignis.delta.text)
                 elif ereignis.type == "message_delta":
