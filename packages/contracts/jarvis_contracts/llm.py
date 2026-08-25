@@ -163,6 +163,17 @@ class ProviderCapabilities(BaseModel):
     """Kann der Adapter Tokens *vor* dem Aufruf zählen? Ohne das ist die
     Budgetprüfung eine Schätzung."""
 
+    temperature_control: bool = True
+    """Wird ``CompletionRequest.temperature`` tatsächlich übertragen?
+
+    Ergänzt, als der Anthropic-Adapter entstand: Dessen Messages-API kennt
+    keinen Temperaturparameter mehr. Ohne dieses Feld wäre der Wert ein Wunsch,
+    den ein Aufrufer äußert und der unterwegs verschwindet — und ``plan_arguments``
+    äußert ihn mit Absicht (``0.0``, damit Werkzeugargumente bestimmt sind).
+
+    ``True`` als Vorgabe, weil das der Normalfall ist und ein Adapter, der es
+    nicht kann, es sagen muss — nicht umgekehrt."""
+
 
 class CompletionRequest(BaseModel):
     """Anfrage an ein Modell.

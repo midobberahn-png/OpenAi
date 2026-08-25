@@ -193,7 +193,59 @@ class ModelGateway:
                 code="p3-must-stay-local",
             )
 
+        if not modell.is_local:
+            self._grenze_der_wolke(modell, data_class)
+
         return modell
+
+    @staticmethod
+    def _grenze_der_wolke(modell: ModelCapability, data_class: DataClass) -> None:
+        """Was ein Anbieter sehen darf, der nicht auf diesem Gerät läuft.
+
+        Die Tabelle in docs/00-uebersicht.md §8 ist eindeutig, und bis zu
+        diesem Block hatte sie keinen Leser — es gab schlicht keinen fremden
+        Anbieter:
+
+        * **P0** — jeder Anbieter.
+        * **P1** — nur mit Zero-Retention-Vereinbarung.
+        * **P2** — nur nach ausdrücklicher Freigabe je Domäne.
+        * **P3** — nie (steht darüber, strukturell und ohne diese Prüfung).
+
+        **``zero_retention`` war ein Vertragsfeld ohne Leser.** Es stand seit
+        dem ersten Entwurf in ``ModelCapability`` und wurde von nichts geprüft
+        — dasselbe Muster wie ``ToolSpec.supports_undo`` vor dem Undo-Weg und
+        ``ToolSpec.parameters`` vor der Schemaprüfung. Die brauchbare Frage bei
+        jeder deklarierten Einschränkung ist nicht „steht sie da?", sondern
+        **„wer liest sie, und wer prüft dagegen?"**. Ab hier: dieser Block.
+
+        **P2 wird abgewiesen, obwohl das Dokument eine Freigabe vorsieht.** Den
+        Weg, sie zu erteilen, gibt es nicht: keine Tabelle, keine Route, kein
+        Bildschirm. Ein Katalogeintrag, der P2 behauptet, wäre damit eine
+        Freigabe, die niemand erteilt hat — und die Vorgabe des Dokuments ist
+        „standardmäßig lokal". Wer die Freigabe baut, hebt diese Zeile auf und
+        setzt an ihre Stelle die Prüfung, ob sie vorliegt.
+
+        Die Prüfung steht **hier** und nicht nur im Katalog, aus demselben
+        Grund wie bei P3: Der Katalog ist Konfiguration und kann falsch gesetzt
+        sein; ein Tippfehler darf keine Daten außer Haus geben.
+        """
+        if data_class is DataClass.P0:
+            return
+
+        if data_class is DataClass.P2:
+            raise ModelNotPermitted(
+                f"{data_class} geht nur nach ausdrücklicher Freigabe an einen fremden "
+                f"Anbieter, und es gibt keinen Weg, sie zu erteilen; {modell.name!r} "
+                f"läuft bei {modell.provider}.",
+                code="cloud-needs-explicit-release",
+            )
+
+        if not modell.zero_retention:
+            raise ModelNotPermitted(
+                f"{data_class} geht an einen fremden Anbieter nur mit "
+                f"Zero-Retention-Zusage; für {modell.name!r} ist keine hinterlegt.",
+                code="cloud-needs-zero-retention",
+            )
 
     def capabilities_of(self, model_name: str) -> tuple[ModelCapability, LLMProvider] | None:
         """Katalogeintrag und Adapter — für die Oberfläche, nicht für Entscheidungen."""

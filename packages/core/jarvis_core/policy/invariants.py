@@ -740,6 +740,26 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.providers.gateway",
     ),
     Invariant(
+        id="cloud-limited-to-p1-with-zero-retention",
+        title="Ein fremder Anbieter sieht höchstens P1 — und P1 nur ohne Vorhaltung",
+        statement=(
+            "Ein Modell, das nicht auf diesem Gerät läuft, erreicht P0 immer, P1 nur mit "
+            "hinterlegter Zero-Retention-Zusage, P2 nur nach ausdrücklicher Freigabe und "
+            "P3 nie. Geprüft wird beim Aufruf, nicht nur im Katalog."
+        ),
+        why=(
+            "Bis zum ersten fremden Anbieter war die Tabelle aus docs/00-uebersicht.md §8 "
+            "eine Absichtserklärung: zero_retention stand in ModelCapability und wurde von "
+            "nichts gelesen — dasselbe Muster wie supports_undo vor dem Undo-Weg. Ein "
+            "Katalog ist Konfiguration und kann falsch gesetzt sein; die Prüfung gehört "
+            "deshalb an dieselbe Stelle wie die für P3. Für P2 sieht das Dokument eine "
+            "Freigabe je Domäne vor, die es nicht gibt — solange sie fehlt, gilt die "
+            "Vorgabe des Dokuments: standardmäßig lokal."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.providers.gateway",
+    ),
+    Invariant(
         id="model-tool-calls-are-proposals",
         title="Ein Modell schlägt vor, es ordnet nicht an",
         statement=(

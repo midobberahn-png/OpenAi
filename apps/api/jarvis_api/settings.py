@@ -55,6 +55,39 @@ class Settings(BaseSettings):
     """Gehen als Gewichte in die Modellwahl ein. Geschätzte Werte sind
     zulässig — das Routing ist deterministisch, nicht exakt."""
 
+    # -- Fremde Anbieter ---------------------------------------------------
+    #
+    # **Ohne Schlüssel und ohne Modellnamen gibt es keinen Eintrag im
+    # Katalog.** Beides ist Absicht und nicht Bequemlichkeit: Ein Vorgabewert
+    # für den Modellnamen wäre eine Behauptung dieses Repositorys darüber, was
+    # es bei einem Anbieter gerade gibt — und ein Katalogeintrag, den niemand
+    # aufrufen kann, führt das Routing in die Irre. Es wählte ein Modell und
+    # scheiterte danach.
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    anthropic_model: str = Field(default="", alias="ANTHROPIC_MODEL")
+    anthropic_context_window: int = Field(default=128_000, alias="ANTHROPIC_CONTEXT_WINDOW")
+    anthropic_p50_latency_ms: int = Field(default=2_000, alias="ANTHROPIC_P50_LATENCY_MS")
+
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    openai_model: str = Field(default="", alias="OPENAI_MODEL")
+    openai_context_window: int = Field(default=128_000, alias="OPENAI_CONTEXT_WINDOW")
+    openai_p50_latency_ms: int = Field(default=2_000, alias="OPENAI_P50_LATENCY_MS")
+
+    cloud_zero_retention: Annotated[list[str], NoDecode] = Field(
+        default_factory=list, alias="CLOUD_ZERO_RETENTION"
+    )
+    """Anbieter, für die eine Zero-Retention-Vereinbarung **vorliegt**.
+
+    Kommagetrennt, etwa ``anthropic,openai``. Leer heißt: keine — und dann
+    sieht ein fremder Anbieter ausschließlich P0 (docs/00-uebersicht.md §8,
+    durchgesetzt im Model Gateway).
+
+    **Diese Angabe beschreibt einen Vertrag, sie misst ihn nicht.** Dieselbe
+    Bauart wie ``is_local``: Wer hier einen Anbieter einträgt, ohne die
+    Vereinbarung zu haben, hebelt die Zusage aus, ohne dass eine Prüfung
+    anschlägt. Deshalb ist die Vorgabe leer und nicht „vertrauen wir mal".
+    """
+
     files_allowed_roots: Annotated[list[str], NoDecode] = Field(
         default_factory=list, alias="FILES_ALLOWED_ROOTS"
     )
@@ -96,7 +129,13 @@ class Settings(BaseSettings):
         """
         return self.env != "development"
 
-    @field_validator("webauthn_origins", "trusted_proxies", "files_allowed_roots", mode="before")
+    @field_validator(
+        "webauthn_origins",
+        "trusted_proxies",
+        "files_allowed_roots",
+        "cloud_zero_retention",
+        mode="before",
+    )
     @classmethod
     def _split_origins(cls, value: object) -> object:
         """Kommagetrennt aus der Umgebung, Liste im Code.

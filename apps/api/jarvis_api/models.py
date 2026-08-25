@@ -14,10 +14,23 @@ laufen.** Erst die Routing-Entscheidung hält fest, was das tatsächlich gewähl
 Modell verarbeiten darf, und erst dann ist die Obergrenze eine Aussage über die
 Wirklichkeit statt eine Vorsichtsannahme.
 
-**Was hier steht, ist ehrlich klein.** Ein lokales Modell über Ollama. Das ist
-das einzige, das wir tatsächlich haben; Anthropic und OpenAI fehlen noch. Ein
-Katalog mit erfundenen Cloud-Modellen sähe reicher aus und führte das Routing
-in die Irre: Es würde ein Modell wählen, das niemand aufrufen kann.
+**Was hier steht, ist genau das, was dieses Deployment aufrufen kann.** Das
+lokale Modell über Ollama steht immer im Katalog; Anthropic und OpenAI stehen
+darin **nur, wenn Schlüssel und Modellname konfiguriert sind**. Ein Katalog mit
+erfundenen Cloud-Modellen sähe reicher aus und führte das Routing in die Irre:
+Es würde ein Modell wählen, das niemand aufrufen kann.
+
+Deshalb gibt es auch keinen Vorgabewert für die Modellnamen. Was es bei einem
+Anbieter gerade gibt, weiß die Konfiguration und nicht dieses Repository — ein
+geratener Name führte zu einem Katalogeintrag, der bei jedem Aufruf mit 404
+scheitert, und zwar erst nach der Modellwahl.
+
+**Und die Obergrenze eines fremden Anbieters ist nicht verhandelbar.** P0
+immer, P1 nur mit hinterlegter Zero-Retention-Zusage, P2 gar nicht (die
+Freigabe je Domäne aus docs/00-uebersicht.md §8 gibt es nicht), P3 nie. Was
+hier gesetzt wird, ist die *Beschreibung*; durchgesetzt wird sie im Model
+Gateway, weil dieser Katalog Konfiguration ist und ein Tippfehler keine Daten
+außer Haus geben darf.
 
 **Warum ein lokales Modell P3 führen darf.** ``max_data_class=P3`` ist keine
 Großzügigkeit, sondern die Definition: P3 verlässt das Gerät nie — verarbeiten
@@ -42,7 +55,7 @@ def model_catalog(settings: Settings) -> tuple[ModelCapability, ...]:
     derselben Stelle mit einer Meldung, die nach einem Fehler aussieht statt
     nach fehlender Konfiguration.
     """
-    return (
+    katalog: list[ModelCapability] = [
         ModelCapability(
             name=settings.ollama_model,
             provider="ollama",
@@ -50,5 +63,51 @@ def model_catalog(settings: Settings) -> tuple[ModelCapability, ...]:
             context_window=settings.ollama_context_window,
             p50_latency_ms=settings.ollama_p50_latency_ms,
             is_local=True,
+        )
+    ]
+
+    for anbieter, modell, fenster, latenz in (
+        (
+            "anthropic",
+            settings.anthropic_model,
+            settings.anthropic_context_window,
+            settings.anthropic_p50_latency_ms,
         ),
-    )
+        (
+            "openai",
+            settings.openai_model,
+            settings.openai_context_window,
+            settings.openai_p50_latency_ms,
+        ),
+    ):
+        if not modell or not _schluessel(settings, anbieter):
+            continue
+        ohne_vorhaltung = anbieter in settings.cloud_zero_retention
+        katalog.append(
+            ModelCapability(
+                name=modell,
+                provider=anbieter,
+                # Ohne Zusage bleibt es bei P0. Das ist keine Vorsicht, sondern
+                # die Tabelle: P1 verlangt eine Zero-Retention-Vereinbarung.
+                max_data_class=DataClass.P1 if ohne_vorhaltung else DataClass.P0,
+                context_window=fenster,
+                p50_latency_ms=latenz,
+                zero_retention=ohne_vorhaltung,
+                is_local=False,
+            )
+        )
+
+    return tuple(katalog)
+
+
+def _schluessel(settings: Settings, anbieter: str) -> str:
+    """Der Schlüssel eines Anbieters — und sonst gibt dieses Modul keinen aus.
+
+    Er wird hier **nur auf Anwesenheit** geprüft. Gebraucht wird er in
+    ``providers.py``; ein Katalog, der Schlüssel weiterreichte, hätte einen
+    Grund, sie zu kennen, den er nicht hat.
+    """
+    return {
+        "anthropic": settings.anthropic_api_key,
+        "openai": settings.openai_api_key,
+    }.get(anbieter, "")

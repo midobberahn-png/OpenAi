@@ -12,6 +12,8 @@ Zwei Regeln gelten für jeden Adapter hier:
    macht aus einem Ausfall eine Erfindung (docs/04-orchestrator.md §9).
 """
 
+from .anthropic import AnthropicProvider
 from .ollama import OllamaProvider
+from .openai import OpenAIProvider
 
-__all__ = ["OllamaProvider"]
+__all__ = ["AnthropicProvider", "OllamaProvider", "OpenAIProvider"]

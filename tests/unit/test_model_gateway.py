@@ -69,6 +69,28 @@ eine Zeile in einer Datei, ``is_local`` eine Eigenschaft des Deployments.
 """
 
 
+CLOUD_OHNE_VORHALTUNG = ModelCapability(
+    name="cloud-p1-ohne-zusage",
+    provider="anbieter_a",
+    max_data_class=DataClass.P1,
+    context_window=200_000,
+    is_local=False,
+)
+"""Ein Cloud-Modell, das P1 führt — ohne hinterlegte Zero-Retention-Zusage.
+
+Die Lage, die vor dieser Regel unbemerkt durchging: ``zero_retention`` stand im
+Vertrag und wurde von nichts gelesen."""
+
+CLOUD_MIT_VORHALTUNG = ModelCapability(
+    name="cloud-p1-mit-zusage",
+    provider="anbieter_a",
+    max_data_class=DataClass.P1,
+    context_window=200_000,
+    zero_retention=True,
+    is_local=False,
+)
+
+
 class NotierenderProvider:
     """Merkt sich, was er zu sehen bekommen hat.
 
@@ -273,3 +295,96 @@ class TestVerbrauch:
         felder = set(ModelUsage.model_fields)
         for verboten in ("prompt", "text", "messages", "content", "response"):
             assert verboten not in felder
+
+
+class TestGrenzeDerWolke:
+    """Was ein Anbieter sehen darf, der nicht auf diesem Gerät läuft.
+
+    Die Tabelle aus docs/00-uebersicht.md §8 hatte bis zum ersten fremden
+    Anbieter keinen Leser. Sie lautet: P0 immer, P1 nur mit
+    Zero-Retention-Zusage, P2 nur nach ausdrücklicher Freigabe, P3 nie.
+
+    Der Nachweis ist wie überall in dieser Suite die **Null**: Der Adapter darf
+    die Daten nicht einmal im Speicher gehabt haben.
+    """
+
+    @pytest.mark.invariant("cloud-limited-to-p1-with-zero-retention")
+    async def test_p0_geht_an_jeden_anbieter(self) -> None:
+        gateway, provider = _gateway(LOKAL, CLOUD_OHNE_VORHALTUNG)
+
+        await gateway.complete(_anfrage("cloud-p1-ohne-zusage"), data_class=DataClass.P0)
+
+        assert len(provider["anbieter_a"].gesehen) == 1
+
+    @pytest.mark.invariant("cloud-limited-to-p1-with-zero-retention")
+    async def test_p1_ohne_zusage_erreicht_den_anbieter_nicht(self) -> None:
+        """Der Fall, für den ``zero_retention`` im Vertrag steht.
+
+        Ohne diese Prüfung war das Feld eine Absichtserklärung — dasselbe
+        Muster wie ``supports_undo`` vor dem Undo-Weg.
+        """
+        gateway, provider = _gateway(LOKAL, CLOUD_OHNE_VORHALTUNG)
+
+        with pytest.raises(ModelNotPermitted) as abgelehnt:
+            await gateway.complete(_anfrage("cloud-p1-ohne-zusage"), data_class=DataClass.P1)
+
+        assert abgelehnt.value.code == "cloud-needs-zero-retention"
+        assert provider["anbieter_a"].gesehen == []
+
+    @pytest.mark.invariant("cloud-limited-to-p1-with-zero-retention")
+    async def test_p1_mit_zusage_geht_durch(self) -> None:
+        """Die Gegenprobe, und sie ist der wichtigere Test.
+
+        Eine Regel, die den zugesagten Normalfall blockiert, wird abgeschaltet
+        — dieselbe Lehre wie beim Sanitization-Gate.
+        """
+        gateway, provider = _gateway(LOKAL, CLOUD_MIT_VORHALTUNG)
+
+        await gateway.complete(_anfrage("cloud-p1-mit-zusage"), data_class=DataClass.P1)
+
+        assert len(provider["anbieter_a"].gesehen) == 1
+
+    @pytest.mark.invariant("cloud-limited-to-p1-with-zero-retention")
+    async def test_p2_erreicht_keinen_fremden_anbieter(self) -> None:
+        """Auch dann nicht, wenn der Katalog es zulässt.
+
+        Das Dokument sieht für P2 eine Freigabe je Domäne vor. Den Weg, sie zu
+        erteilen, gibt es nicht — und solange er fehlt, gilt die Vorgabe des
+        Dokuments: standardmäßig lokal. Ein Katalogeintrag wäre sonst eine
+        Freigabe, die niemand erteilt hat.
+        """
+        gateway, provider = _gateway(LOKAL, CLOUD_P2)
+
+        with pytest.raises(ModelNotPermitted) as abgelehnt:
+            await gateway.complete(_anfrage("cloud-stark"), data_class=DataClass.P2)
+
+        assert abgelehnt.value.code == "cloud-needs-explicit-release"
+        assert provider["anbieter_b"].gesehen == []
+
+    @pytest.mark.invariant("cloud-limited-to-p1-with-zero-retention")
+    async def test_ein_lokales_modell_bleibt_unberuehrt(self) -> None:
+        """Die Regel gilt der Wolke, nicht der Datenklasse.
+
+        Ohne diese Gegenprobe wäre der Test darüber auch dann grün, wenn P2
+        überall scheiterte — und der lokale Pfad, für den die
+        Klassifikation gebaut ist, wäre zu.
+        """
+        gateway, provider = _gateway(LOKAL)
+
+        await gateway.complete(_anfrage("llama-3.1-8b"), data_class=DataClass.P3)
+
+        assert len(provider["ollama"].gesehen) == 1
+
+    @pytest.mark.invariant("cloud-limited-to-p1-with-zero-retention")
+    async def test_auch_der_strom_prueft_vor_dem_ersten_stueck(self) -> None:
+        """Ein Strom, dessen Zulässigkeit sich nach dem dritten Token
+        herausstellt, hat die Daten schon übertragen."""
+        gateway, provider = _gateway(LOKAL, CLOUD_OHNE_VORHALTUNG)
+
+        with pytest.raises(ModelNotPermitted):
+            async for _ in gateway.stream(
+                _anfrage("cloud-p1-ohne-zusage"), data_class=DataClass.P1
+            ):
+                pass
+
+        assert provider["anbieter_a"].gesehen == []
