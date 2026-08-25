@@ -572,16 +572,13 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 ### Bekannte kleinere Mängel
 
 - `PostgresApprovalStore.open_for_user()` hat ein N+1. Vor der UI zu beheben.
-- **Rauschen im Browserlauf, jetzt lauter:** Seit dem Hauptbuch kommen zu den
-  `RunNotStored`-Tracebacks Fremdschlüsselverletzungen auf `model_calls` —
-  dieselbe Ursache, ein Lauf, dessen Nutzer der nächste Test schon geräumt hat.
-  Für einen gelöschten Lauf ist das Scheitern **richtig**; für die Lesbarkeit
-  des Protokolls bleibt es schlecht.
-- **Rauschen im Browserlauf:** Der Server protokolliert je Durchgang zweimal
-  `RunNotStored` samt Traceback. Der Chat treibt einen Lauf weiter, während
-  `frischesSystem()` des nächsten Tests die Nutzer bereits geräumt hat. Kein
-  Fehlschlag — aber ein Traceback, der regelmäßig und folgenlos erscheint,
-  verdeckt den nächsten, der es nicht ist.
+- ~~**Rauschen im Browserlauf.**~~ **Behoben** (25.08.2026, §8 Abschnitt 8).
+  Die Diagnose in diesen beiden Einträgen stimmte — „ein Lauf, dessen Nutzer
+  der nächste Test schon geräumt hat" —, und sie stand hier zweimal, ohne dass
+  jemand die Folgerung zog. Gemessen vor der Änderung: sechs
+  Fremdschlüsselverletzungen und zwei ASGI-Ausnahmen je Durchgang; danach
+  keine. `RunNotStored` kam schon vorher nicht mehr vor — dieser Teil des
+  Eintrags war veraltet.
 - `test_invariant_coverage.py` sammelt Marker per AST-Scan über `tests/`.
 - Der Modellmodus von `advance` macht **einen** Versuch. Liefert das Modell
   keinen Werkzeugaufruf, endet der Schritt mit 409 und der Nutzer kann die
@@ -1238,32 +1235,49 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   (wie lange darf ein Schritt dauern) und `DEFAULT_IDLE` (wie lange darf ein
   Lauf stillstehen). Die Gegenprobe ist der wichtigere Test — ein Lauf, den die
   Oberfläche gerade treibt, bleibt unberührt.
-* **Eine Fremdschlüsselverletzung im Browserlauf — neu und ungeklärt**
-  (25.08.2026). Bei jedem `make gate` erscheint im API-Protokoll während der
-  Browserdurchstiche mindestens einmal:
+* ~~Eine Fremdschlüsselverletzung im Browserlauf.~~ **Geklärt und behoben.**
 
-  ```
-  INSERT INTO model_calls (…) — Key (run_id)=(…) is not present in table "runs"
-  ```
+  **Vorweg eine Berichtigung an meiner eigenen Notiz:** Ich hatte das hier als
+  „neuen Befund" eingetragen. Es war keiner — dasselbe Rauschen stand längst
+  unter „Bekannte kleinere Mängel" in §6, mit der richtigen Ursache. Ein
+  Dossier, das 1750 Zeilen lang ist, wird an einer Stelle gelesen und an einer
+  anderen ergänzt; wer etwas als neu einträgt, sucht vorher.
 
-  Immer mit `purpose='response'`, immer `ollama`. **Zweimal von zwei
-  Gate-Läufen reproduziert**, im zweiten dreimal. Alle 21 Browsertests bestehen
-  trotzdem — der Fehler wird protokolliert und erreicht die Oberfläche nicht.
+  Bei jedem `make gate` standen **sechs** Tracebacks im Protokoll
+  (`ForeignKeyViolationError` auf `model_calls.run_id`), bei 21 grünen
+  Browsertests. Gemessen statt vermutet: Es waren immer genau **zwei** Läufe,
+  jeder dreimal, und beide existierten hinterher nicht mehr.
 
-  Was das bedeutet, ist **noch nicht gemessen**, und deshalb steht es hier als
-  Befund und nicht als Diagnose. Sicher ist nur: Diese Hauptbuchzeile ist nicht
-  entstanden. `ModelGateway._buchen()` sagt in seinem Docstring ausdrücklich
-  „Fehler schlagen durch — ein verschluckter Schreibfehler wäre ein Loch in der
-  Abrechnung"; irgendwo zwischen dort und dem Request fängt sie jemand.
-  Kandidaten sind die drei `except BaseException` in `advance.py`.
+  **`frischesSystem()` löscht vor jedem Test `DELETE FROM users`**, und die
+  Kaskade nimmt die Läufe mit. Der Chat-Durchstich endet aber absichtlich,
+  *während* der Lauf noch arbeitet („ohne laufendes Modell bleibt der Lauf
+  stehen" — mit laufendem Modell formuliert er weiter). Der nächste Test räumte
+  ihm damit die Welt unter den Füßen weg, und die Hauptbuchzeile des noch
+  laufenden Modellaufrufs fand ihren Fremdschlüssel nicht mehr.
 
-  Was **ausgeschlossen** ist: Es liegt nicht an der Kettenprüfung dieses Blocks
-  (die rührt weder Läufe noch Hauptbuch an), und es ist keine Aufräumfixture —
-  die Browsertests löschen nichts, es gibt keinen Löschendpunkt für Nutzer.
-  Wer weitermacht, startet `make gate-web` allein und sieht dem einen Lauf zu;
-  in einem vollen Gate ist die Datenbank hinterher schon wieder leergeräumt,
-  und dann lässt sich nichts mehr nachsehen. Das hat mich hier eine Runde
-  gekostet.
+  **Die Anwendung war nicht schuld, und das ist der interessante Teil.**
+  `ModelGateway._buchen()` sagt zu, dass Schreibfehler durchschlagen — genau
+  das tat es, der Request endete mit 500. Verschluckt wurde nichts. Und im
+  Betrieb gibt es den Zustand nicht: Einen Endpunkt, der Nutzer löscht, gibt es
+  bewusst nicht.
+
+  Behoben im Aufräumskript: **Wer die Welt löscht, wartet, bis niemand mehr an
+  einem Schritt arbeitet.** Die Bedingung dafür war schon da — der Anspruch.
+  Ein *frischer* Anspruch heißt „wird gerade bearbeitet"; der absichtlich
+  hängengelassene Lauf trägt seinen eine Stunde alt und hält niemanden auf.
+  Geduld ist gedeckelt (5 s), danach wird trotzdem gelöscht: Ein Aufräumskript,
+  das hängen bleiben kann, ist der schlechtere Tausch.
+
+  **Und der Beweis dafür steht nicht im Gate-Protokoll.** Playwright ruft das
+  Skript mit `stdio: "pipe"` auf und verwirft dessen Ausgabe — ob dort je
+  gewartet wurde, ist dort nicht abzulesen. Zwei stille Durchgänge nach der
+  Änderung sind deshalb **kein** Beweis; sie können auch heißen, dass gerade
+  niemand gearbeitet hat. Der Beweis ist `tests/integration/test_e2e_reset.py`:
+  frischer Anspruch → es wird gewartet, alter Anspruch → nicht.
+
+  Zwei Kleinigkeiten kosteten je einen Versuch: `::interval` kollidiert in
+  `text()` mit der Bindesyntax (`CAST(:x AS interval)`), und asyncpg bindet ein
+  Intervall nur aus einem `timedelta`, nicht aus `'1 hour'`.
 
 * **Ein Flackern im Browsertest.** Einmal in etwa dreißig Durchgängen scheiterte
   die Anmeldung in `laufdetail.spec.ts` („nicht angemeldet" nach 20 s). Die
