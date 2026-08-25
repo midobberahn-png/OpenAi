@@ -842,6 +842,24 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="core.audit.chain",
     ),
     Invariant(
+        id="audit-chain-break-is-detected",
+        title="Ein Bruch wird gefunden, ohne dass jemand nachsieht",
+        statement=(
+            "Der Arbeiter rechnet die ganze Kette in eigenem Takt nach. Ein Bruch hält "
+            "ihn an und steht danach als Eintrag in der Kette, die er betrifft."
+        ),
+        why=(
+            "'Erkennbar' ist keine Erkennung. Die Nachrechnung stand, der Endpunkt stand "
+            "— und sein einziger Aufrufer war niemand: Wer 'GET /audit/verify' nie "
+            "aufruft, merkt eine Manipulation nie. Eine Prüfung ohne Folge wäre dieselbe "
+            "Lücke eine Ebene weiter, deshalb hört der Arbeiter auf zu wirken. Ein Bruch "
+            "heißt, dass jemand an der Anwendung vorbei an der Datenbank war; wer das "
+            "kann, kann auch Berechtigungen setzen und Bestätigungen fälschen (ADR-018)."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.audit.watch",
+    ),
+    Invariant(
         id="audit-survives-erasure",
         title="Löschpflicht und Kette schließen sich nicht aus",
         statement=(

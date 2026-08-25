@@ -46,6 +46,7 @@ from jarvis_api.settings import Settings
 from jarvis_api.tools import file_reader_for, tool_catalog
 from jarvis_contracts import Run
 from jarvis_core.agents import AgentRuntime, AgentStepSource
+from jarvis_core.audit import DEFAULT_AUDIT_INTERVAL, ChainReport, ChainWatch
 from jarvis_core.auth import SessionManager
 from jarvis_core.orchestrator import (
     DEFAULT_IDLE,
@@ -61,7 +62,7 @@ from jarvis_core.orchestrator import (
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
 from jarvis_integrations.web import HttpWebFetcher
 
-__all__ = ["DEFAULT_INTERVALL", "run_forever", "worker_for"]
+__all__ = ["DEFAULT_INTERVALL", "chain_watch_for", "durchgang", "run_forever", "worker_for"]
 
 DEFAULT_INTERVALL = timedelta(minutes=1)
 """Wie oft nachgesehen wird.
@@ -160,29 +161,69 @@ def worker_for(
     )
 
 
+def chain_watch_for(
+    engine: AsyncEngine, *, intervall: timedelta = DEFAULT_AUDIT_INTERVAL
+) -> ChainWatch:
+    """Der Prüfer der Audit-Kette (ADR-018).
+
+    ``PostgresAuditSink`` erfüllt den Port ``ChainInspector`` — lesen,
+    nachrechnen, anfügen. Dass dieselbe Klasse daneben als ``AuditSink`` im
+    Executor steckt, ist kein Widerspruch: Der Executor **hält** den schmaleren
+    Port und kann deshalb nicht lesen, auch wenn das Objekt es könnte.
+    """
+    return ChainWatch(PostgresAuditSink(engine), intervall=intervall)
+
+
+async def durchgang(kette: ChainWatch, arbeiter: RunWorker) -> None:
+    """Ein Takt: erst nachrechnen, dann — vielleicht — wirken.
+
+    Steht hier und nicht in der Schleife, weil es eine **Entscheidung** ist:
+    Nach einem Kettenbruch findet kein Laufdurchgang mehr statt (ADR-018). In
+    einer Schleife wäre dieselbe Zeile nicht prüfbar, ohne den Prozess laufen
+    zu lassen — und was nicht geprüft wird, gilt nicht.
+
+    Die Reihenfolge ist die Zusage: Ist die Prüfung fällig, läuft sie **vor**
+    dem Durchgang. Ein Halt, der erst danach greift, käme einen Durchgang zu
+    spät, und in diesem einen Durchgang ist das Wirken schon geschehen.
+    """
+    if kette.faellig():
+        _melden_kette(await kette.pruefen())
+    if kette.darf_wirken:
+        _melden(await arbeiter.sweep())
+
+
 async def run_forever(
     engine: AsyncEngine,
     settings: Settings,
     *,
     intervall: timedelta = DEFAULT_INTERVALL,
     lease: timedelta = DEFAULT_LEASE,
+    audit_intervall: timedelta = DEFAULT_AUDIT_INTERVAL,
 ) -> None:
-    """Durchgang, warten, wiederholen — bis jemand abbricht.
+    """Prüfen, Durchgang, warten, wiederholen — bis jemand abbricht.
 
     Ein Durchgang, der scheitert, beendet die Schleife **nicht**: Der Zweck
     dieses Prozesses ist, dass er da ist, wenn etwas hängt. Ein Arbeiter, der
     sich beim ersten Datenbankfehler beendet, ist genau dann weg, wenn er
     gebraucht wird.
+
+    **Die Kettenprüfung steht vor dem Durchgang und nicht daneben.** Ein Fund
+    hält den Arbeiter an (ADR-018), und ein Halt, der erst nach dem Wirken
+    greift, wäre einen Durchgang zu spät. Scheitert die Prüfung selbst, wird in
+    diesem Takt nicht gewirkt: Wer nicht nachrechnen kann, hat keinen Grund
+    anzunehmen, dass die Kette hält.
     """
     _log.info(
-        "Arbeiter gestartet: Takt %ss, Frist %ss",
+        "Arbeiter gestartet: Takt %ss, Frist %ss, Kettenprüfung alle %ss",
         int(intervall.total_seconds()),
         int(lease.total_seconds()),
+        int(audit_intervall.total_seconds()),
     )
     arbeiter = worker_for(engine, settings, lease=lease)
+    kette = chain_watch_for(engine, intervall=audit_intervall)
     while True:
         try:
-            _melden(await arbeiter.sweep())
+            await durchgang(kette, arbeiter)
         except asyncio.CancelledError:
             _log.info("Arbeiter beendet.")
             raise
@@ -207,3 +248,31 @@ def _melden(bericht: SweepReport) -> None:
     )
     for ergebnis in bericht.ergebnisse:
         _log.info("  %s → %s: %s", ergebnis.run_id, ergebnis.outcome, ergebnis.detail)
+
+
+def _melden_kette(bericht: ChainReport) -> None:
+    """Was die Kettenprüfung ergeben hat.
+
+    Anders als beim Laufdurchgang bleibt der stille Fall hier **nicht** still:
+    Eine Prüfung, die im Erfolgsfall nichts hinterlässt, ist von einer Prüfung,
+    die gar nicht läuft, nicht zu unterscheiden — und genau diese Verwechslung
+    ist der Grund, warum es dieses Modul gibt. Sie läuft stündlich, nicht
+    minütlich; das ist bezahlbar.
+    """
+    if bericht.unversehrt:
+        _log.info("Audit-Kette unversehrt, %d Einträge geprüft.", bericht.geprueft)
+        return
+
+    for bruch in bericht.brueche:
+        _log.error("Audit-Kette gebrochen: %s", bruch)
+    _log.error(
+        "Der Arbeiter wirkt ab jetzt nicht mehr: %d Bruch/Brüche in %d Einträgen "
+        "(ADR-018). Ein Bruch heißt, dass jemand an der Anwendung vorbei an der "
+        "Datenbank war.",
+        len(bericht.brueche),
+        bericht.geprueft,
+    )
+    if bericht.melde_fehler is not None:
+        _log.error(
+            "Der Fund konnte nicht in die Kette geschrieben werden: %s", bericht.melde_fehler
+        )

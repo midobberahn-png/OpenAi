@@ -13,6 +13,12 @@ Zwei Umgebungsvariablen neben den üblichen:
     JARVIS_WORKER_LEASE      Sekunden, ab denen ein Anspruch überfällig ist
                              (Vorgabe 900 — und die Vorgabe ist die richtige
                              Größenordnung, siehe ``DEFAULT_LEASE``)
+    JARVIS_AUDIT_INTERVAL    Sekunden zwischen zwei Kettenprüfungen
+                             (Vorgabe 3600, ADR-018)
+
+Was es **nicht** gibt, ist ein Schalter, der den Halt nach einem Kettenbruch
+aufhebt. Die Begründung steht in ADR-018: Er wäre die erste Zeile, die jemand
+setzt, wenn der Betrieb klemmt — und genau dann ist die Meldung ernst.
 
 Die Frist ist eine **Obergrenze für die Dauer eines Schrittes** und keine
 Zeitüberschreitung: Die Übernahme sperrt den alten Arbeiter vom Schreiben aus,
@@ -31,6 +37,7 @@ from datetime import timedelta
 from jarvis_api.db.session import engine_for
 from jarvis_api.settings import get_settings
 from jarvis_api.worker import DEFAULT_INTERVALL, run_forever
+from jarvis_core.audit import DEFAULT_AUDIT_INTERVAL
 from jarvis_core.orchestrator import DEFAULT_LEASE
 
 
@@ -54,6 +61,7 @@ async def main() -> None:
             settings,
             intervall=_sekunden("JARVIS_WORKER_INTERVAL", DEFAULT_INTERVALL),
             lease=_sekunden("JARVIS_WORKER_LEASE", DEFAULT_LEASE),
+            audit_intervall=_sekunden("JARVIS_AUDIT_INTERVAL", DEFAULT_AUDIT_INTERVAL),
         )
     finally:
         await engine.dispose()

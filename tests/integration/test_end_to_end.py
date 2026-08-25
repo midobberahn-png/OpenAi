@@ -126,9 +126,13 @@ class DbPermissions:
 class ChainAudit:
     """Audit-Senke mit echter Hash-Verkettung.
 
-    Die Postgres-Implementierung fehlt noch (siehe HANDOFF §6); die Verkettung
-    selbst ist aber Kernlogik und wird hier mitgeprüft — sonst bliebe der
+    Die Verkettung ist Kernlogik und wird hier mitgeprüft — sonst bliebe der
     letzte Schritt der Kette im Test eine Behauptung.
+
+    **Warum trotzdem eine Attrappe:** Die Postgres-Fassung gibt es seit
+    ``a67dd30`` (dieser Docstring führte sie noch bis 25.08.2026 als fehlend).
+    Diese Suite prüft den Ablauf und nicht die Persistenz; wer die echte Senke
+    im Betrieb sehen will, findet sie in ``tests/integration/test_audit_kette.py``.
     """
 
     def __init__(self) -> None:

@@ -29,6 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.db.audit_store import PostgresAuditSink
+from jarvis_core.audit import CHAIN_BREAK_ACTION, ChainWatch
 from jarvis_core.audit.chain import AuditEntry
 from jarvis_core.clock import utc_now
 from tests.integration.test_http_runs import _angemeldet
@@ -321,3 +322,88 @@ class TestDerWegZumNachrechnen:
         antworten = [await client.get("/audit"), await client.get("/audit/verify")]
 
         assert [a.status_code for a in antworten] == [401, 401]
+
+
+class TestNiemandMussNachsehen:
+    """Die Prüfung läuft von selbst — und der Fund hat eine Folge (ADR-018).
+
+    Die Suite darüber belegt, dass ein Eingriff **erkennbar** ist. Erkannt
+    wurde er trotzdem von niemandem: ``verify()`` hatte genau einen Aufrufer,
+    einen Endpunkt ohne Oberfläche und ohne Anlass. Diese Klasse prüft den
+    Weg, der daraus eine Erkennung macht.
+    """
+
+    @pytest.mark.invariant("audit-chain-break-is-detected")
+    async def test_der_pruefer_findet_den_eingriff_und_haelt_den_arbeiter_an(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Echte Zeile, echter Eingriff, echter Halt — keine Attrappe im Weg.
+
+        Aufgeräumt wird wie oben: Die Kette ist global, und ein Bruch, den
+        dieser Test zurückließe, fiele allen folgenden Prüfungen zur Last.
+        """
+        senke = PostgresAuditSink(engine)
+        for i in range(3):
+            await senke.append(_eintrag(i))
+
+        async with engine.begin() as conn:
+            mitte, vorher = (
+                await conn.execute(
+                    text("SELECT id, action FROM audit_log ORDER BY id DESC LIMIT 1 OFFSET 1")
+                )
+            ).one()
+
+        wache = ChainWatch(senke)
+        try:
+            await _am_trigger_vorbei(
+                engine, "UPDATE audit_log SET action = 'harmlos' WHERE id = :i", {"i": mitte}
+            )
+
+            assert wache.darf_wirken, "Vor der Prüfung darf nichts angehalten sein."
+            bericht = await wache.pruefen()
+
+            assert not bericht.unversehrt
+            assert any(b.row_id == mitte for b in bericht.brueche)
+            assert bericht.geprueft >= 3
+            assert not wache.darf_wirken, (
+                "Der Fund blieb folgenlos — dann ist die Prüfung nur eine Meldung."
+            )
+
+            assert bericht.gemeldet
+            async with engine.begin() as conn:
+                zeile = (
+                    await conn.execute(
+                        text(
+                            "SELECT actor, action, details FROM audit_log ORDER BY id DESC LIMIT 1"
+                        )
+                    )
+                ).one()
+            assert zeile.action == CHAIN_BREAK_ACTION
+            assert zeile.actor == "scheduler"
+            assert mitte in zeile.details["zeilen"]
+        finally:
+            await _am_trigger_vorbei(
+                engine,
+                "UPDATE audit_log SET action = :a WHERE id = :i",
+                {"i": mitte, "a": vorher},
+            )
+
+        assert await senke.verify() == [], (
+            "Der angefügte Fund darf die Kette nicht selbst brechen: Anfügen verkettet "
+            "sich auf den gespeicherten letzten Hash, gleich was davor steht."
+        )
+
+    async def test_eine_unversehrte_kette_hinterlaesst_keinen_eintrag(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Die Gegenprobe. Ein Prüfer, der stündlich schreibt, macht das
+        Audit-Log zu seinem eigenen Rauschen."""
+        senke = PostgresAuditSink(engine)
+        await senke.append(_eintrag(0))
+        vorher = await senke.count()
+
+        bericht = await ChainWatch(senke).pruefen()
+
+        assert bericht.unversehrt
+        assert not bericht.gemeldet
+        assert await senke.count() == vorher
