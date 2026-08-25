@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 58/59**
+**Security Invariant Coverage: 59/60**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -61,6 +61,7 @@ nicht nachträglich passend machen.
 | `data-class-hard-filter` | Datenklassifikation ist ein hartes Filter | Ein Kontext, der eine Klasse nicht zulässt, führt kein Werkzeug dieser Klasse aus. | `core.policy.engine` |
 | `unattended-runs-are-stricter` | Unbeaufsichtigte Läufe sind strenger | Automationen bestätigen schreibende Aktionen, auch wenn das Recht erteilt ist. | `core.policy.engine` |
 | `model-never-sees-excess-data-class` | Ein Anbieter sieht nie Daten oberhalb seiner Zulassung | Eine Anfrage erreicht einen Anbieteradapter nur, wenn dessen Modell für die Datenklasse zugelassen ist; P3 erreicht ausschließlich lokale Modelle. | `core.providers.gateway` |
+| `cloud-limited-to-p1-with-zero-retention` | Ein fremder Anbieter sieht höchstens P1 — und P1 nur ohne Vorhaltung | Ein Modell, das nicht auf diesem Gerät läuft, erreicht P0 immer, P1 nur mit hinterlegter Zero-Retention-Zusage, P2 nur nach ausdrücklicher Freigabe und P3 nie. Geprüft wird beim Aufruf, nicht nur im Katalog. | `core.providers.gateway` |
 | `model-tool-calls-are-proposals` | Ein Modell schlägt vor, es ordnet nicht an | Werkzeugaufrufe aus einer Modellantwort tragen keine Erlaubnis: Der Vertragstyp führt weder Risiko noch Scope noch Bestätigung, und jeder Vorschlag durchläuft Policy Engine und Ausführungs-Gate wie jede andere Absicht. | `contracts.llm` |
 | `orchestrator-consumes-decisions` | Der Orchestrator entscheidet nichts über Sicherheit | Der Orchestrator fragt die Policy Engine und das Ausführungs-Gate; er bildet keine eigene Meinung darüber, ob etwas erlaubt ist. | `core.orchestrator` |
 | `agent-chain-preserves-capability-binding` | Delegationsketten erweitern keine Rechte | Über beliebig viele Agentenstufen hinweg bleibt die Rechtemenge die Schnittmenge aller beteiligten Whitelists mit den Nutzerrechten. | `core.agents` |

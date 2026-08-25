@@ -4724,6 +4724,11 @@
           "title": "Structured Output",
           "type": "boolean"
         },
+        "temperature_control": {
+          "default": true,
+          "title": "Temperature Control",
+          "type": "boolean"
+        },
         "token_counting": {
           "default": false,
           "title": "Token Counting",
