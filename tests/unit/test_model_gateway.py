@@ -25,8 +25,11 @@ from jarvis_contracts import (
     ModelUsage,
     ProposedToolCall,
     ProviderCapabilities,
+    RunBudget,
+    StreamChunk,
     TaintLevel,
 )
+from jarvis_core.orchestrator.budget import BudgetTracker
 from jarvis_core.providers import ModelGateway, ModelNotPermitted
 
 pytestmark = pytest.mark.security
@@ -46,6 +49,7 @@ CLOUD_P1 = ModelCapability(
     max_data_class=DataClass.P1,
     context_window=200_000,
     cost_per_1m_in=Decimal("0.30"),
+    cost_per_1m_out=Decimal("1.50"),
 )
 
 CLOUD_P2 = ModelCapability(
@@ -53,6 +57,8 @@ CLOUD_P2 = ModelCapability(
     provider="anbieter_b",
     max_data_class=DataClass.P2,
     context_window=1_000_000,
+    cost_per_1m_in=Decimal("3.00"),
+    cost_per_1m_out=Decimal("15.00"),
 )
 
 FEHLKONFIGURIERT = ModelCapability(
@@ -60,6 +66,8 @@ FEHLKONFIGURIERT = ModelCapability(
     provider="anbieter_b",
     max_data_class=DataClass.P3,
     context_window=200_000,
+    cost_per_1m_in=Decimal("3.00"),
+    cost_per_1m_out=Decimal("15.00"),
     is_local=False,
 )
 """Ein Cloud-Modell, das in der Konfiguration versehentlich P3 führt.
@@ -74,6 +82,8 @@ CLOUD_OHNE_VORHALTUNG = ModelCapability(
     provider="anbieter_a",
     max_data_class=DataClass.P1,
     context_window=200_000,
+    cost_per_1m_in=Decimal("0.30"),
+    cost_per_1m_out=Decimal("1.50"),
     is_local=False,
 )
 """Ein Cloud-Modell, das P1 führt — ohne hinterlegte Zero-Retention-Zusage.
@@ -86,6 +96,9 @@ CLOUD_MIT_VORHALTUNG = ModelCapability(
     provider="anbieter_a",
     max_data_class=DataClass.P1,
     context_window=200_000,
+    cost_per_1m_in=Decimal("0.30"),
+    cost_per_1m_out=Decimal("1.50"),
+    cost_per_1m_cached_in=Decimal("0.03"),
     zero_retention=True,
     is_local=False,
 )
@@ -388,3 +401,238 @@ class TestGrenzeDerWolke:
                 pass
 
         assert provider["anbieter_a"].gesehen == []
+
+
+class TestKostenrechnung:
+    """Was ein Aufruf kostet — und wer es ausrechnet.
+
+    Die Rechnung steht im Katalogeintrag und wird vom Gateway angewandt. Nicht
+    im Adapter: Ein Adapter mit Preisliste führte eine zweite Wahrheit über
+    Preise, und sie veraltete beim nächsten Anbieterrundbrief. Nicht im
+    Budget-Tracker: Der kennt die Preise nicht.
+    """
+
+    async def test_der_verbrauch_bekommt_seinen_preis(self) -> None:
+        antwort = CompletionResult(
+            text="fertig",
+            provider="anbieter_a",
+            usage=ModelUsage(tokens_in=1_000_000, tokens_out=1_000_000),
+        )
+        gateway = ModelGateway(
+            {"anbieter_a": NotierenderProvider("anbieter_a", antwort=antwort)}, [CLOUD_P1]
+        )
+
+        ergebnis = await gateway.complete(_anfrage("cloud-fast"), data_class=DataClass.P0)
+
+        # 0,30 € je Million ein, 1,50 € je Million aus.
+        assert ergebnis.usage.cost_eur == Decimal("1.80")
+
+    async def test_aus_dem_cache_gelesene_tokens_haben_ihren_eigenen_preis(self) -> None:
+        """Getrennt geführt, weil sie anders abgerechnet werden."""
+        antwort = CompletionResult(
+            text="fertig",
+            provider="anbieter_a",
+            usage=ModelUsage(tokens_in=0, cached_tokens_in=1_000_000, tokens_out=0),
+        )
+        gateway = ModelGateway(
+            {"anbieter_a": NotierenderProvider("anbieter_a", antwort=antwort)},
+            [CLOUD_MIT_VORHALTUNG],
+        )
+
+        ergebnis = await gateway.complete(_anfrage("cloud-p1-mit-zusage"), data_class=DataClass.P1)
+
+        assert ergebnis.usage.cost_eur == Decimal("0.03")
+
+    async def test_ohne_eigenen_cachepreis_gilt_der_volle_eingabepreis(self) -> None:
+        """Die vorsichtige Richtung: zu früh anhalten ist ärgerlich, zu spät
+        kostet Geld."""
+        antwort = CompletionResult(
+            text="fertig",
+            provider="anbieter_a",
+            usage=ModelUsage(cached_tokens_in=1_000_000),
+        )
+        gateway = ModelGateway(
+            {"anbieter_a": NotierenderProvider("anbieter_a", antwort=antwort)}, [CLOUD_P1]
+        )
+
+        ergebnis = await gateway.complete(_anfrage("cloud-fast"), data_class=DataClass.P0)
+
+        assert ergebnis.usage.cost_eur == Decimal("0.30")
+
+    async def test_ein_lokales_modell_kostet_nichts(self) -> None:
+        """Keine Schönfärberei: Der Kostenzähler begrenzt Ausgaben an Dritte.
+        Ihn mit geschätzten Stromkosten zu füllen, machte das Budget
+        unschärfer, nicht ehrlicher."""
+        antwort = CompletionResult(
+            text="fertig", provider="ollama", usage=ModelUsage(tokens_in=500, tokens_out=500)
+        )
+        gateway = ModelGateway({"ollama": NotierenderProvider("ollama", antwort=antwort)}, [LOKAL])
+
+        ergebnis = await gateway.complete(_anfrage(), data_class=DataClass.P3)
+
+        assert ergebnis.usage.cost_eur == Decimal("0")
+
+    async def test_was_ein_adapter_ueber_kosten_meldet_gilt_nicht(self) -> None:
+        """Überschrieben, nicht addiert — wie bei ``taints_context``.
+
+        Ein Adapter, der Preise erfindet, kann damit weder das Budget
+        aufblähen noch es leerlaufen lassen.
+        """
+        antwort = CompletionResult(
+            text="fertig",
+            provider="anbieter_a",
+            usage=ModelUsage(tokens_in=1_000_000, cost_eur=Decimal("99.99")),
+        )
+        gateway = ModelGateway(
+            {"anbieter_a": NotierenderProvider("anbieter_a", antwort=antwort)}, [CLOUD_P1]
+        )
+
+        ergebnis = await gateway.complete(_anfrage("cloud-fast"), data_class=DataClass.P0)
+
+        assert ergebnis.usage.cost_eur == Decimal("0.30")
+
+
+class TestOhnePreisKeinAufruf:
+    """Ein Aufruf, dessen Preis niemand kennt, verletzt kein Budget — und hält
+    damit auch keines ein."""
+
+    async def test_ein_fremder_anbieter_ohne_preis_wird_abgewiesen(self) -> None:
+        ohne_preis = ModelCapability(
+            name="cloud-ohne-preis",
+            provider="anbieter_a",
+            max_data_class=DataClass.P0,
+            context_window=200_000,
+            is_local=False,
+        )
+        gateway, provider = _gateway(LOKAL, ohne_preis)
+
+        with pytest.raises(ModelNotPermitted) as abgelehnt:
+            await gateway.complete(_anfrage("cloud-ohne-preis"), data_class=DataClass.P0)
+
+        assert abgelehnt.value.code == "model-has-no-price"
+        assert provider["anbieter_a"].gesehen == []
+
+    async def test_ein_halber_preis_genuegt_nicht(self) -> None:
+        """Eingabe ohne Ausgabe ist eine Rechnung, die nur die Hälfte zählt."""
+        halb = ModelCapability(
+            name="cloud-halb",
+            provider="anbieter_a",
+            max_data_class=DataClass.P0,
+            context_window=200_000,
+            cost_per_1m_in=Decimal("0.30"),
+            is_local=False,
+        )
+        gateway, _ = _gateway(LOKAL, halb)
+
+        with pytest.raises(ModelNotPermitted) as abgelehnt:
+            await gateway.complete(_anfrage("cloud-halb"), data_class=DataClass.P0)
+
+        assert abgelehnt.value.code == "model-has-no-price"
+
+    async def test_das_lokale_modell_braucht_keinen(self) -> None:
+        """Die Gegenprobe, und sie ist die wichtigere: Eine Preispflicht, die
+        den lokalen Pfad sperrt, schlösse genau den Weg, für den die
+        Datenklassifikation gebaut ist."""
+        gateway, provider = _gateway(LOKAL)
+
+        await gateway.complete(_anfrage(), data_class=DataClass.P3)
+
+        assert len(provider["ollama"].gesehen) == 1
+
+
+class StroemenderProvider:
+    """Ein Adapter, der Stücke liefert — samt Verbrauch im letzten."""
+
+    def __init__(self, name: str, *, usage: ModelUsage) -> None:
+        self._name = name
+        self._usage = usage
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities()
+
+    async def complete(self, request: CompletionRequest) -> CompletionResult:  # pragma: no cover
+        raise NotImplementedError
+
+    async def stream(self, request: CompletionRequest):
+        yield StreamChunk(delta="Es ist ")
+        yield StreamChunk(delta="14 Uhr.")
+        yield StreamChunk(usage=self._usage)
+
+    async def count_tokens(self, request: CompletionRequest) -> int:  # pragma: no cover
+        return 0
+
+
+class TestDerStromKostetAuch:
+    async def test_das_verbrauchsstueck_bekommt_seinen_preis(self) -> None:
+        """Der Antwortschritt streamt seit ``c17d112`` **immer**.
+
+        Ohne diese Zeile wäre ausgerechnet der Aufruf umsonst, bei dem ein
+        Mensch zusieht — und das Kostenbudget zählte nur die Argumentaufrufe.
+        """
+        gateway = ModelGateway(
+            {
+                "anbieter_a": StroemenderProvider(
+                    "anbieter_a", usage=ModelUsage(tokens_in=1_000_000, tokens_out=1_000_000)
+                )
+            },
+            [CLOUD_P1],
+        )
+
+        stuecke = [s async for s in gateway.stream(_anfrage("cloud-fast"), data_class=DataClass.P0)]
+
+        assert "".join(s.delta for s in stuecke) == "Es ist 14 Uhr."
+        assert stuecke[-1].usage is not None
+        assert stuecke[-1].usage.cost_eur == Decimal("1.80")
+
+
+class TestDieKetteBisZumBudget:
+    """Die Zusage aus docs/04-orchestrator.md §7: „Überschreitung beendet den
+    Lauf sauber mit Teilergebnis."
+
+    Sie hat drei Glieder — Preis im Katalog, Rechnung im Gateway, Zähler im
+    Tracker —, und bis zu diesem Block fehlte das erste. Der Zähler zählte,
+    und er zählte immer null.
+    """
+
+    async def test_ein_teurer_aufruf_reisst_die_kostengrenze(self) -> None:
+        antwort = CompletionResult(
+            text="fertig",
+            provider="anbieter_a",
+            usage=ModelUsage(tokens_in=1_000_000, tokens_out=1_000_000),
+        )
+        gateway = ModelGateway(
+            {"anbieter_a": NotierenderProvider("anbieter_a", antwort=antwort)}, [CLOUD_P1]
+        )
+        # Das Token-Budget wird hochgesetzt, damit die **Kosten**grenze
+        # gemessen wird: ``exceeds()`` meldet die erste gerissene Schranke, und
+        # zwei Millionen Tokens rissen sonst zuerst die Tokengrenze — der Test
+        # wäre grün gewesen, ohne die Rechnung zu prüfen.
+        tracker = BudgetTracker(RunBudget(max_tokens=10_000_000, max_cost_eur=Decimal("0.50")))
+        assert tracker.exceeded() is None
+
+        ergebnis = await gateway.complete(_anfrage("cloud-fast"), data_class=DataClass.P0)
+        tracker.record_model_call(
+            tokens_in=ergebnis.usage.tokens_in,
+            tokens_out=ergebnis.usage.tokens_out,
+            cost_eur=ergebnis.usage.cost_eur,
+        )
+
+        grund = tracker.exceeded()
+        assert grund is not None and "Kostengrenze" in grund
+
+    async def test_derselbe_aufruf_ohne_preis_haette_nichts_gemerkt(self) -> None:
+        """Die Gegenprobe misst, was vorher galt.
+
+        Ohne Preis im Katalog kostete derselbe Verbrauch null, und die
+        Kostengrenze blieb unberührt — die Grenze war eine Statistik.
+        """
+        tracker = BudgetTracker(RunBudget(max_tokens=10_000_000, max_cost_eur=Decimal("0.50")))
+        tracker.record_model_call(tokens_in=1_000_000, tokens_out=1_000_000)
+
+        grund = tracker.exceeded()
+        assert grund is None or "Kostengrenze" not in grund

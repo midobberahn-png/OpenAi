@@ -3515,6 +3515,22 @@
           "title": "Context Window",
           "type": "integer"
         },
+        "cost_per_1m_cached_in": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Per 1M Cached In"
+        },
         "cost_per_1m_in": {
           "anyOf": [
             {

@@ -25,6 +25,12 @@ Anbieter gerade gibt, weiß die Konfiguration und nicht dieses Repository — ei
 geratener Name führte zu einem Katalogeintrag, der bei jedem Aufruf mit 404
 scheitert, und zwar erst nach der Modellwahl.
 
+**Ohne Preis kein Eintrag.** Dritte Bedingung neben Schlüssel und Modellname,
+und dieselbe Frage aus einer weiteren Richtung: Ein Modell, dessen Kosten
+niemand kennt, macht aus der Kostengrenze eines Laufs eine Statistik. Die
+Preise stehen in der Konfiguration und nicht hier — eine Preisliste im
+Quelltext ist beim nächsten Anbieterrundbrief falsch, und niemand merkt es.
+
 **Und die Obergrenze eines fremden Anbieters ist nicht verhandelbar.** P0
 immer, P1 nur mit hinterlegter Zero-Retention-Zusage, P2 gar nicht (die
 Freigabe je Domäne aus docs/00-uebersicht.md §8 gibt es nicht), P3 nie. Was
@@ -40,6 +46,8 @@ sie ist bewusst eine Aussage über das Deployment, nicht über die Konfiguration
 """
 
 from __future__ import annotations
+
+from decimal import Decimal
 
 from jarvis_api.settings import Settings
 from jarvis_contracts import DataClass, ModelCapability
@@ -66,38 +74,66 @@ def model_catalog(settings: Settings) -> tuple[ModelCapability, ...]:
         )
     ]
 
-    for anbieter, modell, fenster, latenz in (
-        (
-            "anthropic",
-            settings.anthropic_model,
-            settings.anthropic_context_window,
-            settings.anthropic_p50_latency_ms,
-        ),
-        (
-            "openai",
-            settings.openai_model,
-            settings.openai_context_window,
-            settings.openai_p50_latency_ms,
-        ),
-    ):
-        if not modell or not _schluessel(settings, anbieter):
-            continue
-        ohne_vorhaltung = anbieter in settings.cloud_zero_retention
-        katalog.append(
-            ModelCapability(
-                name=modell,
-                provider=anbieter,
-                # Ohne Zusage bleibt es bei P0. Das ist keine Vorsicht, sondern
-                # die Tabelle: P1 verlangt eine Zero-Retention-Vereinbarung.
-                max_data_class=DataClass.P1 if ohne_vorhaltung else DataClass.P0,
-                context_window=fenster,
-                p50_latency_ms=latenz,
-                zero_retention=ohne_vorhaltung,
-                is_local=False,
-            )
-        )
+    for anbieter in ("anthropic", "openai"):
+        eintrag = _fremdes_modell(settings, anbieter)
+        if eintrag is not None:
+            katalog.append(eintrag)
 
     return tuple(katalog)
+
+
+def _fremdes_modell(settings: Settings, anbieter: str) -> ModelCapability | None:
+    """Ein Cloud-Modell — oder ``None``, wenn es nicht vollständig ist.
+
+    **Drei Bedingungen, und alle drei sind dieselbe Frage:** Lässt sich dieses
+    Modell aufrufen (Schlüssel), weiß jemand, wie es heißt (Modellname), und
+    weiß jemand, was es kostet (Preise)? Fehlt eines davon, steht es nicht im
+    Katalog — denn das Routing wählt daraus, und ein Eintrag, der beim Aufruf
+    scheitert oder dessen Kosten niemand zählt, ist schlimmer als keiner.
+    """
+    modell = {"anthropic": settings.anthropic_model, "openai": settings.openai_model}[anbieter]
+    if not modell or not _schluessel(settings, anbieter):
+        return None
+
+    preis_ein, preis_aus, preis_cache = _preise(settings, anbieter)
+    if preis_ein <= 0 or preis_aus <= 0:
+        return None
+
+    ohne_vorhaltung = anbieter in settings.cloud_zero_retention
+    fenster, latenz = (
+        (settings.anthropic_context_window, settings.anthropic_p50_latency_ms)
+        if anbieter == "anthropic"
+        else (settings.openai_context_window, settings.openai_p50_latency_ms)
+    )
+    return ModelCapability(
+        name=modell,
+        provider=anbieter,
+        # Ohne Zusage bleibt es bei P0. Das ist keine Vorsicht, sondern
+        # die Tabelle: P1 verlangt eine Zero-Retention-Vereinbarung.
+        max_data_class=DataClass.P1 if ohne_vorhaltung else DataClass.P0,
+        context_window=fenster,
+        p50_latency_ms=latenz,
+        cost_per_1m_in=preis_ein,
+        cost_per_1m_out=preis_aus,
+        cost_per_1m_cached_in=preis_cache,
+        zero_retention=ohne_vorhaltung,
+        is_local=False,
+    )
+
+
+def _preise(settings: Settings, anbieter: str) -> tuple[Decimal, Decimal, Decimal | None]:
+    """Euro je einer Million Tokens — Eingabe, Ausgabe, aus dem Cache gelesen."""
+    if anbieter == "anthropic":
+        return (
+            settings.anthropic_cost_per_1m_in,
+            settings.anthropic_cost_per_1m_out,
+            settings.anthropic_cost_per_1m_cached_in,
+        )
+    return (
+        settings.openai_cost_per_1m_in,
+        settings.openai_cost_per_1m_out,
+        settings.openai_cost_per_1m_cached_in,
+    )
 
 
 def _schluessel(settings: Settings, anbieter: str) -> str:

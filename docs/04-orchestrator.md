@@ -208,6 +208,15 @@ Standardwerte je Auslöser:
 
 Zusätzlich ein **Tagesbudget pro Nutzer**. Bei 80 % Warnung in der UI, bei 100 % nur noch lokale Modelle. Ohne diese Grenze ist eine fehlerhafte Agentenschleife ein finanzielles Risiko, kein Bug.
 
+**Stand 25.08.2026.** Das Laufbudget greift, und seit `models.py`/`gateway.py` Preise führen, greift auch die Kostengrenze: Der Katalogeintrag kennt `cost_per_1m_in`, `cost_per_1m_out` und optional `cost_per_1m_cached_in`, das Model Gateway rechnet nach jedem Aufruf und schreibt das Ergebnis in `ModelUsage.cost_eur`, der `BudgetTracker` summiert. Davor war die Kostengrenze eine Statistik — der Zähler zählte, und er zählte immer null.
+
+Zwei Festlegungen dazu:
+
+- **Ohne Preis kein Aufruf.** Ein Modell eines fremden Anbieters ohne hinterlegten Preis steht nicht im Katalog, und das Gateway weist es zusätzlich ab (`model-has-no-price`). Für lokale Modelle gilt das nicht: Sie kosten Strom, keine Rechnung, und ein erfundener Preis machte das Budget unschärfer statt ehrlicher.
+- **Die Preise stehen in der Konfiguration**, nicht im Quelltext — eine Preisliste im Repository ist beim nächsten Anbieterrundbrief falsch, und niemand merkt es. Der Katalog beschreibt das Deployment; er ruft keine Preisliste ab.
+
+**Das Tagesbudget ist weiterhin nicht gebaut.** Es bräuchte einen Zähler über Läufe hinweg (Tabelle oder Redis), eine Prüfung vor der Modellwahl und die Herabstufung auf lokale Modelle bei 100 %. `JARVIS_DAILY_BUDGET_EUR` stand in `.env.example` und wurde von nichts gelesen; die Zeile ist entfernt, weil ein Schalter ohne Wirkung schlechter ist als keiner.
+
 ---
 
 ## 8. Stufe 6 — Verifikation

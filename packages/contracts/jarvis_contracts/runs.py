@@ -305,6 +305,56 @@ class ModelCapability(BaseModel):
     supports_vision: bool = False
     cost_per_1m_in: Decimal = Decimal("0")
     cost_per_1m_out: Decimal = Decimal("0")
+    cost_per_1m_cached_in: Decimal | None = None
+    """Preis für Eingabetokens, die aus dem Prompt-Cache gelesen wurden.
+
+    ``None`` heißt **nicht**„kostenlos", sondern „wie ``cost_per_1m_in``". Das
+    ist die vorsichtige Richtung: Ein Budget, das zu hoch rechnet, hält zu früh
+    an; eines, das zu niedrig rechnet, hält zu spät — und dann ist das Geld weg.
+
+    **Alle drei Preise sind Euro je einer Million Tokens**, und sie sind
+    Konfiguration. Wer Dollarpreise einträgt, misst in Dollar und nennt es
+    Euro; der Katalog beschreibt das Deployment, er ruft keine Preisliste ab."""
+
+    @property
+    def is_priced(self) -> bool:
+        """Ist bekannt, was ein Aufruf dieses Modells kostet?
+
+        Für ein lokales Modell ist ``False`` richtig und folgenlos: Es kostet
+        Strom, keine Rechnung. Für einen fremden Anbieter ist es der
+        Unterschied zwischen einer Grenze und einer Statistik — deshalb prüft
+        das Model Gateway es, bevor es einen fremden Anbieter aufruft.
+
+        Ein Preis von null gilt als „nicht konfiguriert" und nicht als
+        „kostenlos". Ein kostenloses Cloud-Modell gibt es nicht; ein
+        vergessener Eintrag schon.
+        """
+        return self.cost_per_1m_in > 0 and self.cost_per_1m_out > 0
+
+    def cost_for(self, *, tokens_in: int, tokens_out: int, cached_tokens_in: int = 0) -> Decimal:
+        """Was dieser Verbrauch kostet — in Euro.
+
+        Die Rechnung steht **hier** und nicht im Adapter: Ein Adapter, der
+        Preise mitbrächte, führte eine zweite Wahrheit darüber, und die
+        veraltet, sobald ein Anbieter seine Liste ändert. Sie steht auch nicht
+        im Budget-Tracker, der die Preise gar nicht kennt.
+
+        ``cached_tokens_in`` ist **zusätzlich** zu ``tokens_in`` zu verstehen,
+        nicht darin enthalten — die Adapter rechnen beides auseinander, weil
+        die Anbieter es unterschiedlich melden.
+        """
+        aus_cache = (
+            self.cost_per_1m_cached_in
+            if self.cost_per_1m_cached_in is not None
+            else self.cost_per_1m_in
+        )
+        gesamt = (
+            Decimal(tokens_in) * self.cost_per_1m_in
+            + Decimal(cached_tokens_in) * aus_cache
+            + Decimal(tokens_out) * self.cost_per_1m_out
+        )
+        return gesamt / Decimal(1_000_000)
+
     p50_latency_ms: int = 800
     zero_retention: bool = False
     is_local: bool = False

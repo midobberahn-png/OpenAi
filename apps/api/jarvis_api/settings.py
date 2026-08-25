@@ -9,6 +9,7 @@ Aufhebung genau dieser Eigenschaft — deshalb ist er Konfiguration.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated
 
@@ -67,11 +68,37 @@ class Settings(BaseSettings):
     anthropic_model: str = Field(default="", alias="ANTHROPIC_MODEL")
     anthropic_context_window: int = Field(default=128_000, alias="ANTHROPIC_CONTEXT_WINDOW")
     anthropic_p50_latency_ms: int = Field(default=2_000, alias="ANTHROPIC_P50_LATENCY_MS")
+    anthropic_cost_per_1m_in: Decimal = Field(
+        default=Decimal("0"), alias="ANTHROPIC_COST_PER_1M_IN"
+    )
+    anthropic_cost_per_1m_out: Decimal = Field(
+        default=Decimal("0"), alias="ANTHROPIC_COST_PER_1M_OUT"
+    )
+    anthropic_cost_per_1m_cached_in: Decimal | None = Field(
+        default=None, alias="ANTHROPIC_COST_PER_1M_CACHED_IN"
+    )
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="", alias="OPENAI_MODEL")
     openai_context_window: int = Field(default=128_000, alias="OPENAI_CONTEXT_WINDOW")
     openai_p50_latency_ms: int = Field(default=2_000, alias="OPENAI_P50_LATENCY_MS")
+    openai_cost_per_1m_in: Decimal = Field(default=Decimal("0"), alias="OPENAI_COST_PER_1M_IN")
+    openai_cost_per_1m_out: Decimal = Field(default=Decimal("0"), alias="OPENAI_COST_PER_1M_OUT")
+    openai_cost_per_1m_cached_in: Decimal | None = Field(
+        default=None, alias="OPENAI_COST_PER_1M_CACHED_IN"
+    )
+    """Preise in **Euro je einer Million Tokens**.
+
+    Ohne sie entsteht kein Katalogeintrag — dieselbe Bedingung wie Schlüssel
+    und Modellname, und aus demselben Grund: Ein Modell, dessen Kosten niemand
+    kennt, macht aus der Kostengrenze eines Laufs eine Statistik. Der Preis
+    steht in der Konfiguration und nicht im Repository, weil eine Preisliste im
+    Quelltext beim nächsten Anbieterrundbrief falsch ist und niemand es merkt.
+
+    ``*_CACHED_IN`` ist optional; ohne Angabe werden aus dem Cache gelesene
+    Tokens zum vollen Eingabepreis verbucht. Das ist die vorsichtige Richtung:
+    zu früh anhalten ist ärgerlich, zu spät kostet Geld.
+    """
 
     cloud_zero_retention: Annotated[list[str], NoDecode] = Field(
         default_factory=list, alias="CLOUD_ZERO_RETENTION"

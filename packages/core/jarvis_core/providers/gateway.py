@@ -30,6 +30,7 @@ from jarvis_contracts import (
     CompletionResult,
     DataClass,
     ModelCapability,
+    ModelUsage,
     StreamChunk,
     TaintLevel,
 )
@@ -88,7 +89,12 @@ class ModelGateway:
             )
 
         ergebnis = await provider.complete(request)
-        return ergebnis.model_copy(update={"taints_context": self._kontaminiert(request, taint)})
+        return ergebnis.model_copy(
+            update={
+                "taints_context": self._kontaminiert(request, taint),
+                "usage": self._bepreist(modell, ergebnis.usage),
+            }
+        )
 
     async def stream(
         self,
@@ -127,7 +133,36 @@ class ModelGateway:
             )
 
         async for stueck in provider.stream(request):
-            yield stueck
+            # **Auch der Strom kostet.** Der Antwortschritt streamt seit
+            # ``c17d112`` immer; ohne diese Zeile wäre ausgerechnet der Aufruf
+            # umsonst, bei dem ein Mensch zusieht.
+            if stueck.usage is None:
+                yield stueck
+            else:
+                yield stueck.model_copy(update={"usage": self._bepreist(modell, stueck.usage)})
+
+    @staticmethod
+    def _bepreist(modell: ModelCapability, verbrauch: ModelUsage) -> ModelUsage:
+        """Schreibt die Kosten in den Verbrauch.
+
+        **Hier und nicht im Adapter**, aus demselben Grund wie die
+        Kontamination: Das Gateway kennt den Katalogeintrag, der Adapter kennt
+        nur Text und Zahlen. Ein Adapter mit Preisliste führte eine zweite
+        Wahrheit über Preise, und sie veraltete beim nächsten Anbieterrundbrief.
+
+        Ein bereits gesetzter Wert wird **überschrieben** und nicht addiert —
+        wie bei ``taints_context``: Was ein Adapter darüber meldet, kann so
+        weder zu viel noch zu wenig anrichten.
+        """
+        return verbrauch.model_copy(
+            update={
+                "cost_eur": modell.cost_for(
+                    tokens_in=verbrauch.tokens_in,
+                    tokens_out=verbrauch.tokens_out,
+                    cached_tokens_in=verbrauch.cached_tokens_in,
+                )
+            }
+        )
 
     @staticmethod
     def kontaminiert(request: CompletionRequest, taint: TaintLevel) -> bool:
@@ -228,7 +263,30 @@ class ModelGateway:
         Die Prüfung steht **hier** und nicht nur im Katalog, aus demselben
         Grund wie bei P3: Der Katalog ist Konfiguration und kann falsch gesetzt
         sein; ein Tippfehler darf keine Daten außer Haus geben.
+
+        **Und eine Prüfung, die keine Datenklasse betrifft, steht ebenfalls
+        hier:** ohne hinterlegten Preis kein Aufruf. Sie gehört an dieselbe
+        Stelle, weil sie dieselbe Form hat — eine Zusage des Systems, die ohne
+        Konfiguration leer läuft, statt laut zu scheitern.
         """
+        if not modell.is_priced:
+            # **Ein Aufruf, dessen Preis niemand kennt, verletzt kein Budget —
+            # und hält damit auch keines ein.** Das Budget eines Laufs ist eine
+            # Zusage (docs/04-orchestrator.md §7: „Überschreitung beendet den
+            # Lauf sauber"); ohne Preis zählt der Tracker bei jedem
+            # Cloud-Aufruf null, und die Kostengrenze schlägt nie an. Genau
+            # dieser Fall — eine fehlerhafte Agentenschleife — ist laut
+            # Dokument „ein finanzielles Risiko, kein Bug".
+            #
+            # Für lokale Modelle gilt die Prüfung nicht: Sie kosten Strom,
+            # keine Rechnung, und ein erfundener Preis machte das Budget
+            # unschärfer statt ehrlicher.
+            raise ModelNotPermitted(
+                f"Für {modell.name!r} ist kein Preis hinterlegt; ohne ihn kann das "
+                "Kostenbudget nicht gelten.",
+                code="model-has-no-price",
+            )
+
         if data_class is DataClass.P0:
             return
 

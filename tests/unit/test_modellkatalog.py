@@ -23,6 +23,21 @@ from jarvis_contracts import DataClass
 pytestmark = pytest.mark.security
 
 
+PREISE_ANTHROPIC: dict[str, object] = {
+    "ANTHROPIC_COST_PER_1M_IN": "2.70",
+    "ANTHROPIC_COST_PER_1M_OUT": "13.50",
+}
+PREISE_OPENAI: dict[str, object] = {
+    "OPENAI_COST_PER_1M_IN": "2.00",
+    "OPENAI_COST_PER_1M_OUT": "8.00",
+}
+"""Beispielpreise in Euro je einer Million Tokens.
+
+Erfunden und als solche kenntlich: Der Katalog liest sie aus der
+Konfiguration, und dieser Test prüft die Mechanik, nicht die Preisliste eines
+Anbieters."""
+
+
 def _settings(**kw: object) -> Settings:
     """Konfiguration ohne Umgebung und ohne ``.env``.
 
@@ -59,20 +74,54 @@ class TestWasImKatalogSteht:
 
     def test_mit_schluessel_und_namen_steht_der_anbieter_drin(self) -> None:
         katalog = model_catalog(
-            _settings(ANTHROPIC_API_KEY="sk-test", ANTHROPIC_MODEL="claude-sonnet-5")
+            _settings(
+                ANTHROPIC_API_KEY="sk-test",
+                ANTHROPIC_MODEL="claude-sonnet-5",
+                **PREISE_ANTHROPIC,
+            )
         )
 
         eintrag = next(m for m in katalog if m.provider == "anthropic")
         assert eintrag.name == "claude-sonnet-5"
         assert eintrag.is_local is False
+        assert eintrag.is_priced is True
 
     def test_ohne_zusage_bleibt_ein_fremder_anbieter_bei_p0(self) -> None:
         """Die Obergrenze ist keine Vorsicht, sondern die Tabelle."""
-        katalog = model_catalog(_settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test"))
+        katalog = model_catalog(
+            _settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test", **PREISE_OPENAI)
+        )
 
         eintrag = next(m for m in katalog if m.provider == "openai")
         assert eintrag.max_data_class is DataClass.P0
         assert eintrag.zero_retention is False
+
+    def test_ohne_preis_gibt_es_keinen_eintrag(self) -> None:
+        """Die dritte Bedingung neben Schlüssel und Modellname.
+
+        Ein Modell, dessen Kosten niemand kennt, macht aus der Kostengrenze
+        eines Laufs eine Statistik: Der Tracker zählte bei jedem Aufruf null,
+        und ``max_cost_eur`` schlüge nie an.
+        """
+        ohne_preis = model_catalog(_settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test"))
+        nur_eingabe = model_catalog(
+            _settings(
+                OPENAI_API_KEY="sk-test",
+                OPENAI_MODEL="gpt-test",
+                OPENAI_COST_PER_1M_IN="2.00",
+            )
+        )
+
+        assert [m.provider for m in ohne_preis] == ["ollama"]
+        assert [m.provider for m in nur_eingabe] == ["ollama"]
+
+    def test_das_lokale_modell_braucht_keinen_preis(self) -> None:
+        """Es kostet Strom, keine Rechnung. Ein erfundener Preis machte das
+        Budget unschärfer statt ehrlicher."""
+        katalog = model_catalog(_settings())
+
+        assert katalog[0].is_local is True
+        assert katalog[0].is_priced is False
 
     def test_mit_zusage_darf_er_p1(self) -> None:
         katalog = model_catalog(
@@ -80,6 +129,7 @@ class TestWasImKatalogSteht:
                 OPENAI_API_KEY="sk-test",
                 OPENAI_MODEL="gpt-test",
                 CLOUD_ZERO_RETENTION="openai",
+                **PREISE_OPENAI,
             )
         )
 
@@ -96,6 +146,8 @@ class TestWasImKatalogSteht:
                 ANTHROPIC_API_KEY="sk-test",
                 ANTHROPIC_MODEL="claude-sonnet-5",
                 CLOUD_ZERO_RETENTION="anthropic",
+                **PREISE_OPENAI,
+                **PREISE_ANTHROPIC,
             )
         )
 
@@ -117,6 +169,8 @@ class TestWasImKatalogSteht:
                 ANTHROPIC_API_KEY="sk-test",
                 ANTHROPIC_MODEL="claude-sonnet-5",
                 CLOUD_ZERO_RETENTION="anthropic,openai",
+                **PREISE_OPENAI,
+                **PREISE_ANTHROPIC,
             )
         )
 
@@ -138,6 +192,8 @@ class TestKatalogUndAdapter:
             OPENAI_MODEL="gpt-test",
             ANTHROPIC_API_KEY="sk-test",
             ANTHROPIC_MODEL="claude-sonnet-5",
+            **PREISE_OPENAI,
+            **PREISE_ANTHROPIC,
         )
 
         adapter = provider_map(settings)
