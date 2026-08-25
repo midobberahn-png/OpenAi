@@ -1443,11 +1443,39 @@ hat es je ausgeliefert. `GET /runs/{id}` führt jetzt `model` und
 `model_reason`; ohne sie sähe ein Nutzer bei erschöpftem Budget eine
 schlechtere Antwort und keinen Grund.
 
-**Was offen bleibt:** Die Kosten stehen im Lauf und im Tagesstand, aber
-**nirgends je Modell oder je Anbieter** — die Frage „wofür ist das Geld
-draufgegangen?" beantwortet heute niemand. Dafür bräuchte es das Hauptbuch, das
-oben aus gutem Grund nicht gebaut wurde; die Abwägung wäre neu zu treffen,
-sobald jemand die Frage tatsächlich stellt.
+**Nachgeschärft nach einer Prüfung durch Codex** (25.08.2026). Zwei der drei
+Kostenbefunde waren berechtigt, einer heute folgenlos:
+
+* **Die Tagesgrenze war weich.** Geprüft wurde das **Verbuchte**, also durfte
+  bei 4,99 € von 5,00 € jeder weitere Lauf in die Wolke — und zehn davon gaben
+  zehn Laufbudgets aus. Die Notiz daneben („höchstens ein Laufbudget
+  Überschreitung") war zu großzügig; sie stammte von mir. Gerechnet wird
+  jetzt mit dem **Zugesagten**: Ein laufender Lauf zählt mit seinem
+  `max_cost_eur`, und weil ein angelegter Lauf sofort in der Datenbank steht,
+  bringt er sein Budget sofort in die Rechnung ein. Ohne zweite Tabelle —
+  Verbrauch, Zusage und Zustand stehen alle in `runs`. Was bleibt, ist ein
+  Wettlauf von der Breite eines Requests (zwei gleichzeitige Anlagen lesen
+  denselben Stand); eine Sperre je Nutzer schlösse ihn, und bis dahin ist er
+  genannt statt behauptet.
+* **Cache-Schreiben wurde nicht abgerechnet.** Gelesenes zählte, Geschriebenes
+  nicht — und bei Anthropic ist Schreiben *teurer* als gewöhnliche Eingabe.
+  Heute ist das Feld immer null, weil niemand `cache_control` setzt; sobald es
+  jemand einschaltet, hätte die Rechnung still zu niedrig gelegen. Neu:
+  `ModelUsage.cache_write_tokens_in`, ein eigener Preis, und ohne ihn gilt der
+  volle Eingabepreis — null wäre hier die falsche Richtung.
+* **Kosten nach Mitternacht fallen weiter auf den Tag des Laufbeginns.** Der
+  Befund stimmt und bleibt offen: Ein Lauf, der über Mitternacht weiterrechnet,
+  belastet den Vortag. Das ließe sich nur mit einem Zeitstempel **je Aufruf**
+  lösen — also mit dem Hauptbuch.
+
+**Was damit weiterhin offen ist — und es ist eine Frage, keine Aufgabe:** Die
+Kosten stehen im Lauf und im Tagesstand, aber **nirgends je Modell oder je
+Anbieter**. „Wofür ist das Geld draufgegangen?" beantwortet niemand, die
+Mitternachtsgrenze bleibt schief, und eine wirklich atomare Reservierung
+bräuchte ebenfalls eine eigene Zeile je Aufruf. Dreimal dieselbe Antwort —
+ein Hauptbuch. Dagegen stand und steht: eine zweite Wahrheit über denselben
+Sachverhalt. Wer sie baut, macht `runs.usage` zur **abgeleiteten** Sicht und
+belegt die Übereinstimmung mit einem Test.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
