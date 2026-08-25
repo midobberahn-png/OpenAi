@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiFehler } from "../api/client";
 import { useStrom } from "../api/strom";
 import type { LaufZeile } from "../api/typen";
+import { Antworttext } from "../teile/Antworttext";
 
 /**
  * Der Chat — ein Lauf je Wortwechsel.
@@ -14,10 +15,11 @@ import type { LaufZeile } from "../api/typen";
  * Oberfläche, die sich ihre Wahrheit aus Stücken zusammensetzt, driftet beim
  * ersten verpassten.
  *
- * **Und der Text wird als Text dargestellt.** Kein ``dangerouslySetInnerHTML``,
- * kein rohes HTML aus Modellausgaben (docs/10-ui.md §5). Eine per Datei oder
- * Mail eingeschleuste HTML-Injektion wäre sonst ein direkter Weg in eine
- * Anwendung mit Postfachzugriff. Markdown kommt später und ohne ``rehype-raw``.
+ * **Und kein rohes HTML aus Modellausgaben** (docs/10-ui.md §5). Die Antwort
+ * wird als Markdown dargestellt — ``react-markdown`` + ``remark-gfm``, ohne
+ * ``rehype-raw``, und ohne Bildabruf nach außen; die Begründungen stehen in
+ * ``Antworttext``. Eine per Datei oder Mail eingeschleuste HTML-Injektion wäre
+ * sonst ein direkter Weg in eine Anwendung mit Postfachzugriff.
  *
  * **Der Plan bleibt sichtbar.** Ein Chatfenster, das nur Text zeigt, verbirgt,
  * was das System tut; das Laufdetail bleibt einen Klick entfernt.
@@ -131,7 +133,10 @@ export function Chat({ oeffneLauf }: { oeffneLauf: (lauf: LaufZeile) => void }) 
               {lauf.goal ?? <span className="gedaempft">—</span>}
             </div>
             <div className="geantwortet" data-test="geantwortet">
-              {fliessend[lauf.id] ?? lauf.output ?? ""}
+              {/* Auch der Zwischenstand geht durch dieselbe Darstellung:
+                  Sonst spränge die Antwort beim letzten Stück von Text auf
+                  Markdown um. Unfertige Auszeichnung verträgt der Parser. */}
+              <Antworttext text={fliessend[lauf.id] ?? lauf.output ?? ""} />
               {lauf.finished_at === null && fliessend[lauf.id] === undefined && (
                 <span className="gedaempft">
                   {lauf.status === "awaiting_confirmation"

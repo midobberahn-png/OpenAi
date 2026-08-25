@@ -121,9 +121,30 @@ th { color: var(--gedaempft); font-weight: 500; font-size: 0.8rem; letter-spacin
 /* Gespräch: gesagt und geantwortet, ohne Sprechblasen-Kitsch. */
 .wortwechsel { border-left: 2px solid var(--linie); padding: 0.5rem 0 0.5rem 0.75rem; margin-bottom: 0.75rem; }
 .wortwechsel .gesagt { color: var(--akzent); margin-bottom: 0.35rem; }
-/* ``pre-wrap``: Der Text kommt aus einem Modell und bringt eigene Umbrüche
-   mit. Gerendert wird er als **Text** — kein HTML, keine Ausnahme. */
-.wortwechsel .geantwortet { white-space: pre-wrap; }
+/* Die Antwort ist Markdown (siehe ``Antworttext``). ``pre-wrap`` gilt deshalb
+   nicht mehr für den ganzen Block — Absätze bringt jetzt die Auszeichnung
+   mit, und wo keine ist, bleibt der Umbruch über ``remark-gfm`` erhalten. */
+.wortwechsel .geantwortet { white-space: normal; }
+
+/* Markdown im Chat. Bewusst schmal gehalten: Abstände, die einen Fließtext
+   lesbar machen, und eine Tabelle, die für sich scrollt statt die Spalte
+   auseinanderzuziehen. */
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown p, .markdown ul, .markdown ol, .markdown blockquote { margin: 0 0 0.5rem; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { margin: 0.75rem 0 0.35rem; font-size: 1rem; }
+.markdown ul, .markdown ol { padding-left: 1.25rem; }
+.markdown code { background: var(--flaeche); padding: 0.05rem 0.25rem; border-radius: 3px; font-size: 0.85em; }
+.markdown pre { background: var(--flaeche); padding: 0.6rem; border-radius: 4px; overflow-x: auto; }
+.markdown pre code { background: none; padding: 0; }
+.markdown blockquote { border-left: 2px solid var(--linie); padding-left: 0.6rem; color: var(--gedaempft); }
+.markdown table { border-collapse: collapse; }
+.markdown th, .markdown td { border: 1px solid var(--linie); padding: 0.2rem 0.45rem; text-align: left; }
+.markdown .tabellenrahmen { overflow-x: auto; margin-bottom: 0.5rem; }
+/* Ein Bild wird benannt, nicht geholt — die Begründung steht in
+   ``Antworttext``. Die Marke macht sichtbar, dass hier etwas fehlt. */
+.markdown .bildverweis { font-size: 0.85em; }
+.markdown .bildverweis::before { content: "🖼 "; }
 button.klein { font-size: 0.75rem; padding: 0.15rem 0.5rem; margin-top: 0.5rem; }
 
 /* Die Entscheidungskarte hebt sich ab, weil der Lauf ohne sie nicht
