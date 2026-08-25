@@ -18,6 +18,7 @@ Der Nachweis ist dabei zweierlei:
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 from typing import Any
 
@@ -102,7 +103,7 @@ class TestWasNichtAbgerufenWird:
         Verbunden würde danach mit irgendeiner der beiden — und die zweite ist
         das Loopback-Interface.
         """
-        with pytest.raises(WebAccessDenied, match="127.0.0.1"):
+        with pytest.raises(WebAccessDenied, match=re.escape("127.0.0.1")):
             adresse_pruefen("http://gemischt.example.test/")
 
     @pytest.mark.invariant("web-fetch-reaches-only-public-addresses")
@@ -162,7 +163,7 @@ class TestVorDerVerbindung:
         client = httpx.AsyncClient(transport=httpx.MockTransport(antworten))
         fetcher = HttpWebFetcher(client=client)
 
-        with pytest.raises(WebAccessDenied, match="169.254.169.254"):
+        with pytest.raises(WebAccessDenied, match=re.escape("169.254.169.254")):
             await fetcher.fetch("http://weiterleitung.example.test/", max_bytes=1000)
 
         assert ziele == ["http://weiterleitung.example.test/"], (
