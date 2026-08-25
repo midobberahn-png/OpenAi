@@ -198,6 +198,48 @@
         "title": "BootstrapRequest",
         "type": "object"
       },
+      "BudgetView": {
+        "description": "Der Tagesstand, wie ihn die Oberfläche zeigt.",
+        "properties": {
+          "exhausted": {
+            "title": "Exhausted",
+            "type": "boolean"
+          },
+          "limit_eur": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Limit Eur",
+            "type": "string"
+          },
+          "share": {
+            "title": "Share",
+            "type": "number"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          },
+          "spent_eur": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Spent Eur",
+            "type": "string"
+          },
+          "warning": {
+            "title": "Warning",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "spent_eur",
+          "limit_eur",
+          "since",
+          "share",
+          "warning",
+          "exhausted"
+        ],
+        "title": "BudgetView",
+        "type": "object"
+      },
       "CalendarRow": {
         "description": "Ein Termin, wie ihn die Oberfläche zeigt.",
         "properties": {
@@ -749,6 +791,28 @@
           "is_multi_step": {
             "title": "Is Multi Step",
             "type": "boolean"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "model_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Reason"
           },
           "needs_decision": {
             "default": false,
@@ -1649,6 +1713,28 @@
         "summary": "Revoke Session",
         "tags": [
           "auth"
+        ]
+      }
+    },
+    "/budget": {
+      "get": {
+        "description": "Was heute ausgegeben wurde — der eigene Stand, nie ein fremder.",
+        "operationId": "read_budget_budget_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Budget",
+        "tags": [
+          "budget"
         ]
       }
     },

@@ -114,9 +114,7 @@ class TestDerZaehler:
 
 
 class TestWasDerEndpunktSagt:
-    async def test_er_nennt_den_tagesbeginn(
-        self, client: AsyncClient, engine: AsyncEngine
-    ) -> None:
+    async def test_er_nennt_den_tagesbeginn(self, client: AsyncClient, engine: AsyncEngine) -> None:
         """„Heute" ohne Zeitzone ist keine Auskunft, sondern eine Vermutung."""
         await _angemeldet(client, engine)
 
