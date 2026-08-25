@@ -165,6 +165,15 @@ In Produktion entpackt der API-Prozess deshalb **nicht selbst**: Er sendet den `
 
 **Nachteile:** Drei SDKs zu pflegen, jeweils mit eigenem Änderungsrhythmus. Abgefedert durch Contract-Tests gegen aufgezeichnete Antworten.
 
+**Stand 25.08.2026 — was gebaut ist und was sich beim Bauen gezeigt hat.** Ollama (direkt über HTTP, siehe ADR-010), Anthropic und OpenAI (native SDKs, `httpx`-Client mit `MockTransport` in den Tests, sodass das echte SDK läuft und nur das Netz ersetzt ist). Google fehlt.
+
+Zwei Beobachtungen, die den Kern der Entscheidung bestätigen — die Unterschiede sichtbar zu machen statt sie zu verstecken:
+
+- **`messages.create` kennt bei Anthropic keinen Temperaturparameter mehr**; an seiner Stelle steht `output_config.effort`. Das ist keine andere Schreibweise derselben Sache, und eine erfundene Zuordnung sähe aus, als sei der Wunsch erfüllt worden. `ProviderCapabilities` trägt deshalb ein neues Feld `temperature_control`. Folge: Mit einem Anthropic-Modell sind Werkzeugargumente nicht bestimmt (`plan_arguments.py` verlangt `temperature=0.0`) — eine Frage der Güte, nicht der Sicherheit.
+- **`response_format="json"` lässt sich dort nicht zusagen**, weil die API ein Schema verlangt und der Vertrag keines liefert. Der Adapter sagt ab, statt das Feld fallen zu lassen: Fließtext an einen Aufrufer, der ihn parst, ließe den Fehler weit weg von seiner Ursache entstehen.
+
+**Kein Wiederholen in den SDKs** (`max_retries=0`). Die Vorgabe der Bibliotheken ist größer als eins, und das wäre eine stille Abweichung von dem, was das System über sich sagt: Der Modellmodus von `advance` macht einen Versuch, und `timeout_s` gilt je Versuch.
+
 ---
 
 ## ADR-010 — Lokale Modelle: Ollama als Laufzeit

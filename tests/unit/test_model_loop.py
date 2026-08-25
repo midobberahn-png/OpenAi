@@ -380,7 +380,17 @@ class TestDatenklasse:
         agents.register(ASSISTENT)
 
         nur_p1 = ModelCapability(
-            name="klein", provider="ollama", max_data_class=DataClass.P1, context_window=8000
+            name="klein",
+            provider="ollama",
+            max_data_class=DataClass.P1,
+            context_window=8000,
+            # ``is_local`` stand hier nicht und wurde als ``False`` gelesen —
+            # ein lokales Modell, das als fremder Anbieter geführt wurde. Bis
+            # zur Regel „ein fremder Anbieter sieht P1 nur mit
+            # Zero-Retention-Zusage" war das folgenlos; jetzt scheiterte
+            # bereits Runde 1, und der Test hätte das Richtige aus dem
+            # falschen Grund gezeigt.
+            is_local=True,
         )
         modell = DrehbuchModell([_vorschlag("mail.read", folder="INBOX")])
         schleife = ModelLoop(
