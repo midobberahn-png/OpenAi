@@ -17,9 +17,12 @@ Drei Zusagen stehen hier auf dem Prüfstand:
 
 from __future__ import annotations
 
+import os
+import socket
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from urllib.parse import urlparse
 
 import pytest
 from httpx import AsyncClient
@@ -29,6 +32,41 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from tests.integration.test_http_runs import _angemeldet
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio, pytest.mark.security]
+
+REQUIRE_OLLAMA = os.environ.get("JARVIS_REQUIRE_OLLAMA") == "1"
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+
+
+def _ollama_erreichbar() -> str | None:
+    """``None`` heißt erreichbar, sonst die Begründung.
+
+    Dieselbe Prüfung wie in ``test_ollama_live.py``. Zwei Fassungen davon wären
+    eine zu viel; sie steht hier trotzdem, weil ein Import aus einer anderen
+    Testdatei die Zugehörigkeit verwischt — welche Datei besitzt sie dann?
+    """
+    zerlegt = urlparse(OLLAMA_URL)
+    try:
+        with socket.create_connection(
+            (zerlegt.hostname or "localhost", zerlegt.port or 11434), timeout=2
+        ):
+            return None
+    except OSError as fehler:
+        return f"{OLLAMA_URL} — {fehler.strerror or fehler}"
+
+
+@pytest.fixture
+def _mit_modell() -> None:
+    """Überspringt — oder scheitert, wenn ein echter Lauf verlangt ist."""
+    grund = _ollama_erreichbar()
+    if grund is None:
+        return
+    hinweis = f"Ollama nicht erreichbar ({grund}). 'brew services start ollama'."
+    if REQUIRE_OLLAMA:
+        pytest.fail(
+            f"{hinweis}\nJARVIS_REQUIRE_OLLAMA=1 verlangt einen echten Lauf: Ein "
+            "übersprungener Integrationstest ist kein bestandener."
+        )
+    pytest.skip(hinweis)
 
 
 async def _lauf(engine: AsyncEngine, *, user_id: uuid.UUID, kosten: str = "0") -> uuid.UUID:
@@ -95,8 +133,22 @@ async def _posten(
 
 
 class TestVollstaendigkeit:
+    """**Diese beiden Prüfungen brauchen ein echtes Modell** — und deshalb
+    denselben Schalter wie ``test_ollama_live.py``.
+
+    Die Zusage lautet „was der Lauf als Summe führt, steht im Hauptbuch als
+    Posten". Sie lässt sich nur an einem Lauf belegen, der tatsächlich ein
+    Modell gefragt hat; gestellte Zeilen bewiesen nur, dass ``INSERT``
+    funktioniert.
+
+    Bemerkt hat das die CI: Lokal lief Ollama, in der Pipeline nicht, und der
+    Antwortschritt scheiterte an einer Verbindung statt an einer Aussage. Ein
+    Test, der je nach Maschine etwas anderes prüft, ist keiner — deshalb steht
+    er jetzt ausdrücklich hinter ``JARVIS_REQUIRE_OLLAMA``.
+    """
+
     async def test_ein_echter_lauf_steht_im_hauptbuch(
-        self, client: AsyncClient, engine: AsyncEngine
+        self, client: AsyncClient, engine: AsyncEngine, _mit_modell: None
     ) -> None:
         """Die Zusage, die das Hauptbuch tragen muss.
 
@@ -136,7 +188,7 @@ class TestVollstaendigkeit:
         assert nutzer is not None
 
     async def test_der_zweck_wird_mitgeschrieben(
-        self, client: AsyncClient, engine: AsyncEngine
+        self, client: AsyncClient, engine: AsyncEngine, _mit_modell: None
     ) -> None:
         """Ohne ihn sieht man, *welches* Modell teuer war, aber nicht *wobei*."""
         await _angemeldet(client, engine)
