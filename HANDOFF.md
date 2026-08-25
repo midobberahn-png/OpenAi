@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1509** Python + 22 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1509** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **61/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
@@ -1221,8 +1221,7 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   **Netzverkehr** und nicht das Markup — ob ein Element entsteht, ist die
   Vermutung; ob eine Anfrage rausgeht, ist die Wirkung.
 
-  Offen bleibt Shiki samt Kopierbutton; das Dokument führt es als eigenen
-  Schritt.
+  ~~Offen bleibt Shiki samt Kopierbutton.~~ **Erledigt** (§8 Abschnitt 14).
 * ~~Ein Lauf läuft nicht von allein zu Ende.~~ **Erledigt** (`ddcad4d`), und
   dabei fiel die Hälfte auf, die niemand sieht: Ein Lauf **mitten im Plan** hat
   keinen Anspruch — er wird nach jedem Schritt freigegeben. Wer den Browser
@@ -1748,6 +1747,41 @@ unabhängig davon fehlt" führte den Ereignisstrom als nicht existent, zwei
 Absätze unter dem Eintrag, der ihn als erledigt meldet. Dasselbe Muster wie beim
 Modulkopf aus §12. Eine Liste offener Punkte wird beim Hinzufügen gepflegt und
 beim Erledigen vergessen.
+
+### 14. Erledigt: Quelltext im Chat — eingefärbt, kopierbar, weiterhin Text
+
+Der letzte offene Punkt aus der Oberflächenliste. Shiki, Sprache aus dem
+Markdown-Zaun, Kopierknopf — und **eine Entscheidung, die den Rest bestimmt.**
+
+**Der übliche Weg mit Shiki ist der, den diese Oberfläche seit ihrer ersten
+Zeile ausschließt.** `codeToHtml` liefert eine Zeichenkette, die per
+`dangerouslySetInnerHTML` in den Baum kommt; docs/10-ui.md §5 verbietet genau
+das für Modell- und Fremdinhalt. Der Einwand „Shiki maskiert doch selbst" trägt
+nicht: Das wäre eine Zusage über eine fremde Bibliothek und ihre nächste
+Version. Über `codeToTokens` kommt stattdessen eine Liste aus Inhalt und Farbe;
+React setzt den Inhalt als **Text** und die Farbe als `style`. Aus dem
+Quelltext kann kein Markup entstehen — nicht weil es maskiert wird, sondern
+weil es nie als Markup gelesen wird. Ein Browsertest legt
+`<img src=x onerror=…>` **in** den Block und prüft, dass kein Element entsteht.
+
+**Drei kleinere Entscheidungen, jede mit demselben Muster:**
+
+* **Nicht geraten.** Das UI-Dokument nennt „Sprachenerkennung"; eingefärbt wird
+  nur, was im Zaun steht (```` ```python ````) und in der Sprachliste vorkommt.
+  Eine falsche Einfärbung ist schlechter als keine — sie behauptet etwas über
+  den Text. Ein Test schickt `klingonisch` und verlangt einen schlichten Block.
+* **Die Farbe kommt nach.** Der Block steht sofort als Text da; Shiki wird
+  nachgeladen. Ein Fehlschlag beim Laden kostet Farbe, nicht Quelltext. Der
+  Haupt-Chunk wächst dadurch von 320 auf 325 kB; Grammatiken sind eigene
+  Chunks.
+* **Der Kopierknopf sagt, wenn er nicht konnte.** Die Zwischenablage ist nicht
+  in jedem Kontext zugänglich. Ein Knopf, der dann „kopiert" behauptet, lässt
+  jemanden einfügen, was nicht da ist.
+
+**Gegriffen wird `pre` und nicht `code`.** In `react-markdown` v9 gibt es kein
+`inline`-Kennzeichen mehr, und ein Block ohne Sprachangabe trägt auch keine
+Klasse — wer am `code`-Element unterscheidet, hält ihn für eingebetteten Text
+mitten im Satz.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 

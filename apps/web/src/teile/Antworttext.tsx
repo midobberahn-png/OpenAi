@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import { Quelltext } from "./Quelltext";
 
 /**
  * Modellantwort als Markdown — ohne rohes HTML und ohne Abruf nach außen.
@@ -24,8 +26,16 @@ import remarkGfm from "remark-gfm";
  * Oberfläche nicht durch Fremdinhalt verlassen oder ferngesteuert wird.
  * ``javascript:``-Adressen entfernt ``react-markdown`` von sich aus.
  *
- * Was hier bewusst **noch nicht** steht: Shiki für Quelltext samt
- * Kopierbutton. Das Dokument führt es, es ist ein eigener Schritt.
+ * **Quelltextblöcke gehen an ``Quelltext``** — eingefärbt und kopierbar. Warum
+ * Shiki dort über Token statt über HTML läuft, steht in jener Datei; die kurze
+ * Fassung: Der übliche Weg (``codeToHtml`` samt ``dangerouslySetInnerHTML``)
+ * ist genau der, den diese Datei seit ihrer ersten Zeile ausschließt.
+ *
+ * Gegriffen wird dafür ``pre`` und nicht ``code``. In ``react-markdown`` v9
+ * gibt es kein ``inline``-Kennzeichen mehr, und ein Block ohne Sprachangabe
+ * (schlicht ```` ``` ````) trägt auch keine Klasse — wer am ``code``-Element
+ * unterscheidet, hält ihn für eingebetteten Text mitten im Satz. Alles in
+ * einem ``pre`` ist dagegen ein Block, ohne Fallunterscheidung.
  */
 export function Antworttext({ text }: { text: string }) {
   return (
@@ -33,6 +43,18 @@ export function Antworttext({ text }: { text: string }) {
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
+          pre: ({ children }: { children?: ReactNode }) => {
+            const inhalt = Array.isArray(children) ? children[0] : children;
+            const eigenschaften =
+              (inhalt as ReactElement<{ className?: string; children?: ReactNode }> | undefined)
+                ?.props ?? {};
+            // Der abschließende Zeilenumbruch gehört zum Zaun, nicht zum
+            // Quelltext — ohne ihn zu entfernen, endet jeder Block mit einer
+            // leeren Zeile.
+            const text = String(eigenschaften.children ?? "").replace(/\n$/, "");
+            const sprache = /language-([\w-]+)/.exec(eigenschaften.className ?? "")?.[1];
+            return <Quelltext text={text} sprache={sprache} />;
+          },
           // Tabellen können breiter sein als die Spalte; sie scrollen für
           // sich, statt die Seite auseinanderzuziehen (docs/10-ui.md §5).
           table: ({ children }: { children?: ReactNode }) => (
