@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 25.08.2026, Commit `2da863a` auf `main`.** Dieses Dokument ist der
+> **Stand: 25.08.2026, Commit `f43cf04` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -44,15 +44,22 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 99, Remote auf GitHub |
-| Tests | **1341** Python + 18 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten.** |
-| **Security Invariant Coverage** | **58/59** |
-| mypy | `strict`, sauber über 123 Dateien |
+| Commits | 101, Remote auf GitHub |
+| Tests | **1384** Python + 18 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten.** |
+| **Security Invariant Coverage** | **59/60** |
+| mypy | `strict`, sauber über 125 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
 
 ### Was seit dem letzten Dossier geschah
+
+**Anthropic und OpenAI sind angebunden — und dabei bekam eine Zusage ihren
+ersten Prüfer** (`f43cf04`). Mit dem ersten Anbieter, der nicht auf diesem
+Gerät läuft, ist die Datenklassentabelle aus `docs/00-uebersicht.md §8` keine
+Absichtserklärung mehr: `zero_retention` stand seit dem ersten Entwurf im
+Vertrag und wurde von **nichts** gelesen. Jetzt liest es das Model Gateway.
+Einzelheiten in Abschnitt 8.9.
 
 **Die Oberfläche zeigt Markdown, und der Kalender lässt sich lesen** (`ddca6e2`,
 `2da863a`). Zwei kleine Blöcke, und beide haben unterwegs etwas gefunden, das
@@ -470,7 +477,10 @@ niemand zurück.
 |---|---|---|
 | Model Gateway | `core/providers/gateway.py` | Zulassung vor jedem Aufruf, fail closed |
 | Ollama-Adapter | `packages/providers/jarvis_providers/ollama.py` | HTTP-API; **gegen laufendes Ollama geprüft** |
+| Anthropic-Adapter | `packages/providers/jarvis_providers/anthropic.py` | natives SDK; gegen aufgezeichnete Antworten geprüft, **nie gegen den echten Endpunkt** |
+| OpenAI-Adapter | `packages/providers/jarvis_providers/openai.py` | natives SDK, Chat Completions; ebenso **nie gegen den echten Endpunkt** |
 | Anbieterzuordnung | `apps/api/jarvis_api/providers.py` | baut Gateway und Adapter zusammen — vorher gab es beides, nur nicht verbunden |
+| Katalog | `apps/api/jarvis_api/models.py` | ein Cloud-Modell erscheint nur mit Schlüssel **und** Modellnamen |
 
 ### Bewiesene Sicherheitseigenschaften
 
@@ -526,18 +536,21 @@ Alle mit adversarialen Tests, die meisten gegen Postgres oder Redis:
 
 Ehrliche Liste. Nichts davon ist „fast fertig".
 
+**Am 25.08.2026 durchgesehen und um sechs Zeilen erleichtert**, die dort nicht
+mehr hingehörten: Undo, Wiederaufnahme, autonome Abarbeitung,
+`agent`-Planschritte, Web-UI und Audit-Sink stehen (Abschnitt 8). Eine Liste
+des Fehlenden, die Erledigtes führt, ist genauso irreführend wie eine, die
+Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
+
 | Fehlt | Auswirkung |
 |---|---|
 | **Werkzeuge — mehr als zwei** | `files.read` (lesend) und `calendar.create` (schreibend). Der Scope-Katalog führt 34 Einträge, der Werkzeugkatalog zwei. Es fehlen `mail.*`, `web.fetch`, `tasks.*`. |
-| **Undo** | `ToolResult.undo_token` ist ein Vertragsfeld, das niemand setzt und kein Endpunkt entgegennimmt. Deshalb steht `calendar.create` auf `supports_undo=False`: Eine Vorschau, die Umkehrbarkeit verspricht, während nichts umkehren kann, senkt die Aufmerksamkeit genau dort, wo die Bestätigung ihren Zweck hat. |
-| **Wiederaufnahme abgebrochener Läufe** | Der `RunStore` ist da, der Weg zurück in den Orchestrator nicht: Niemand fragt beim Start nach Läufen in `is_resumable`-Status und setzt sie fort. `RunState` und der Zustandsautomat tragen das Nötige, es ruft nur niemand auf. |
-| **Autonome Abarbeitung** | Halb da. Jeder einzelne Schritt läuft ohne Zutun, und der Lauf erreicht sein Ende. Was fehlt, ist die Schleife *darum herum*: Jemand muss `advance` weiterhin je Schritt aufrufen. Ein Arbeiter, der das tut, ist dieselbe Baustelle wie die Wiederaufnahme abgebrochener Läufe. |
 | **Ein brauchbarer Antwortschritt** | Er läuft — und sieht nur Schritt*zusammenfassungen*, keine Werkzeug*daten*. „Lies X und fasse es zusammen" endet deshalb mit „ich kenne den Inhalt nicht". Der Weg dorthin führt über Fremdinhalt im Prompt und ist die heikelste offene Entscheidung (Abschnitt 8.4). |
-| **`agent`-Planschritte** | `ModelLoop` ist gebaut und geprüft, hat aber keinen Endpunkt. Ein Schritt, der an einen Sub-Agenten delegiert, wird mit 409 abgewiesen. Dort wählt das Modell die Werkzeuge selbst — eine andere Fläche als „ein Modell füllt die Argumente eines angekündigten Schrittes". |
 | **Modellgetriebener Dateizugriff** | Gemessen: Steht der Pfad im Auftrag, trifft das Modell 3/3. Kennt es nur die freigegebene Wurzel, 0/3. Es braucht **Aufzählbarkeit** (`files.list`), nicht nur Auskunft über die Grenze — Abschnitt 8.5. |
-| **Web-UI** | Nichts. Punkt 5 der Roadmap-Phase 1. |
-| **Weitere Provider** | Nur Ollama. Anthropic und OpenAI sind mechanisch — dieselbe Form. |
-| **Audit-Sink** | Die Hash-Kette ist implementiert und geprüft, die Postgres-Implementierung fehlt. Der `pg_advisory_xact_lock` gegen gabelnde Ketten ebenfalls. |
+| **Ein Aufruf gegen einen echten Cloud-Endpunkt** | Die Adapter für Anthropic und OpenAI sind gegen aufgezeichnete Antworten geprüft, nie gegen das Netz — es gibt keinen Schlüssel. Was ein Contract-Test nicht findet: ein Feld, das der Anbieter inzwischen anders nennt. Für Ollama gibt es dafür `test_ollama_live.py`; das Gegenstück fehlt. |
+| **Google als Anbieter** | ADR-009 nennt drei. Gebaut sind Ollama, Anthropic, OpenAI. |
+| **Prompt-Caching und Vision** | Beide Cloud-Adapter melden `False`, und das ist ehrlich: `Message.content` ist eine Zeichenkette, und `cache_control` setzt niemand. Was der Anbieter kann, ist eine andere Aussage als was der Adapter tut. |
+| **Idempotency-Keys pro Invocation** | Aus dem Review offen. Der Ausführungsanspruch verhindert einen zweiten Versuch — nicht, dass ein Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen. |
 | **Memory Service** | Nur Verträge und Schema, kein Retrieval. |
 | **Context Engine** | Verträge da, Provider fehlen. |
 | **Alles ab Phase 2** | Voice, Vision, Integrationen. |
@@ -1253,12 +1266,78 @@ Was **unabhängig** davon fehlt und jede Fassung braucht:
   Durchgang des Arbeiters wäre der naheliegende Ort — und dann stellt sich die
   Frage, was ein Fund auslöst, solange es keine Benachrichtigung gibt.
 
-### 9. Weitere Provider
+### 9. Erledigt: Anthropic und OpenAI — und der Vertrag, der die Wolke begrenzt
 
-Anthropic und OpenAI, dieselbe Form wie Ollama. Dabei mitzunehmen, was aus dem
-Review offen ist: **Idempotency-Keys pro Invocation.** Der Ausführungsanspruch
-verhindert einen zweiten Versuch — er kann nicht verhindern, dass ein
-Provider-Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen.
+Zwei Adapter in der Form von Ollama (`f43cf04`), natives SDK laut ADR-009,
+geprüft mit `MockTransport`: Das echte SDK läuft, nur das Netz ist ersetzt.
+
+**Der Befund lag nicht in den Adaptern.** Mit dem ersten fremden Anbieter
+bekommt die Tabelle aus `docs/00-uebersicht.md §8` zum ersten Mal einen Leser —
+P0 immer, P1 nur mit Zero-Retention-Zusage, P2 nur nach ausdrücklicher
+Freigabe, P3 nie. `ModelCapability.zero_retention` stand seit dem ersten
+Entwurf im Vertrag und wurde von **nichts** geprüft: dasselbe Muster wie
+`supports_undo` vor dem Undo-Weg und `ToolSpec.parameters` vor der
+Schemaprüfung. Die brauchbare Frage bei jeder deklarierten Einschränkung ist
+nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"**
+
+Geprüft wird im Model Gateway, an derselben Stelle wie die P3-Regel und aus
+demselben Grund: Der Katalog ist Konfiguration, und ein Tippfehler darf keine
+Daten außer Haus geben. Neue Invariante
+`cloud-limited-to-p1-with-zero-retention`; die Kennzahl steht auf **59/60**.
+
+**P2 wird abgewiesen, obwohl das Dokument eine Freigabe je Domäne vorsieht.**
+Den Weg, sie zu erteilen, gibt es nicht — keine Tabelle, keine Route, kein
+Bildschirm. Solange er fehlt, gilt die Vorgabe des Dokuments: standardmäßig
+lokal. Wer die Freigabe baut, ersetzt diese Zeile durch die Prüfung, ob sie
+vorliegt.
+
+**Zwei Befunde in den SDKs, beide sichtbar gemacht statt verschwiegen:**
+
+* `messages.create` kennt bei Anthropic **keinen Temperaturparameter** mehr; an
+  seiner Stelle steht `output_config.effort`. „0.0" heißt *bestimmt statt
+  kreativ*, `effort` heißt *wie viel Arbeit* — eine erfundene Zuordnung sähe
+  aus, als sei der Wunsch erfüllt worden. `ProviderCapabilities` trägt deshalb
+  `temperature_control`. **Folge für den Betrieb:** Mit einem Anthropic-Modell
+  sind Werkzeugargumente nicht bestimmt, denn `plan_arguments.py` verlangt
+  `temperature=0.0`. Eine Frage der Güte, nicht der Sicherheit — Schemaprüfung
+  und Bestätigung stehen unverändert dahinter. Wer Bestimmtheit braucht,
+  routet dafür lokal oder zu OpenAI.
+* `response_format="json"` lässt sich dort nicht zusagen: Die API verlangt ein
+  Schema, der Vertrag liefert keines. Der Adapter sagt **vor** dem Netzaufruf
+  ab, statt das Feld fallen zu lassen — Fließtext an einen Aufrufer, der ihn
+  parst, ließe den Fehler weit weg von seiner Ursache entstehen.
+
+**Kein Wiederholen in den SDKs** (`max_retries=0`). Die Vorgabe beider
+Bibliotheken ist größer als eins, und das wäre eine stille Abweichung von dem,
+was das System über sich sagt: Der Modellmodus von `advance` macht einen
+Versuch, und `timeout_s` gilt je Versuch. Drei verdeckte Anläufe machten aus
+einem Timeout von 60 Sekunden drei Minuten und aus einer Anfrage drei
+Rechnungen.
+
+**Konfiguration:** Ein Cloud-Modell erscheint nur im Katalog, wenn es
+aufrufbar ist — Schlüssel *und* Modellname (`ANTHROPIC_API_KEY` +
+`ANTHROPIC_MODEL`, entsprechend für OpenAI). Kein Vorgabewert für den Namen:
+Was es bei einem Anbieter gerade gibt, weiß die Konfiguration und nicht dieses
+Repository, und ein geratener Name scheitert erst *nach* der Modellwahl.
+`CLOUD_ZERO_RETENTION=anthropic,openai` hinterlegt die Zusage — sie beschreibt
+einen Vertrag, sie misst ihn nicht, dieselbe Bauart wie `is_local`.
+
+**Was offen bleibt und beim nächsten Mal zuerst dran ist:**
+
+* **Kein Aufruf gegen einen echten Endpunkt.** Ohne Schlüssel läuft kein
+  Netzweg; was ein Contract-Test nicht findet, ist ein Feld, das der Anbieter
+  inzwischen anders nennt. Für Ollama gibt es `test_ollama_live.py`, hier fehlt
+  das Gegenstück. Sobald ein Schlüssel vorliegt: derselbe Aufbau, derselbe
+  Schalter (`JARVIS_REQUIRE_ANTHROPIC` / `JARVIS_REQUIRE_OPENAI`).
+* **Idempotency-Keys pro Invocation** — aus dem Review offen und hier bewusst
+  nicht mitgenommen: Sie betreffen die Werkzeugausführung, nicht die
+  Modellanbindung. Der Ausführungsanspruch verhindert einen zweiten Versuch; er
+  kann nicht verhindern, dass ein Timeout eine Aktion ausgeführt hat, die wir
+  als unklar verbuchen.
+* **Kostenrechnung.** `cost_per_1m_in`/`_out` stehen im Katalog auf null, und
+  `ModelUsage.cost_eur` bleibt leer. Bei einem lokalen Modell war das richtig
+  (Strom, keine Rechnung); ab dem ersten fremden Anbieter ist es eine Lücke —
+  das Tagesbudget aus `.env.example` hat keinen Zähler.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
