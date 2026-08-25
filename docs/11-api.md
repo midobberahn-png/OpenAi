@@ -95,6 +95,23 @@ GET    /v1/automations   POST /v1/automations   PATCH /v1/automations/{id}
 POST   /v1/automations/{id}/test            Trockenlauf ohne Ausführung
 ```
 
+**Was davon existiert:** `GET /calendar?from&to&limit` — eigene Termine,
+aufsteigend, ohne `from` ab jetzt. Ohne `/v1`, wie der Rest der heutigen API.
+Ein Termin zählt zum Fenster, wenn er darin **liegt**, nicht wenn er darin
+beginnt; eine Zeitangabe ohne Zone wird abgelehnt statt geraten.
+
+Der Endpunkt ist **kein Werkzeug**, und der Unterschied trägt: Ein
+`calendar.read` wäre eine Fähigkeit — etwas, das ein Nutzer erteilen müsste,
+das ein Modell vorschlagen könnte und dessen Ergebnis als Fremdinhalt in einen
+Lauf liefe. Hier gibt ein bereits angemeldeter Mensch Auskunft über seine
+eigenen Termine. Dieselbe Unterscheidung wie zwischen der Rücknahme und einem
+`calendar.delete`. Gelesen wird deshalb über einen eigenen Adapter; der
+Speicher, den die Werkzeugregistry hält, kann nicht lesen.
+
+Geschrieben wird weiterhin ausschließlich über `calendar.create` samt Vorschau,
+Bestätigung und Grant — einen schreibenden HTTP-Weg an dieser Kette vorbei gibt
+es nicht und soll es nicht geben.
+
 ### Dokumente
 
 ```

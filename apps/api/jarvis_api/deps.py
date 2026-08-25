@@ -24,7 +24,7 @@ from jarvis_api.agents import agent_catalog
 from jarvis_api.auth import WebAuthnVerifier
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.db.audit_store import PostgresAuditSink
-from jarvis_api.db.calendar_store import PostgresCalendarStore
+from jarvis_api.db.calendar_store import PostgresCalendarReader, PostgresCalendarStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.db.permission_store import PostgresPermissionStore
 from jarvis_api.db.run_store import PostgresRunStore
@@ -53,6 +53,7 @@ __all__ = [
     "Approvals",
     "Audit",
     "AuditReader",
+    "CalendarView",
     "CurrentSession",
     "DbConnection",
     "DbEngine",
@@ -70,6 +71,7 @@ __all__ = [
     "agent_step_source",
     "approval_gateway",
     "audit_sink",
+    "calendar_view",
     "client_identifier",
     "current_session",
     "current_token",
@@ -163,6 +165,27 @@ Wer ``Audit`` verlangt, schreibt; wer ``AuditReader`` verlangt, liest. Die
 Trennung kostet nichts und macht in jeder Signatur sichtbar, was ein Endpunkt
 mit dem Protokoll vorhat. Eine echte Trennung wären zwei Ports; die lohnt sich,
 sobald das Lesen woanders herkommt als das Schreiben."""
+
+
+def calendar_view(engine: DbEngine, session: CurrentSession) -> PostgresCalendarReader:
+    """Der lesende Blick auf den eigenen Kalender.
+
+    ``session`` steht hier aus demselben Grund wie bei ``tool_registry``: Der
+    Eigentümer wird beim Verdrahten gebunden und ist kein Parameter. Ein
+    ``user_id`` in Query oder Body wäre der kürzeste Weg in einen fremden
+    Kalender — hier gibt es keines, weil es keine Methode gibt, die eines
+    entgegennähme.
+
+    **Und es ist ein anderer Adapter als der des Werkzeugs**, nicht derselbe
+    unter zweitem Namen wie bei ``Audit``/``AuditReader``: Der Speicher, den
+    die Registry hält, soll nicht lesen können. Beim Protokoll ist das
+    folgenlos — dort schreibt der Executor und liest ein Endpunkt. Hier hielte
+    ein Werkzeug-Handler das Objekt in der Hand.
+    """
+    return PostgresCalendarReader(engine, user_id=session.user_id)
+
+
+CalendarView = Annotated[PostgresCalendarReader, Depends(calendar_view)]
 
 
 def permission_store(engine: DbEngine) -> PostgresPermissionStore:

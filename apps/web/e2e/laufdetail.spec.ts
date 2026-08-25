@@ -9,6 +9,17 @@ const TERMIN = {
 };
 
 /**
+ * Der Fensteranfang für die Kalenderabfrage.
+ *
+ * Ohne ``from`` beginnt das Fenster **jetzt** — und der Termin oben liegt fest
+ * datiert in der Zukunft. Das geht so lange gut, bis das Datum vorbei ist:
+ * Dann antwortete der Endpunkt mit einer leeren Liste, und der Test wäre grün
+ * aus dem falschen Grund. Ein Anfang weit davor macht die Prüfung von der Uhr
+ * unabhängig.
+ */
+const FENSTER_AB = "2000-01-01T00:00:00%2B00:00";
+
+/**
  * Laufdetail und Rücknahme im Browser.
  *
  * **Der Durchstich, auf den es ankommt:** Recht erteilen, Termin anlegen,
@@ -49,6 +60,12 @@ test("Ein ausgeführter Aufruf lässt sich zurücknehmen", async ({ page }) => {
     data: { tool: "calendar.create", arguments: TERMIN },
   });
   expect((await schritt.json()).status).toBe("executed");
+  // Vorher nachsehen, sonst prüft die leere Liste am Ende nichts: Ein Kalender,
+  // der nie einen Termin hatte, ist danach ebenfalls leer.
+  const vorher = await page.request.get(`/calendar?from=${FENSTER_AB}`);
+  expect(((await vorher.json()) as Array<{ title: string }>).map((t) => t.title)).toEqual([
+    TERMIN.title,
+  ]);
 
   await page.reload();
   await page.getByTestId("zu-laeufen").click();
@@ -62,20 +79,16 @@ test("Ein ausgeführter Aufruf lässt sich zurücknehmen", async ({ page }) => {
   const protokoll = await page.request.get("/audit?limit=50");
   const aktionen = ((await protokoll.json()) as Array<{ action: string }>).map((z) => z.action);
   expect(aktionen).toContain("tool.undone");
+
+  // **Und der Termin ist wirklich weg.** Bis es ``GET /calendar`` gab, konnte
+  // der Browser das nicht sehen: Gemessen wurde die Wirkung in der
+  // pytest-Suite, die Zeilen zählte. Eine Oberfläche, die „zurückgenommen"
+  // schreibt, während der Eintrag steht, ist schlimmer als eine, die
+  // schweigt — deshalb wird hier die Zusage geprüft und nicht ihre Anzeige.
+  const kalender = await page.request.get(`/calendar?from=${FENSTER_AB}`);
+  expect(await kalender.json()).toEqual([]);
 });
 
-/**
- * **Was dieser Durchstich nicht misst, und warum das hier steht.**
- *
- * Ob der Termin danach tatsächlich aus dem Kalender verschwunden ist, kann der
- * Browser nicht sehen: Es gibt keinen Endpunkt, der Termine liest. Gemessen
- * wird die Wirkung deshalb in der pytest-Suite (``tests/integration/
- * test_undo.py`` zählt ``calendar_events``), und hier nur das, was die
- * Oberfläche tatsächlich weiß.
- *
- * Das ist eine Lücke der API und keine des Tests — und sie ist die nächste,
- * die auffällt, sobald jemand einen Kalender *anzeigen* will.
- */
 test("Eine zweite Rücknahme wird nicht angeboten", async ({ page }) => {
   await angemeldet(page);
   await page.getByTestId("zu-rechten").click();

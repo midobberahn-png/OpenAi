@@ -28,6 +28,7 @@ from jarvis_api.routes import (
     actions_router,
     audit_router,
     auth_router,
+    calendar_router,
     events_router,
     permissions_router,
     runs_router,
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     application.include_router(runs_router)
     application.include_router(actions_router)
     application.include_router(permissions_router)
+    application.include_router(calendar_router)
     application.include_router(audit_router)
     application.include_router(events_router)
     application.include_router(undo_router)
