@@ -287,14 +287,28 @@ class OpenAIProvider:
 
     @staticmethod
     def _verbrauch(usage: CompletionUsage | None) -> ModelUsage:
-        """Zahlen, keine Inhalte. ``cost_eur`` bleibt Sache des Katalogs."""
+        """Zahlen, keine Inhalte. ``cost_eur`` bleibt Sache des Katalogs.
+
+        **Die zwischengespeicherten Tokens werden herausgerechnet**, und das
+        ist kein Detail: ``prompt_tokens`` **enthält** sie bei diesem Anbieter,
+        ``prompt_tokens_details.cached_tokens`` ist eine Teilmenge davon.
+        Anthropic meldet dieselbe Sache umgekehrt — dort steht der aus dem
+        Cache gelesene Anteil **neben** ``input_tokens``.
+
+        Der Vertrag führt beide Felder getrennt („sonst stimmt die
+        Kostenrechnung nicht"), also müssen sie sich hier auch trennen. Ohne
+        diese Subtraktion zählte jeder zwischengespeicherte Token doppelt, und
+        die Kostenrechnung fiele bei einem gut zwischengespeicherten Prompt
+        deutlich zu hoch aus — in der sicheren Richtung, aber falsch.
+        """
         if usage is None:
             return ModelUsage()
         details = usage.prompt_tokens_details
+        aus_cache = (details.cached_tokens or 0) if details is not None else 0
         return ModelUsage(
-            tokens_in=usage.prompt_tokens,
+            tokens_in=max(0, usage.prompt_tokens - aus_cache),
             tokens_out=usage.completion_tokens,
-            cached_tokens_in=(details.cached_tokens or 0) if details is not None else 0,
+            cached_tokens_in=aus_cache,
         )
 
     @staticmethod

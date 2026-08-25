@@ -150,9 +150,15 @@ class TestAntwortLesen:
         assert ergebnis.text == "Es ist 14 Uhr."
         assert ergebnis.finish_reason is FinishReason.STOP
         assert ergebnis.provider == "openai"
-        assert ergebnis.usage.tokens_in == 42
         assert ergebnis.usage.tokens_out == 17
+        # **34, nicht 42.** ``prompt_tokens`` enthält bei diesem Anbieter die
+        # zwischengespeicherten Tokens; der Vertrag führt beide Felder
+        # getrennt. Ohne die Subtraktion zählte jeder Cache-Treffer doppelt —
+        # und die Kostenrechnung fiele bei einem gut zwischengespeicherten
+        # Prompt deutlich zu hoch aus.
+        assert ergebnis.usage.tokens_in == 34
         assert ergebnis.usage.cached_tokens_in == 8
+        assert ergebnis.usage.tokens_in + ergebnis.usage.cached_tokens_in == 42
 
     @pytest.mark.invariant("model-tool-calls-are-proposals")
     async def test_werkzeugaufrufe_werden_zu_vorschlaegen(self) -> None:
@@ -306,3 +312,33 @@ class TestZaehlen:
         assert await provider.count_tokens(_anfrage()) > 0
         assert provider.capabilities.token_counting is False
         assert gesehen == [], "Eine Näherung kostet keinen Netzaufruf."
+
+
+class TestVerbrauchAuseinanderrechnen:
+    """Zwei Anbieter, zwei Bedeutungen desselben Wortes.
+
+    OpenAI meldet ``prompt_tokens`` **inklusive** der aus dem Cache gelesenen
+    Tokens; Anthropic meldet ``input_tokens`` **ohne** sie. Der Vertrag führt
+    beide Felder getrennt („sonst stimmt die Kostenrechnung nicht"), also
+    müssen die Adapter auf dieselbe Bedeutung normalisieren — sonst rechnet das
+    Gateway bei einem der beiden falsch.
+    """
+
+    async def test_ohne_cache_bleibt_alles_wie_gemeldet(self) -> None:
+        ohne = json.loads(json.dumps(ANTWORT_TEXT))
+        ohne["usage"]["prompt_tokens_details"] = {"cached_tokens": 0}
+        provider, _ = _provider(lambda _: httpx2.Response(200, json=ohne))
+
+        ergebnis = await provider.complete(_anfrage())
+        assert ergebnis.usage.tokens_in == 42
+        assert ergebnis.usage.cached_tokens_in == 0
+
+    async def test_fehlende_details_werden_nicht_geraten(self) -> None:
+        """Kein Feld heißt: nichts aus dem Cache. Nicht: unbekannt."""
+        ohne = json.loads(json.dumps(ANTWORT_TEXT))
+        ohne["usage"].pop("prompt_tokens_details")
+        provider, _ = _provider(lambda _: httpx2.Response(200, json=ohne))
+
+        ergebnis = await provider.complete(_anfrage())
+        assert ergebnis.usage.tokens_in == 42
+        assert ergebnis.usage.cached_tokens_in == 0
