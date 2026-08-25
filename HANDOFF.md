@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 25.08.2026, Commit `7dedb94` auf `main`.** Dieses Dokument ist der
+> **Stand: 25.08.2026, Commit `76b0545` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -1571,6 +1571,33 @@ schließen hieße, die Verbindung an die geprüfte Adresse zu binden — eigener
 Transport, eigene TLS-Namensprüfung. Bewusst nicht halb gebaut: Ein halber
 Schutz ist schlechter als ein benannter offener. Ebenfalls offen: Was nicht
 HTML ist, geht als Text durch — ein PDF landet als Zeichensalat im Kontext.
+
+### 12. Erledigt: Der Rahmen gehörte ins Budget
+
+**Ein Fund beim Nachsehen, nicht beim Bauen.** Der Auftrag lautete, den
+Werkzeuginhalt in den Modellkontext zu bringen — und dabei stellte sich heraus,
+dass er längst dort ankommt (`c3a50f1`): `modellsicht()` wählt nach
+`model_visible_fields`, kappt und zeichnet aus, und `schritt_nachrichten()`
+legt jeden Inhalt in eine **eigene** Nachricht mit `is_untrusted=True`.
+
+Falsch war der **Modulkopf** derselben Datei: Er führte weiter „nur
+Zusammenfassungen, nicht den Inhalt — das ist bewusst wenig", nachdem der Code
+sich geändert hatte. Ein Modulkopf, der seinem eigenen Modul widerspricht, ist
+schlimmer als keiner: Er wird geglaubt. Berichtigt.
+
+**Und dabei fiel ein echter Fehler auf, den ein Test ausgelöst hat.**
+`modellsicht()` kappte den Inhalt auf `MAX_MODELLSICHT` (8.000 Zeichen) und
+setzte Kopf- und Fußzeile **danach** darum — 8.140. `StepOutcome.model_view`
+führt dieselbe Zahl als `max_length`, also scheiterte der Schritt an der
+Vertragsprüfung, **nachdem** das Werkzeug gelaufen war. Bei `files.read` (bis
+256 KB) lag der Fehler seit jeher und blieb unbemerkt, weil kein Test je
+größeren Inhalt durch diese Stelle schickte; `web.fetch` löst ihn zuverlässig
+aus.
+
+Zwei Zahlen, die übereinstimmen müssen, und niemand rechnete sie gegeneinander
+— dasselbe Muster wie bei den Vertragsfeldern ohne Leser. Der Rahmen ist jetzt
+Teil des Budgets, und eine eigene Testklasse rechnet beide Zahlen
+gegeneinander.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
