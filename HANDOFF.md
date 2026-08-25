@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 25.08.2026, Commit `f43cf04` auf `main`.** Dieses Dokument ist der
+> **Stand: 25.08.2026, Commit `d0d29e0` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -44,15 +44,22 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 101, Remote auf GitHub |
-| Tests | **1384** Python + 18 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten.** |
+| Commits | 104, Remote auf GitHub |
+| Tests | **1431** Python + 21 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten.** |
 | **Security Invariant Coverage** | **59/60** |
-| mypy | `strict`, sauber über 125 Dateien |
+| mypy | `strict`, sauber über 127 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
 
 ### Was seit dem letzten Dossier geschah
+
+**Die Kostengrenze rechnet, und das Tagesbudget greift** (`3356e1b`, `d0d29e0`).
+Beides hing an derselben Stelle: `ModelUsage.cost_eur` hat nie jemand gesetzt.
+Der Zähler zählte gewissenhaft — und immer null. Solange nur ein lokales Modell
+lief, war das richtig; seit es einen Weg gibt, auf dem Geld ausgegeben wird,
+war es die Lücke, die der Anbieterblock selbst aufgerissen hat. Einzelheiten in
+Abschnitt 8.10.
 
 **Anthropic und OpenAI sind angebunden — und dabei bekam eine Zusage ihren
 ersten Prüfer** (`f43cf04`). Mit dem ersten Anbieter, der nicht auf diesem
@@ -1334,10 +1341,89 @@ einen Vertrag, sie misst ihn nicht, dieselbe Bauart wie `is_local`.
   Modellanbindung. Der Ausführungsanspruch verhindert einen zweiten Versuch; er
   kann nicht verhindern, dass ein Timeout eine Aktion ausgeführt hat, die wir
   als unklar verbuchen.
-* **Kostenrechnung.** `cost_per_1m_in`/`_out` stehen im Katalog auf null, und
-  `ModelUsage.cost_eur` bleibt leer. Bei einem lokalen Modell war das richtig
-  (Strom, keine Rechnung); ab dem ersten fremden Anbieter ist es eine Lücke —
-  das Tagesbudget aus `.env.example` hat keinen Zähler.
+* ~~Kostenrechnung.~~ **Erledigt** — siehe Abschnitt 10.
+
+### 10. Erledigt: Kostenrechnung und Tagesbudget
+
+**Der Zähler zählte, und er zählte immer null** (`3356e1b`). Die ganze
+Maschinerie war da: `RunBudget.max_cost_eur` seit dem ersten Entwurf,
+`Usage.cost_eur`, `BudgetTracker.record_model_call(cost_eur=…)`, an beiden
+Modellpfaden aufgerufen. Nur `ModelUsage.cost_eur` hat nie jemand gesetzt.
+Dasselbe Muster wie `supports_undo`, `ToolSpec.parameters` und
+`zero_retention` — inzwischen das vierte Mal, und die Frage bleibt dieselbe:
+**wer liest sie, und wer prüft dagegen?**
+
+Die Kette hat drei Glieder, und das erste fehlte:
+
+* **Preis im Katalog** — `cost_per_1m_in`/`_out` gab es, gelesen hat sie
+  niemand; neu ist `cost_per_1m_cached_in` (optional; ohne Angabe gilt der
+  volle Eingabepreis, die vorsichtige Richtung) und die Rechnung `cost_for()`.
+* **Rechnung im Model Gateway**, dort, wo auch die Kontamination gestempelt
+  wird, und aus demselben Grund: Das Gateway kennt den Katalogeintrag, der
+  Adapter kennt nur Zahlen. Ein vom Adapter gemeldeter Preis wird
+  **überschrieben**, nicht addiert — so kann eine erfundene Zahl weder das
+  Budget aufblähen noch es leerlaufen lassen. **Auch der Strom bekommt seinen
+  Preis:** Der Antwortschritt streamt seit `c17d112` immer, und ohne diese
+  Zeile wäre ausgerechnet der Aufruf umsonst, bei dem ein Mensch zusieht.
+* **Zähler im Tracker** — der war schon da.
+
+**Ohne Preis kein Aufruf.** Ein Cloud-Modell ohne hinterlegten Preis steht
+nicht im Katalog (dritte Bedingung neben Schlüssel und Modellname) und wird vom
+Gateway zusätzlich abgewiesen (`model-has-no-price`). Ein Preis von null gilt
+als „nicht konfiguriert", nicht als „kostenlos". Für lokale Modelle gilt die
+Pflicht nicht — die Gegenprobe ist getestet, denn eine Preispflicht, die den
+lokalen Pfad sperrt, schlösse genau den Weg, für den die Datenklassifikation
+gebaut ist.
+
+**Ein Befund im eigenen Adapter, gefunden beim Rechnen:** OpenAI meldet
+`prompt_tokens` **inklusive** der aus dem Cache gelesenen Tokens, Anthropic
+meldet sie **daneben**. Der Vertrag führt beide Felder getrennt, also zählte
+bei OpenAI jeder Cache-Treffer doppelt. Zwei Anbieter, zwei Bedeutungen
+desselben Wortes — ohne die Kostenrechnung hätte das niemand bemerkt.
+
+---
+
+**Das Tagesbudget greift** (`d0d29e0`). `JARVIS_DAILY_BUDGET_EUR` stand in
+`.env.example` und wurde von nichts gelesen; jetzt ist es die Grenze, die das
+Dokument seit dem ersten Entwurf beschreibt.
+
+* **Gezählt wird über die Läufe**, nicht in einem eigenen Hauptbuch: Der
+  Verbrauch steht bereits in `runs.usage`. Eine zweite Tabelle wäre eine zweite
+  Wahrheit über denselben Sachverhalt. Der Preis dieser Wahl ist benannt: Ein
+  Lauf zählt zu dem Tag, an dem er **begonnen** hat.
+* **Welcher Tag gemeint ist, steht in der Konfiguration**
+  (`JARVIS_TIMEZONE`, Vorgabe `Europe/Berlin`). Der UTC-Tag wäre bequem und
+  falsch — er setzte das Budget im Sommer um 02:00 Ortszeit zurück.
+* **Die Wirkung ist eine Verengung, kein Abbruch.** Ein Lauf, der sein eigenes
+  Budget reißt, endet; hier soll nicht der Assistent ausfallen, sondern der
+  teure Weg. `route(…, local_only=True)` filtert **hart** auf lokale Modelle —
+  bei den Filtern und nicht bei den Gewichten: `prefer_local` gibt einen Bonus,
+  den ein besseres Modell überbietet, und eine Kostengrenze, die bei genügend
+  Qualitätsvorsprung nachgibt, ist keine.
+* **Geprüft wird beim Anlegen eines Laufs**, nicht vor jedem Modellaufruf. Die
+  mögliche Überschreitung ist damit um **ein Laufbudget** begrenzt. Eine
+  Prüfung mitten im Lauf hieße, die Modellwahl eines laufenden Auftrags zu
+  ändern — und damit die Datenklassen-Obergrenze zu verschieben, unter der er
+  gestartet ist.
+* **Sichtbar, bevor es wirkt:** `GET /budget` (Stand, Grenze, Tagesbeginn,
+  Anteil, Warnung ab 80 %, Erschöpfung), und die Leiste zeigt ab 80 % eine
+  Marke — darunter **nichts**. Eine Leiste, die dauerhaft einen Kontostand
+  zeigt, macht aus einer Warnung eine Tapete. Einen Schreibweg gibt es nicht:
+  Ein Endpunkt, über den sich das eigene Limit anheben ließe, wäre kein Limit,
+  sondern eine Bitte.
+
+**Und wieder ein Vertragsfeld ohne Leser:** `RoutingDecision.reason` war
+ausdrücklich für die Oberfläche gedacht — „‚Ich nutze gerade ein anderes
+Modell' ohne Grund ist für den Nutzer nicht überprüfbar" — und kein Endpunkt
+hat es je ausgeliefert. `GET /runs/{id}` führt jetzt `model` und
+`model_reason`; ohne sie sähe ein Nutzer bei erschöpftem Budget eine
+schlechtere Antwort und keinen Grund.
+
+**Was offen bleibt:** Die Kosten stehen im Lauf und im Tagesstand, aber
+**nirgends je Modell oder je Anbieter** — die Frage „wofür ist das Geld
+draufgegangen?" beantwortet heute niemand. Dafür bräuchte es das Hauptbuch, das
+oben aus gutem Grund nicht gebaut wurde; die Abwägung wäre neu zu treffen,
+sobald jemand die Frage tatsächlich stellt.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
@@ -1445,6 +1531,8 @@ klären, indem der Fall ausgeführt wurde.
 | **Ein Schema, das nur nach außen geht** | `ToolSpec.parameters` wurde an genau einer Stelle gelesen — dort, wo dem Modell gesagt wird, was es schicken soll. `required` und `additionalProperties: false` standen darin und galten nicht. Das fiel nicht auf, solange ein Mensch die Argumente tippte: Wer ein Schema liest, verletzt es nicht. Die brauchbare Frage bei jeder deklarierten Einschränkung lautet deshalb nicht „steht sie da?", sondern **„wer liest sie, und wer prüft dagegen?"** |
 | **pytest leitet `tmp_path` vom Testnamen ab** | Ein Test hieß `test_3_zugangsdaten_stufen_hoch`, der Pfad landete im Lauf-Input, und der Klassifikator sah „zugangsdaten" — der Test war **grün aus dem falschen Grund**, die geprüfte Hochstufung kam nicht vom Dateiinhalt. Wer Pfade in Eingaben schreibt, die ein Klassifikator liest, misst den Testnamen mit. |
 | **Eine angeheftete Version, die es nicht gibt, scheitert vor dem Testen** | `UV_VERSION: "0.16.3"` — uv hatte diese Nummer nie. `setup-uv` bekam 404 und brach im *Einrichten* ab: **45 CI-Läufe, kein einziger grüner, kein einziger ausgeführter Test**, seit dem ersten Commit. Aufgefallen ist es nicht, weil das lokale Gate grün war, ein Fehlschlag im Einrichten wie ein Infrastrukturproblem aussieht — und weil ohne erforderliche Prüfungen niemand ein Interesse hatte, hinzusehen. Wer eine Version anheftet, prüft, ob es sie gibt. |
+| **Ein gestapelter PR überlebt den Merge seines Zielbranchs nicht** | PR B zeigte auf den Branch von PR A. Beim Merge von A mit `--delete-branch` verschwand dessen Branch — und GitHub **schloss B**. Wiederöffnen ging nicht, der Zielbranch existierte nicht mehr; es blieb ein neuer PR mit neuer Nummer. Wer stapelt, stellt den Zielbranch **vor** dem Merge des unteren PRs auf `main` um. |
+| **Nach einem Squash rebast man nur die eigenen Commits** | Der Squash-Merge erzeugt *einen* neuen Commit; die Originale des gemergten Branches gibt es auf `main` nicht. Ein `git rebase origin/main` auf einem darauf gestapelten Branch versucht sie erneut anzuwenden und läuft in Konflikte gegen die eigenen, bereits enthaltenen Änderungen. Richtig ist `git rebase --onto origin/main <alter Branchpunkt> <mein Branch>` — verpflanzt werden nur die Commits, die wirklich neu sind. |
 | **`git commit --amend` macht einen notierten Hash ungültig** | Der Dossierkopf trug `f2ec2b3` — ich hatte `git rev-parse HEAD` gelesen, die Zeile geschrieben und **danach** amendiert. Der Hash lebte nur noch in meinem lokalen Objektspeicher; im Prüfcheckout gab es ihn nicht, und ein Prüfer hat ihn zu Recht als tot gemeldet. Ausgerechnet an der Stelle, die selbst verlangt, den Commit zu vergleichen. **Der Kopf nennt den letzten gepushten Commit** — nie einen, der noch amendiert werden könnte, und nie den eigenen. |
 | **Eine Zahl im Dossier veraltet, eine Bedingung nicht** | „ohne Dienste werden 178 übersprungen" war nach zwei Blöcken falsch (202). Wo eine Zahl nur eine Bedingung illustriert, gehört die Bedingung hin. |
 | **Ein Anspruch in einem Dokument, das andere im Ganzen schreiben, ist kein Anspruch** | Der Schrittanspruch lag in `RunState`, und `save()` schreibt das **ganze** `state`-Dokument. Die Fencing-Bedingung im `WHERE` schützte nur den, der sich auf den Anspruch *berief* — der anspruchslose Pfad (`/steps`) ging daran vorbei und wischte ihn weg. Gemessen: danach war der Schritt wieder frei, obwohl sein Inhaber noch arbeitete, und derselbe doppelte Seiteneffekt stand über eine andere Tür wieder offen. Behoben mit einem `CASE`, der die Anspruchsfelder aus der Zeile übernimmt, wenn kein Anspruch vorgelegt wird. **Sauberer wären eigene Spalten** — das braucht eine Migration und steht aus. |
