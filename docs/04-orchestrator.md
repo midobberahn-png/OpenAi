@@ -215,7 +215,15 @@ Zwei Festlegungen dazu:
 - **Ohne Preis kein Aufruf.** Ein Modell eines fremden Anbieters ohne hinterlegten Preis steht nicht im Katalog, und das Gateway weist es zusätzlich ab (`model-has-no-price`). Für lokale Modelle gilt das nicht: Sie kosten Strom, keine Rechnung, und ein erfundener Preis machte das Budget unschärfer statt ehrlicher.
 - **Die Preise stehen in der Konfiguration**, nicht im Quelltext — eine Preisliste im Repository ist beim nächsten Anbieterrundbrief falsch, und niemand merkt es. Der Katalog beschreibt das Deployment; er ruft keine Preisliste ab.
 
-**Das Tagesbudget ist weiterhin nicht gebaut.** Es bräuchte einen Zähler über Läufe hinweg (Tabelle oder Redis), eine Prüfung vor der Modellwahl und die Herabstufung auf lokale Modelle bei 100 %. `JARVIS_DAILY_BUDGET_EUR` stand in `.env.example` und wurde von nichts gelesen; die Zeile ist entfernt, weil ein Schalter ohne Wirkung schlechter ist als keiner.
+**Das Tagesbudget greift seit dem 25.08.2026.** `JARVIS_DAILY_BUDGET_EUR` wird jetzt gelesen (Vorgabe 5,00 €, kein Ausschalter — ein Wert von null hieße „keine Grenze" und sähe aus wie „nicht konfiguriert").
+
+- **Gezählt wird über die Läufe**, nicht in einem eigenen Hauptbuch: Der Verbrauch steht bereits in `runs.usage`, überlebt einen Neustart und wird nach jedem Schritt fortgeschrieben. Eine zweite Tabelle wäre eine zweite Wahrheit über denselben Sachverhalt. Der Preis dieser Wahl ist benannt: Ein Lauf zählt zu dem Tag, an dem er **begonnen** hat.
+- **Welcher Tag gemeint ist, steht in der Konfiguration** (`JARVIS_TIMEZONE`, Vorgabe `Europe/Berlin`). Der UTC-Tag wäre bequem und falsch — er setzte das Budget im Sommer um 02:00 Ortszeit zurück.
+- **Die Wirkung ist eine Verengung, kein Abbruch.** Ein Lauf, der sein eigenes Budget reißt, endet; beim Tagesbudget wäre das falsch. Es soll nicht der Assistent ausfallen, sondern der teure Weg. `route(..., local_only=True)` filtert deshalb hart auf lokale Modelle — bei den Filtern und nicht bei den Gewichten: `prefer_local` gibt einen Bonus, den ein besseres Modell überbietet, und eine Kostengrenze, die bei genügend Qualitätsvorsprung nachgibt, ist keine.
+- **Geprüft wird beim Anlegen eines Laufs**, nicht vor jedem Modellaufruf. Die mögliche Überschreitung ist damit um **ein Laufbudget** begrenzt. Eine Prüfung mitten im Lauf hieße, die Modellwahl eines laufenden Auftrags zu ändern — und damit die Datenklassen-Obergrenze zu verschieben, unter der er gestartet ist.
+- **Sichtbar, bevor es wirkt:** `GET /budget` liefert Stand, Grenze, Tagesbeginn, Anteil, Warnung und Erschöpfung; die Leiste der Oberfläche zeigt ab 80 % eine Marke und darunter nichts. Eine Leiste, die dauerhaft einen Kontostand zeigt, macht aus einer Warnung eine Tapete. Einen **Schreibweg gibt es nicht**: Ein Endpunkt, über den sich das eigene Limit anheben ließe, wäre kein Limit, sondern eine Bitte.
+
+Dabei fiel auf, dass `RoutingDecision.reason` seit dem ersten Entwurf für die Oberfläche gedacht war und nie jemand las. `GET /runs/{id}` führt jetzt `model` und `model_reason` — ohne sie sähe ein Nutzer bei erschöpftem Budget eine schlechtere Antwort und keinen Grund.
 
 ---
 

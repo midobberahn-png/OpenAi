@@ -112,6 +112,8 @@ Geschrieben wird weiterhin ausschließlich über `calendar.create` samt Vorschau
 Bestätigung und Grant — einen schreibenden HTTP-Weg an dieser Kette vorbei gibt
 es nicht und soll es nicht geben.
 
+**Was davon existiert:** `GET /budget` — Tagesstand des angemeldeten Nutzers: `spent_eur`, `limit_eur`, `since` (Tagesbeginn, weil „heute" ohne Zeitzone eine Vermutung ist), `share`, `warning` (ab 80 %), `exhausted`. Kein Schreibweg, und das ist die Aussage: Ein Endpunkt, über den sich das eigene Kostenlimit anheben ließe, wäre kein Limit.
+
 ### Dokumente
 
 ```
