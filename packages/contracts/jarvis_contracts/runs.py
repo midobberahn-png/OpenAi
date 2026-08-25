@@ -208,6 +208,46 @@ BUDGET_PRESETS: dict[str, RunBudget] = {
 Tatsache, dass niemand zusieht."""
 
 
+class DailySpend(BaseModel):
+    """Was heute schon ausgegeben wurde — und was das für die Modellwahl heißt.
+
+    Das Tagesbudget steht seit dem ersten Entwurf in docs/04-orchestrator.md §7
+    („bei 80 % Warnung in der UI, bei 100 % nur noch lokale Modelle"), und bis
+    zu diesem Block gab es weder Zähler noch Grenze. Der Satz daneben ist die
+    Begründung und gilt unverändert: **Ohne diese Grenze ist eine fehlerhafte
+    Agentenschleife ein finanzielles Risiko, kein Bug.**
+
+    Der Unterschied zum ``RunBudget`` ist der Ausgang. Ein Lauf, der seine
+    Grenze reißt, endet — bei einem Tagesbudget wäre das falsch: Es soll nicht
+    der Assistent ausfallen, sondern der teure Weg. Deshalb ist die Wirkung
+    eine **Verengung der Modellwahl** auf das, was das Gerät ohnehin kann.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    spent_eur: Decimal = Decimal("0")
+    limit_eur: Decimal = Decimal("0")
+    since: datetime | None = None
+    """Beginn des laufenden Tages. Steht in der Antwort, weil „heute" ohne
+    Zeitzone keine Auskunft ist, sondern eine Vermutung."""
+
+    @property
+    def share(self) -> float:
+        """Anteil des verbrauchten Budgets (0…1+). Ohne Grenze: 0."""
+        if self.limit_eur <= 0:
+            return 0.0
+        return float(self.spent_eur / self.limit_eur)
+
+    @property
+    def exhausted(self) -> bool:
+        return self.limit_eur > 0 and self.spent_eur >= self.limit_eur
+
+    @property
+    def warning(self) -> bool:
+        """Ab 80 % — die Schwelle steht im Dokument, nicht in einer Meinung."""
+        return self.share >= 0.8
+
+
 class Usage(BaseModel):
     """Verbrauch eines Laufs. Wird fortlaufend gegen das Budget geprüft."""
 

@@ -5,6 +5,7 @@ import { Anmeldung } from "./seiten/Anmeldung";
 import { Chat } from "./seiten/Chat";
 import { Laeufe } from "./seiten/Laeufe";
 import { Rechte } from "./seiten/Rechte";
+import { Budgetmarke } from "./teile/Budgetmarke";
 
 /**
  * Der Rahmen: Statusleiste, Bereichswahl, und die Frage, ob jemand angemeldet ist.
@@ -75,6 +76,7 @@ export function App() {
                 Rechte
               </button>
             </nav>
+            <Budgetmarke />
             <button className="abstand" onClick={() => void abmelden()} data-test="abmelden">
               Abmelden
             </button>
