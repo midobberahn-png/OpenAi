@@ -55,6 +55,41 @@ TERMIN = {
 }
 
 
+async def _schritt_altern_lassen(engine: AsyncEngine, run_id: str, *, sekunden: int) -> None:
+    """Verschiebt das Ende des letzten erledigten Schrittes zurück.
+
+    **In der Datenbank gerechnet, und das ist der Punkt.** Ein in Python
+    gebildeter Zeitstempel wäre wieder die Prozessuhr, und genau deren Versatz
+    zur Datenbankuhr soll dieser Umweg aus dem Test heraushalten.
+
+    ``jsonb_set`` auf dem letzten Element von ``completed_steps``: Der
+    Arbeiter liest genau dieses (``state -> 'completed_steps' -> -1``).
+    """
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                UPDATE runs
+                   SET state = jsonb_set(
+                         state,
+                         ARRAY['completed_steps',
+                               (jsonb_array_length(state -> 'completed_steps') - 1)::text,
+                               'finished_at'],
+                         to_jsonb(
+                           to_char(
+                             ((state -> 'completed_steps' -> -1 ->> 'finished_at')::timestamptz
+                              - CAST(:um AS interval)) AT TIME ZONE 'UTC',
+                             'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'
+                           )
+                         )
+                       )
+                 WHERE id = :r
+                """
+            ),
+            {"r": uuid.UUID(run_id), "um": timedelta(seconds=sekunden)},
+        )
+
+
 class Drehbuchmodell:
     """Ein Anbieter, der immer denselben Werkzeugvorschlag macht.
 
@@ -337,9 +372,25 @@ class TestEinLiegengebliebenerLauf:
         assert zustand.status == "executing"
         assert zustand.state.get("claim_id") is None, "Kein Anspruch — und das ist der Punkt."
 
-        # ``idle=0``: Gemessen wird das Aufgreifen, nicht das Warten. Dass die
-        # Frist trennt, prüft der Test darunter.
-        bericht = await worker_for(engine, get_settings(), lease=FRIST, idle=timedelta(0)).sweep()
+        # **Der Lauf wird um fünf Sekunden gealtert — in der Datenbank.**
+        #
+        # Vorher stand hier ``idle=timedelta(0)`` mit der Begründung „gemessen
+        # wird das Aufgreifen, nicht das Warten". Die Absicht stimmt, die
+        # Umsetzung war eine Wette auf zwei Uhren: ``finished_at`` schreibt der
+        # **Prozess**, ``now()`` liefert die **Datenbank**, und bei Toleranz
+        # null entscheidet der Versatz zwischen beiden. Gemessen am 25.08.2026:
+        # Läuft die Datenbankuhr vor, ist der Test grün (8 von 8); läuft sie
+        # 42 ms nach, ist er rot (3 von 3) — der Schritt liegt aus Sicht der
+        # Datenbank dann in der Zukunft und ist nie „vorbei".
+        #
+        # Das Altern rechnet die Datenbank aus dem gespeicherten Wert, also in
+        # **einer** Uhr. Gemessen wird weiterhin dasselbe: ein Lauf mitten im
+        # Plan, ohne Anspruch, wird aufgegriffen.
+        await _schritt_altern_lassen(engine, run_id, sekunden=5)
+
+        bericht = await worker_for(
+            engine, get_settings(), lease=FRIST, idle=timedelta(seconds=1)
+        ).sweep()
 
         gemeldet = [e for e in bericht.ergebnisse if e.run_id == run_id]
         assert gemeldet, (

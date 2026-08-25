@@ -1231,25 +1231,46 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   Ursache ist nicht gefunden; ein Retry wäre die falsche Antwort (die
   Konfiguration führt bewusst `retries: 0`). Wer es wiedersieht, hat mehr
   Material als ich.
-* **Und ein zweites, in pytest** (25.08.2026):
+* ~~Und ein zweites, in pytest.~~ **Gefunden und behoben** (25.08.2026, am
+  selben Tag wiedergesehen). Der Verdacht stimmte, und diesmal ließ er sich
+  messen statt vermuten:
+
   `test_worker_sweep.py::TestEinLiegengebliebenerLauf::test_ein_lauf_mitten_im_plan_wird_aufgegriffen`
-  schlug in **einem** Gate-Durchgang fehl — `stale_runs` fand **null**
-  Kandidaten, obwohl der Test unmittelbar davor `status='executing'` und
-  `claim_id IS NULL` aus der Datenbank gelesen hatte. Danach 8× einzeln grün,
-  die Integrationssuite grün, das ganze Gate grün.
+  scheiterte erneut — `stale_runs` fand **null** Kandidaten, obwohl der Test
+  unmittelbar davor `status='executing'` und `claim_id IS NULL` gelesen hatte.
+  Diesmal auf einem Branch, der **nur dieses Dossier** ändert; am Code lag es
+  also nachweislich nicht.
 
-  Was gemessen ist, damit der Nächste nicht bei null anfängt: Die Bedingung ②
-  in `_UEBERFAELLIG` vergleicht **zwei Uhren** — `finished_at` schreibt der
-  Prozess, `now()` liefert die Datenbank —, und der Test setzt `idle=0`, also
-  Toleranz null. Der Abstand zwischen beiden lag in 200 Messungen bei 27–70 ms
-  und war nie negativ; über 40 s schwankte der Uhrenversatz zur Colima-VM
-  zwischen +4 ms und +129 ms. **Das erklärt den Fehlschlag nicht** — es zeigt
-  nur, wie dünn die Marge ist. Ein Vorzeichenwechsel von 30 ms genügte.
+  **Die Ursache sind zwei Uhren.** Bedingung ② in `_UEBERFAELLIG` vergleicht
+  `finished_at` — geschrieben vom **Prozess** — gegen `now()` aus der
+  **Datenbank**, und der Test setzte `idle=0`, also Toleranz null. Gemessen:
 
-  Wer es reproduziert: erst prüfen, ob der Versatz negativ geworden ist
-  (`SELECT clock_timestamp()` gegen die Prozessuhr). Falls ja, gehört die
-  Toleranz in den Test und nicht in die Abfrage — im Betrieb steht `idle` auf
-  60 s, dort ist der Versatz folgenlos.
+  | Uhrenversatz (DB − Prozess) | Ergebnis |
+  |---|---|
+  | **+100 ms** (DB voraus) | 8 von 8 grün |
+  | **−42 ms** (DB hinterher) | 3 von 3 rot |
+
+  Läuft die Datenbankuhr nach, liegt ein gerade beendeter Schritt aus ihrer
+  Sicht in der **Zukunft** und ist nie „vorbei". Die Colima-VM driftet in
+  beide Richtungen; über 40 s wurden Werte zwischen +4 ms und +129 ms gemessen,
+  Stunden später −42 ms.
+
+  **Behoben im Test, nicht in der Abfrage.** Der Lauf wird jetzt um fünf
+  Sekunden gealtert, und zwar **in der Datenbank** (`jsonb_set` über
+  `completed_steps -> -1`), damit nur eine Uhr im Spiel ist. Gemessen wird
+  weiterhin dasselbe: Ein Lauf mitten im Plan, ohne Anspruch, wird
+  aufgegriffen. Im Betrieb steht `idle` auf 60 Sekunden — dort sind 42 ms
+  folgenlos.
+
+  **Was daran offen bleibt und größer ist als dieser Test:** Dieselbe Mischung
+  aus zwei Uhren steckt in der **Anspruchsfrist** (`claimed_at < now() -
+  frist`), und dort zeigt der ungünstige Versatz in die andere Richtung. Läuft
+  die Datenbankuhr **vor**, laufen Ansprüche zu früh ab, und ein Schritt könnte
+  übernommen werden, während sein Inhaber noch arbeitet — die Invariante
+  `hung-step-is-reassigned-only-when-provably-idle` hängt an einem Vergleich,
+  dessen beide Seiten aus verschiedenen Quellen stammen. Bei 42 ms gegen eine
+  Frist von 15 Minuten ist das folgenlos; die saubere Antwort wäre, solche
+  Zeitstempel von der Datenbank setzen zu lassen. Das ist ein eigener Block.
 * **Kein Router in der Oberfläche.** Zwei Bereiche und ein Laufdetail kommen
   mit einem Zustand aus. Sobald ein Laufdetail eine Adresse braucht, die sich
   weitergeben und neu laden lässt, ist das die Gelegenheit für einen — dann mit
