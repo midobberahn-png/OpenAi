@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 60/61**
+**Security Invariant Coverage: 61/62**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -68,6 +68,7 @@ nicht nachträglich passend machen.
 | `agent-chain-propagates-taint` | Kontamination wandert durch die ganze Kette | Liest ein Agent auf beliebiger Stufe Fremdinhalt, gilt der gesamte übergeordnete Lauf als kontaminiert. | `core.agents` |
 | `audit-append-only` | Das Audit-Log ist unveränderlich | UPDATE und DELETE werden auf Datenbankebene abgelehnt. | `db.audit_log` |
 | `audit-tamper-evident` | Manipulation ist erkennbar | Änderung, Löschung oder Umsortierung von Einträgen bricht die Hash-Kette. | `core.audit.chain` |
+| `audit-chain-break-is-detected` | Ein Bruch wird gefunden, ohne dass jemand nachsieht | Der Arbeiter rechnet die ganze Kette in eigenem Takt nach. Ein Bruch hält ihn an und steht danach als Eintrag in der Kette, die er betrifft. | `core.audit.watch` |
 | `audit-survives-erasure` | Löschpflicht und Kette schließen sich nicht aus | Die Pseudonymisierung eines Nutzers lässt die Hash-Kette unversehrt, weil user_id nicht gehasht wird. | `core.audit.chain` |
 | `file-access-confined-to-roots` | Ein Dateizugriff verlässt die freigegebenen Wurzeln nicht | files.read gibt nur Inhalte heraus, deren Pfad **nach Auflösung** unterhalb einer konfigurierten Wurzel liegt und die eine reguläre Datei bezeichnen; eine Abweisung verrät nicht, wohin der Pfad zeigte. | `integrations.localfs` |
 | `web-fetch-reaches-only-public-addresses` | Ein Abruf erreicht nur, was aus dem Internet erreichbar ist | web.fetch baut eine Verbindung ausschließlich zu öffentlich routbaren Adressen auf; geprüft wird die aufgelöste Adresse vor dem Verbindungsaufbau und nach jeder Weiterleitung erneut. | `integrations.web` |
