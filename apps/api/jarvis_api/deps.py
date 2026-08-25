@@ -48,6 +48,7 @@ from jarvis_core.orchestrator import (
 )
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
 from jarvis_core.tools import ToolRegistry
+from jarvis_integrations.web import HttpWebFetcher
 
 __all__ = [
     "Agents",
@@ -334,6 +335,12 @@ def tool_registry(
         engine,
         files=file_reader_for(settings),
         calendar=PostgresCalendarStore(engine, user_id=session.user_id),
+        # **Kein Nutzerbezug, und das ist richtig.** Der Kalender wird an den
+        # Angemeldeten gebunden, weil er *seine* Termine schreibt; das Web
+        # gehört niemandem. Was den Abruf begrenzt, ist die Berechtigung
+        # (``WebConstraints``) und die Adressprüfung im Adapter — beides
+        # unabhängig davon, wer fragt.
+        web=HttpWebFetcher(),
     )
 
 
