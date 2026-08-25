@@ -103,9 +103,7 @@ class TestWasImKatalogSteht:
         eines Laufs eine Statistik: Der Tracker zählte bei jedem Aufruf null,
         und ``max_cost_eur`` schlüge nie an.
         """
-        ohne_preis = model_catalog(
-            _settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test")
-        )
+        ohne_preis = model_catalog(_settings(OPENAI_API_KEY="sk-test", OPENAI_MODEL="gpt-test"))
         nur_eingabe = model_catalog(
             _settings(
                 OPENAI_API_KEY="sk-test",
