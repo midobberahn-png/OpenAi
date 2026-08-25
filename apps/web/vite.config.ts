@@ -16,7 +16,7 @@ import { defineConfig } from "vite";
  * Dateien selbst aus (`jarvis_api.main`), und alles ist ohnehin ein Origin.
  */
 const API = "http://127.0.0.1:8000";
-const PFADE = ["/auth", "/runs", "/actions", "/permissions", "/invocations", "/audit", "/calendar"];
+const PFADE = ["/auth", "/runs", "/actions", "/permissions", "/invocations", "/audit", "/calendar", "/budget"];
 
 export default defineConfig({
   plugins: [react()],

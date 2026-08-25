@@ -115,6 +115,32 @@ class Settings(BaseSettings):
     anschlägt. Deshalb ist die Vorgabe leer und nicht „vertrauen wir mal".
     """
 
+    daily_budget_eur: Decimal = Field(
+        default=Decimal("5.00"), alias="JARVIS_DAILY_BUDGET_EUR", gt=0
+    )
+    """Was ein Nutzer an einem Tag bei fremden Anbietern ausgeben darf.
+
+    **Kein Ausschalter, und das ist Absicht.** Ein Wert von null hieße „keine
+    Grenze" und sähe aus wie „nicht konfiguriert" — genau die stille Null, die
+    dieses Projekt schon zweimal teuer bezahlt hat. Wer mehr braucht, trägt
+    mehr ein; die Grenze bleibt dann eine Aussage.
+
+    Die Vorgabe stand als Beispiel in ``.env.example`` und wurde von nichts
+    gelesen. Sie ist nicht ausgedacht, sondern die Zahl, die dort seit dem
+    ersten Entwurf steht.
+
+    Lokale Modelle zählen nicht mit: Sie kosten Strom, keine Rechnung — und ein
+    erschöpftes Tagesbudget verengt genau auf sie.
+    """
+
+    timezone: str = Field(default="Europe/Berlin", alias="JARVIS_TIMEZONE")
+    """Welcher Tag gemeint ist, wenn vom Tagesbudget die Rede ist.
+
+    Der UTC-Tag wäre bequem und falsch: Er setzte das Budget im Sommer um
+    02:00 Ortszeit zurück. Eine unbekannte Zone scheitert beim Start, nicht bei
+    der ersten Abrechnung.
+    """
+
     files_allowed_roots: Annotated[list[str], NoDecode] = Field(
         default_factory=list, alias="FILES_ALLOWED_ROOTS"
     )

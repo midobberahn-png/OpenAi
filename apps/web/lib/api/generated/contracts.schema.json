@@ -1806,6 +1806,52 @@
       "title": "Correction",
       "type": "object"
     },
+    "DailySpend": {
+      "description": "Was heute schon ausgegeben wurde — und was das für die Modellwahl heißt.\n\nDas Tagesbudget steht seit dem ersten Entwurf in docs/04-orchestrator.md §7\n(„bei 80 % Warnung in der UI, bei 100 % nur noch lokale Modelle\"), und bis\nzu diesem Block gab es weder Zähler noch Grenze. Der Satz daneben ist die\nBegründung und gilt unverändert: **Ohne diese Grenze ist eine fehlerhafte\nAgentenschleife ein finanzielles Risiko, kein Bug.**\n\nDer Unterschied zum ``RunBudget`` ist der Ausgang. Ein Lauf, der seine\nGrenze reißt, endet — bei einem Tagesbudget wäre das falsch: Es soll nicht\nder Assistent ausfallen, sondern der teure Weg. Deshalb ist die Wirkung\neine **Verengung der Modellwahl** auf das, was das Gerät ohnehin kann.",
+      "properties": {
+        "limit_eur": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "title": "Limit Eur"
+        },
+        "since": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Since"
+        },
+        "spent_eur": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "default": "0",
+          "title": "Spent Eur"
+        }
+      },
+      "title": "DailySpend",
+      "type": "object"
+    },
     "DomainPreference": {
       "$defs": {
         "PreferenceDomain": {

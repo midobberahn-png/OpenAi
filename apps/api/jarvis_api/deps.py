@@ -30,6 +30,7 @@ from jarvis_api.db.permission_store import PostgresPermissionStore
 from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.db.session import engine_for
 from jarvis_api.db.session_store import PostgresSessionStore
+from jarvis_api.db.spend_store import PostgresSpendReader
 from jarvis_api.db.webauthn_store import PostgresChallengeStore, PostgresCredentialStore
 from jarvis_api.events import RedisEventBus
 from jarvis_api.providers import model_gateway
@@ -67,6 +68,7 @@ __all__ = [
     "Runs",
     "SessionToken",
     "Sessions",
+    "Spend",
     "Tools",
     "agent_step_source",
     "approval_gateway",
@@ -88,6 +90,7 @@ __all__ = [
     "rate_limited",
     "run_store",
     "session_manager",
+    "spend_reader",
     "tool_registry",
 ]
 
@@ -186,6 +189,20 @@ def calendar_view(engine: DbEngine, session: CurrentSession) -> PostgresCalendar
 
 
 CalendarView = Annotated[PostgresCalendarReader, Depends(calendar_view)]
+
+
+def spend_reader(engine: DbEngine, session: CurrentSession) -> PostgresSpendReader:
+    """Der Tagesverbrauch des angemeldeten Nutzers.
+
+    Wie beim Kalender wird der Eigentümer beim Verdrahten gebunden. Ein
+    Parameter dafür wäre hier besonders unangenehm: Wer einen fremden Nutzer
+    benennen könnte, läse dessen Kosten — und könnte über den Umweg der
+    Erschöpfung sehen, wie viel jemand arbeitet.
+    """
+    return PostgresSpendReader(engine, user_id=session.user_id)
+
+
+Spend = Annotated[PostgresSpendReader, Depends(spend_reader)]
 
 
 def permission_store(engine: DbEngine) -> PostgresPermissionStore:
