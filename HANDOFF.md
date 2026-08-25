@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 25.08.2026, Commit `d0d29e0` auf `main`.** Dieses Dokument ist der
+> **Stand: 25.08.2026, Commit `7dedb94` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -46,13 +46,20 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 |---|---|
 | Commits | 104, Remote auf GitHub |
 | Tests | **1431** Python + 21 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
-| **Security Invariant Coverage** | **59/60** |
+| **Security Invariant Coverage** | **60/61** |
 | mypy | `strict`, sauber über 127 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
 
 ### Was seit dem letzten Dossier geschah
+
+**`web.fetch` steht** — das erste Werkzeug, das Fremdinhalt aus dem **offenen
+Netz** holt, und damit der erste Ernstfall für den Sockel: Bei einer Adresse
+formuliert ein Modell nicht bloß ein Argument, sondern eine Anweisung an das
+Netzwerk, in dem der Server steht. Neue Invariante
+`web-fetch-reaches-only-public-addresses`, Kennzahl **60/61**. Einzelheiten in
+Abschnitt 8.11.
 
 **Die Kostengrenze rechnet, und das Tagesbudget greift** (`3356e1b`, `d0d29e0`).
 Beides hing an derselben Stelle: `ModelUsage.cost_eur` hat nie jemand gesetzt.
@@ -551,7 +558,7 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 
 | Fehlt | Auswirkung |
 |---|---|
-| **Werkzeuge — mehr als zwei** | `files.read` (lesend) und `calendar.create` (schreibend). Der Scope-Katalog führt 34 Einträge, der Werkzeugkatalog zwei. Es fehlen `mail.*`, `web.fetch`, `tasks.*`. |
+| **Werkzeuge — mehr als drei** | `files.read`, `calendar.create`, `web.fetch`. Der Scope-Katalog führt 34 Einträge. Es fehlen `mail.*`, `tasks.*`, `search.web`. |
 | **Ein brauchbarer Antwortschritt** | Er läuft — und sieht nur Schritt*zusammenfassungen*, keine Werkzeug*daten*. „Lies X und fasse es zusammen" endet deshalb mit „ich kenne den Inhalt nicht". Der Weg dorthin führt über Fremdinhalt im Prompt und ist die heikelste offene Entscheidung (Abschnitt 8.4). |
 | **Modellgetriebener Dateizugriff** | Gemessen: Steht der Pfad im Auftrag, trifft das Modell 3/3. Kennt es nur die freigegebene Wurzel, 0/3. Es braucht **Aufzählbarkeit** (`files.list`), nicht nur Auskunft über die Grenze — Abschnitt 8.5. |
 | **Ein Aufruf gegen einen echten Cloud-Endpunkt** | Die Adapter für Anthropic und OpenAI sind gegen aufgezeichnete Antworten geprüft, nie gegen das Netz — es gibt keinen Schlüssel. Was ein Contract-Test nicht findet: ein Feld, das der Anbieter inzwischen anders nennt. Für Ollama gibt es dafür `test_ollama_live.py`; das Gegenstück fehlt. |
@@ -1513,6 +1520,57 @@ die CI nicht** — der umgekehrte Fall zu dem, was das Dossier sonst notiert.
 dann bezahlt, aber der Nutzer bekommt keine Antwort. Das ist die bewusste
 Richtung („lieber sichtbar scheitern als still falsch rechnen"); wer sie
 umdreht, braucht einen Weg, verlorene Buchungen nachzuholen.
+
+### 11. Erledigt: `web.fetch` — und die Adressprüfung, die davor steht
+
+Das erste Werkzeug, das Text aus dem offenen Netz holt. `files.read` liest, was
+jemand selbst hingelegt hat; hier wählt ein **Modell** die Quelle, und im Netz
+steht Text, der genau dafür geschrieben wurde.
+
+**Die eigentliche Arbeit steckt nicht im Werkzeug, sondern in der
+Adressprüfung.** Wer eine Adresse nennt, bestimmt, wohin dieser Prozess eine
+Verbindung aufbaut — und von einem Server aus ist mehr erreichbar als aus dem
+Internet: die eigene Datenbank, das Nachbarsystem hinter der Firewall, unter
+`169.254.169.254` der Metadatendienst jedes Cloud-Anbieters. Vier
+Entscheidungen tragen die Abwehr:
+
+* **Geprüft wird die aufgelöste Adresse, nicht der Name.** Ein Name ist eine
+  Behauptung; `interne-daten.example.com` kann auf `10.0.0.5` zeigen.
+* **Alle Adressen eines Namens, nicht die erste.** Sonst käme ein Name mit zwei
+  Einträgen durch, sobald einer davon öffentlich ist — verbunden würde danach
+  mit irgendeiner.
+* **Nach jeder Weiterleitung erneut.** `follow_redirects=True` wäre die bequeme
+  Fassung und die falsche: Die erste Adresse wäre geprüft, die zweite nicht.
+  Das ist der klassische Weg um jede Eingangsprüfung herum.
+* **Nur Port 80 und 443.** Ein Abruf auf `:6379` ist kein Webseitenabruf,
+  sondern ein Gespräch mit Redis — dass die Antwort für einen HTTP-Client
+  unbrauchbar ist, hilft nichts, denn gesendet wurde die Anfrage trotzdem.
+
+Dazu: `::ffff:127.0.0.1` wird abgewiesen (`is_global` sieht dort eine
+IPv6-Adresse, die Verbindung landet bei der eingebetteten IPv4), und der
+Nachweis in den Tests ist die **Null** — bei einer verweigerten Adresse hat der
+Transport nichts gesehen.
+
+**Zwei Einstufungen, die man leicht verwechselt.** Das Ergebnis ist **P0** —
+eine öffentliche Webseite ist öffentlich, und die Datenklasse sagt etwas über
+*Sensibilität*. Dass der Inhalt nicht vertrauenswürdig ist, sagt
+`reads_untrusted_content`: Der Lauf ist danach kontaminiert, sendende Werkzeuge
+fallen aus seinem Angebot. Beides zu verwechseln hieße, jede Webseite wie eine
+Gesundheitsakte zu behandeln — und ein Schutz, der den Normalfall blockiert,
+wird abgeschaltet.
+
+`WebConstraints` erlaubt eine Hostliste je Berechtigung, **verlangt** sie aber
+nicht: Bei `files.read` ist eine Berechtigung ohne Pfadgrenze keine, weil das
+Dateisystem privat ist; das Web ist öffentlich. Die Grenze, die niemals fehlen
+darf, ist die andere — und sie hängt an keiner Berechtigung.
+
+**Was offen bleibt und benannt ist:** **DNS-Rebinding.** Zwischen Auflösung und
+Verbindungsaufbau liegt ein Zeitfenster; wer beide Antworten kontrolliert, kann
+darin von einer öffentlichen auf eine private Adresse wechseln. Das zu
+schließen hieße, die Verbindung an die geprüfte Adresse zu binden — eigener
+Transport, eigene TLS-Namensprüfung. Bewusst nicht halb gebaut: Ein halber
+Schutz ist schlechter als ein benannter offener. Ebenfalls offen: Was nicht
+HTML ist, geht als Text durch — ein PDF landet als Zeichensalat im Kontext.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
