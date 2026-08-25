@@ -107,14 +107,17 @@ _UEBERFAELLIG = text(
                (state ->> 'claim_id') IS NULL
                AND status = 'executing'
                AND jsonb_array_length(COALESCE(state -> 'completed_steps', '[]'::jsonb)) > 0
-               AND (state -> 'completed_steps' -> -1 ->> 'finished_at')::timestamptz
-                     < now() - CAST(:idle AS interval)
+               -- ``last_step_at`` und **nicht** das ``finished_at`` aus dem
+               -- Dokument: Jenes schreibt der Prozess, dieses die Datenbank.
+               -- Beide Seiten dieses Vergleichs stehen damit auf derselben Uhr
+               -- — dieselbe Entscheidung wie bei ``claimed_at``, und sie ist
+               -- gemessen: Bei 42 ms nachgehender Datenbankuhr lag ein gerade
+               -- beendeter Schritt in deren Zukunft und war nie „vorbei".
+               AND last_step_at IS NOT NULL
+               AND last_step_at < now() - CAST(:idle AS interval)
              )
            )
-     ORDER BY COALESCE(
-                (state ->> 'claimed_at')::timestamptz,
-                (state -> 'completed_steps' -> -1 ->> 'finished_at')::timestamptz
-              )
+     ORDER BY COALESCE((state ->> 'claimed_at')::timestamptz, last_step_at)
      LIMIT :limit
     """
 )
@@ -330,6 +333,19 @@ _UPDATE = text(
                         'claim_id', state -> 'claim_id'
                     )
                ELSE CAST(:state AS jsonb)
+           END,
+           -- **Der Zeitstempel der Leerlaufmessung, von der Datenbank
+           -- gesetzt.** Gestempelt wird genau dann, wenn ein Schritt
+           -- hinzugekommen ist — sonst bliebe der Wert stehen, und ein Lauf,
+           -- der nur seinen Status ändert, sähe frisch aus, obwohl er steht.
+           last_step_at = CASE
+               WHEN jsonb_array_length(
+                        COALESCE(CAST(:state AS jsonb) -> 'completed_steps', '[]'::jsonb)
+                    ) > jsonb_array_length(
+                        COALESCE(state -> 'completed_steps', '[]'::jsonb)
+                    )
+               THEN now()
+               ELSE last_step_at
            END,
            taint_level = :taint_level,
            data_class = :data_class,

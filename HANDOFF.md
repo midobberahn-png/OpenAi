@@ -1255,22 +1255,25 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   beide Richtungen; über 40 s wurden Werte zwischen +4 ms und +129 ms gemessen,
   Stunden später −42 ms.
 
-  **Behoben im Test, nicht in der Abfrage.** Der Lauf wird jetzt um fünf
-  Sekunden gealtert, und zwar **in der Datenbank** (`jsonb_set` über
-  `completed_steps -> -1`), damit nur eine Uhr im Spiel ist. Gemessen wird
-  weiterhin dasselbe: Ein Lauf mitten im Plan, ohne Anspruch, wird
-  aufgegriffen. Im Betrieb steht `idle` auf 60 Sekunden — dort sind 42 ms
-  folgenlos.
+  **Behoben an der Wurzel** (`d4e5f6a7b8c9`): Die Spalte `runs.last_step_at`
+  wird von der **Datenbank** gestempelt (`now()` in `save()`, sobald ein
+  Schritt hinzukommt), und die Leerlaufbedingung vergleicht sie gegen `now()`.
+  Beide Seiten stehen damit auf derselben Uhr — dieselbe Entscheidung wie bei
+  `claimed_at`. Der Behelf im Test (künstliches Altern) ist damit hinfällig;
+  `idle=0` trägt wieder, und ein Regressionstest stellt den Fehlerfall nach:
+  Er setzt `finished_at` im Dokument **eine Stunde in die Zukunft** und
+  verlangt, dass der Lauf trotzdem gefunden wird. Gegengeprüft — mit der alten
+  Bedingung schlägt er fehl.
 
-  **Was daran offen bleibt und größer ist als dieser Test:** Dieselbe Mischung
-  aus zwei Uhren steckt in der **Anspruchsfrist** (`claimed_at < now() -
-  frist`), und dort zeigt der ungünstige Versatz in die andere Richtung. Läuft
-  die Datenbankuhr **vor**, laufen Ansprüche zu früh ab, und ein Schritt könnte
-  übernommen werden, während sein Inhaber noch arbeitet — die Invariante
-  `hung-step-is-reassigned-only-when-provably-idle` hängt an einem Vergleich,
-  dessen beide Seiten aus verschiedenen Quellen stammen. Bei 42 ms gegen eine
-  Frist von 15 Minuten ist das folgenlos; die saubere Antwort wäre, solche
-  Zeitstempel von der Datenbank setzen zu lassen. Das ist ein eigener Block.
+  **Eine Korrektur an meiner eigenen Notiz von vorhin:** Ich hatte hier
+  geschrieben, dieselbe Mischung stecke auch in der **Anspruchsfrist** und
+  könne Ansprüche zu früh ablaufen lassen. **Das ist falsch, und zwar
+  nachgesehen statt vermutet:** `claimed_at` kommt seit jeher aus `now()` der
+  Datenbank — mit genau dieser Begründung im Docstring von `_CLAIM` („damit
+  Anfang und Ende der Messung auf derselben Uhr stehen"). Auch die Undo-Frist
+  ist konsistent: Dort stammen `executed_at` und der Vergleichszeitpunkt beide
+  vom Aufrufer. Die Leerlaufmessung war die **einzige** Stelle, die zwei Uhren
+  mischte — und sie ist es nicht mehr.
 * **Kein Router in der Oberfläche.** Zwei Bereiche und ein Laufdetail kommen
   mit einem Zustand aus. Sobald ein Laufdetail eine Adresse braucht, die sich
   weitergeben und neu laden lässt, ist das die Gelegenheit für einen — dann mit

@@ -238,6 +238,37 @@ class TestWasDerEndpunktNichtTut:
         )
         assert antwort.status_code == 422, antwort.text
 
+    async def test_das_fenster_wird_auf_den_bruchteil_genau_begrenzt(
+        self, client: AsyncClient, engine: AsyncEngine
+    ) -> None:
+        """400 Tage heißt 400 Tage.
+
+        Vorher stand hier ``(bis - beginn).days > 400``; das schneidet den
+        Bruchteil ab, und 400 Tage plus 23:59:59 gingen durch. Kein
+        Sicherheitsproblem, aber eine Zusage, die um fast einen Tag danebenlag
+        — gemeldet von einer Prüfung durch Codex.
+        """
+        await _angemeldet(client, engine)
+        beginn = MORGEN
+
+        knapp_drueber = await client.get(
+            "/calendar",
+            params={
+                "from": beginn.isoformat(),
+                "to": (beginn + timedelta(days=400, hours=23)).isoformat(),
+            },
+        )
+        genau = await client.get(
+            "/calendar",
+            params={
+                "from": beginn.isoformat(),
+                "to": (beginn + timedelta(days=400)).isoformat(),
+            },
+        )
+
+        assert knapp_drueber.status_code == 422, knapp_drueber.text
+        assert genau.status_code == 200, genau.text
+
     async def test_ohne_anmeldung_gibt_es_keine_auskunft(self, client: AsyncClient) -> None:
         antwort = await client.get("/calendar")
         assert antwort.status_code == 401, antwort.text
