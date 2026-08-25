@@ -296,3 +296,24 @@ def test_kein_werkzeug_traegt_einen_berechtigungs_scope() -> None:
         assert not any(scope.startswith("permissions.") for scope in spec.scopes), (
             f"{spec.name} verlangt einen Berechtigungs-Scope: {spec.scopes}"
         )
+
+
+def test_der_werkzeugspeicher_des_kalenders_kann_nicht_lesen() -> None:
+    """Lesen ist kein Werkzeug — und der Werkzeugspeicher kann es nicht.
+
+    Dieselbe Grenze wie oben, an einem neuen Fall: ``GET /calendar`` gibt einem
+    angemeldeten Menschen Auskunft über seine eigenen Termine. Ein
+    ``calendar.read`` wäre etwas anderes — eine Fähigkeit, die ein Nutzer
+    erteilen müsste, die ein Modell vorschlagen könnte und deren Ergebnis als
+    Fremdinhalt in einen Lauf liefe.
+
+    Die Registry bekommt beim Verdrahten einen ``PostgresCalendarStore``. Hätte
+    der ein ``list_events``, stünde die Fähigkeit einem künftigen Handler offen,
+    ohne dass jemand sie erteilt hat — nicht weil sie erlaubt wäre, sondern weil
+    das Objekt sie hat. Gelesen wird deshalb über eine eigene Klasse, die
+    niemand außer der Route hält.
+    """
+    from jarvis_api.db.calendar_store import PostgresCalendarReader, PostgresCalendarStore
+
+    assert not hasattr(PostgresCalendarStore, "list_events")
+    assert hasattr(PostgresCalendarReader, "list_events")

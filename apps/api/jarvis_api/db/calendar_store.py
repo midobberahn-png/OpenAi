@@ -35,7 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_core.ports.calendar import CalendarEvent, CalendarWriteFailed
 
-__all__ = ["PostgresCalendarStore"]
+__all__ = ["PostgresCalendarReader", "PostgresCalendarStore"]
 
 
 _INSERT = text(
@@ -137,3 +137,103 @@ class PostgresCalendarStore:
         except SQLAlchemyError as fehler:
             raise CalendarWriteFailed("Der Termin konnte nicht gelöscht werden.") from fehler
         return treffer.first() is not None
+
+
+_LIST = text(
+    """
+    SELECT id, title, starts_at, ends_at, location, attendees
+      FROM calendar_events
+     WHERE user_id = :user_id
+       AND ends_at > :von
+       AND (CAST(:bis AS timestamptz) IS NULL OR starts_at < :bis)
+     ORDER BY starts_at ASC, id ASC
+     LIMIT :limit
+    """
+)
+"""Drei Entscheidungen stecken in dieser Abfrage.
+
+``user_id`` steht **in** der Anweisung, wie beim Löschen: Eine Zugehörigkeit,
+die sich weglassen lässt, wird irgendwann weggelassen. Ein fremder Termin ist
+hier nicht „verboten", sondern nicht vorhanden.
+
+``ends_at > :von`` und nicht ``starts_at >= :von``: Gefragt ist, was in einem
+Zeitfenster **liegt**, nicht was darin beginnt. Wer um 10 Uhr nachsieht, will
+den Termin sehen, der um 9:30 begann und noch läuft — die andere Fassung
+verschwiege ihn genau dann, wenn er stattfindet.
+
+``CAST(:bis AS timestamptz)``: Ein Parameter, der nur in einem ``IS NULL``
+vorkommt, hat für PostgreSQL keinen herleitbaren Typ und bricht sonst mit
+``AmbiguousParameterError`` ab.
+
+``id`` in der Sortierung ist kein Schmuck: Ohne einen eindeutigen zweiten
+Schlüssel ist die Reihenfolge zweier gleich beginnender Termine unbestimmt, und
+damit auch, welcher von beiden am Limit abgeschnitten wird.
+
+**``notes`` steht nicht in der Auswahl.** Das Ergebnismodell führt das Feld
+nicht — beim Anlegen geht es hinein und kommt nicht zurück —, und dieser
+Endpunkt ist nicht der Ort, das zu ändern: Von allen Feldern eines Termins ist
+die Notiz das, was am ehesten Fremdinhalt trägt, weil ein Modell sie in einem
+kontaminierten Lauf formuliert hat. Sobald jemand einen Kalender *anzeigt*, ist
+das die Frage, die dort entschieden gehört — mit einer Darstellung als Text und
+einer Marke am Lauf, aus dem der Termin stammt."""
+
+
+class PostgresCalendarReader:
+    """Lesender Zugriff auf den Kalender **eines** Nutzers.
+
+    **Eine eigene Klasse und keine zweite Methode am Speicher** — der Grund ist
+    dieselbe Überlegung, die dem Werkzeug-Handler den Eigentümer vorenthält.
+    ``ToolRegistry`` bekommt beim Verdrahten einen ``PostgresCalendarStore``;
+    hätte der ein ``list_events``, könnte ein künftiger Handler den Kalender
+    lesen, ohne dass jemand eine Fähigkeit erteilt hat. Nicht, weil es erlaubt
+    wäre, sondern weil das Objekt es kann — und was ein Objekt kann, wird
+    irgendwann benutzt.
+
+    So gibt es dieses Können dort nicht. Wer liest, hält diese Klasse, und die
+    hält niemand außer der HTTP-Route.
+
+    **Und deshalb ist Lesen hier kein Werkzeug.** Ein ``calendar.read`` wäre
+    etwas anderes als dieser Endpunkt: eine Fähigkeit, die ein Nutzer erteilen
+    müsste, die ein Modell vorschlagen könnte, und deren Ergebnis als
+    Fremdinhalt in einen Lauf liefe. Dieselbe Unterscheidung wie zwischen der
+    Rücknahme und einem ``calendar.delete``.
+    """
+
+    def __init__(self, engine: AsyncEngine, *, user_id: UUID) -> None:
+        self._engine = engine
+        self._user_id = user_id
+
+    async def list_events(
+        self,
+        *,
+        von: datetime,
+        bis: datetime | None = None,
+        limit: int = 50,
+    ) -> list[CalendarEvent]:
+        """Termine dieses Nutzers im Fenster ``[von, bis)``, aufsteigend.
+
+        ``von`` ist Pflicht und hat hier bewusst keinen Vorgabewert: Wo die
+        Auskunft anfängt, ist eine Frage, die der Aufrufer beantwortet — ein
+        stillschweigendes „alles" wäre bei einem wachsenden Kalender eine
+        Abfrage ohne Obergrenze außer ``limit``, und damit eine Antwort, deren
+        Ausschnitt niemand benannt hat.
+
+        Wirft ``CalendarWriteFailed`` nicht: Lesen wirkt nicht. Scheitert die
+        Datenbank, scheitert der Request — es gibt nichts zu unterscheiden.
+        """
+        async with self._engine.connect() as conn:
+            zeilen = await conn.execute(
+                _LIST,
+                {"user_id": self._user_id, "von": von, "bis": bis, "limit": limit},
+            )
+            return [
+                CalendarEvent(
+                    id=zeile.id,
+                    title=zeile.title,
+                    starts_at=zeile.starts_at,
+                    ends_at=zeile.ends_at,
+                    location=zeile.location,
+                    attendees=list(zeile.attendees or []),
+                )
+                for zeile in zeilen.all()
+            ]
