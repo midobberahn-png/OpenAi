@@ -33,20 +33,23 @@ from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.settings import Settings
 from jarvis_core.ports.calendar import CalendarStore
 from jarvis_core.ports.files import FileReader
+from jarvis_core.ports.web import WebFetcher
 from jarvis_core.tools import ToolRegistry
 from jarvis_core.tools.builtin import (
     CALENDAR_CREATE,
     FILES_READ,
+    WEB_FETCH,
     calendar_create_handler,
     calendar_undo_handler,
     files_read_handler,
+    web_fetch_handler,
 )
 
 __all__ = ["tool_catalog"]
 
 
 def tool_catalog(
-    engine: AsyncEngine, *, files: FileReader, calendar: CalendarStore
+    engine: AsyncEngine, *, files: FileReader, calendar: CalendarStore, web: WebFetcher
 ) -> ToolRegistry:
     """Die Registry der Anwendung — mit persistentem Grant-Verbrauch.
 
@@ -66,6 +69,7 @@ def tool_catalog(
         undo_grants=PostgresInvocationStore(engine),
     )
     registry.register(FILES_READ, files_read_handler(files))
+    registry.register(WEB_FETCH, web_fetch_handler(web))
     registry.register(
         CALENDAR_CREATE,
         calendar_create_handler(calendar),

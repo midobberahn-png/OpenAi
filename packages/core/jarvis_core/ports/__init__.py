@@ -8,6 +8,7 @@ from .permissions import PermissionStore, RateLimiter, ToolLookup
 from .runs import RunNotStored, RunStateConflict, RunStore
 from .sessions import SessionStore
 from .spend import ModelSpendSink, SpendContext
+from .web import WebAccessDenied, WebDocument, WebFetcher, WebUnavailable
 from .webauthn import AttestationVerifier, ChallengeStore, CredentialStore
 
 __all__ = [
@@ -30,4 +31,8 @@ __all__ = [
     "SessionStore",
     "SpendContext",
     "ToolLookup",
+    "WebAccessDenied",
+    "WebDocument",
+    "WebFetcher",
+    "WebUnavailable",
 ]

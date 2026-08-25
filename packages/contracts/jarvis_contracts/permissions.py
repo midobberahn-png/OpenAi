@@ -15,6 +15,7 @@ from enum import StrEnum
 from fnmatch import fnmatch
 from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal, Self
+from urllib.parse import urlparse
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
@@ -40,6 +41,7 @@ __all__ = [
     "ScopeName",
     "ScopeSpec",
     "TimeWindow",
+    "WebConstraints",
     "constraints_for",
     "is_sensitive_filename",
 ]
@@ -453,11 +455,59 @@ class AmountConstraints(ScopeConstraints):
         return None
 
 
+class WebConstraints(ScopeConstraints):
+    """Einschränkungen für ``web.fetch``.
+
+    **Anders als bei Dateien ist die Liste hier nicht Pflicht.** Bei
+    ``files.read`` ist eine Berechtigung ohne Pfadgrenze keine Berechtigung —
+    das Dateisystem ist privat, und wer keine Wurzel nennt, meint alles. Das
+    Web ist öffentlich; eine Berechtigung ohne Hostliste bedeutet „öffentliche
+    Seiten", nicht „alles". Die Grenze, die niemals fehlen darf, ist eine
+    andere: keine Adresse im privaten Netz. Sie hängt an keiner Berechtigung
+    und steht im Adapter.
+
+    Wer die Erlaubnis dennoch eng ziehen will, führt Hosts auf — dann gilt
+    ausschließlich diese Liste.
+    """
+
+    allowed_hosts: list[str] = Field(default_factory=list)
+    """Leer heißt: jede öffentliche Adresse. Sonst **ausschließlich** diese
+    Hosts, mitsamt ihren Unterdomänen."""
+
+    def check(
+        self, arguments: dict[str, Any], *, now: datetime | None = None
+    ) -> ConstraintViolation | None:
+        if (base := super().check(arguments, now=now)) is not None:
+            return base
+        if not self.allowed_hosts:
+            return None
+
+        raw = arguments.get("url")
+        if raw is None:
+            return None
+
+        host = (urlparse(str(raw)).hostname or "").lower()
+        if not host:
+            return ConstraintViolation(field="url", message="Die Adresse nennt keinen Host.")
+
+        # ``endswith`` allein wäre das Loch, das bei den Pfaden schon einmal
+        # klaffte: ``boese-example.com`` endet auf ``example.com``. Verglichen
+        # wird deshalb der Punkt mit.
+        if any(host == e.lower() or host.endswith("." + e.lower()) for e in self.allowed_hosts):
+            return None
+
+        return ConstraintViolation(
+            field="url",
+            message=(f"Host {host!r} ist nicht freigegeben ({', '.join(self.allowed_hosts)})."),
+        )
+
+
 CONSTRAINTS_BY_SCOPE: dict[str, type[ScopeConstraints]] = {
     "files.read": FilesConstraints,
     "files.write": FilesConstraints,
     "files.delete": FilesConstraints,
     "mail.send": MailSendConstraints,
+    "web.fetch": WebConstraints,
 }
 """Welcher Scope welche Einschränkungen führt.
 

@@ -59,6 +59,7 @@ from jarvis_core.orchestrator import (
     ToolExecutor,
 )
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
+from jarvis_integrations.web import HttpWebFetcher
 
 __all__ = ["DEFAULT_INTERVALL", "run_forever", "worker_for"]
 
@@ -103,6 +104,7 @@ def worker_for(
                 # die einzige Stelle, an der sich diese Fassung von der
                 # HTTP-Fassung unterscheidet.
                 calendar=PostgresCalendarStore(engine, user_id=lauf.user_id),
+                web=HttpWebFetcher(),
             )
             policy = PolicyEngine(registry, PostgresPermissionStore(engine))
             invocations = PostgresInvocationStore(engine)

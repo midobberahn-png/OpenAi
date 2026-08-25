@@ -108,6 +108,7 @@ from .permissions import (
     ScopeConstraints,
     ScopeSpec,
     TimeWindow,
+    WebConstraints,
     constraints_for,
     is_sensitive_filename,
 )
@@ -179,6 +180,7 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "ScopeConstraints",
     "MailSendConstraints",
     "FilesConstraints",
+    "WebConstraints",
     "CONSTRAINTS_BY_SCOPE",
     "SENSITIVE_FILE_PATTERNS",
     "is_sensitive_filename",

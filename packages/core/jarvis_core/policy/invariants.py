@@ -881,6 +881,27 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="integrations.localfs",
     ),
     Invariant(
+        id="web-fetch-reaches-only-public-addresses",
+        title="Ein Abruf erreicht nur, was aus dem Internet erreichbar ist",
+        statement=(
+            "web.fetch baut eine Verbindung ausschließlich zu öffentlich routbaren "
+            "Adressen auf; geprüft wird die aufgelöste Adresse vor dem Verbindungsaufbau "
+            "und nach jeder Weiterleitung erneut."
+        ),
+        why=(
+            "Bei einem Werkzeug, dessen Argumente ein Modell formuliert, ist eine Adresse "
+            "eine Anweisung an das Netzwerk, in dem der Server steht — und von dort ist "
+            "mehr erreichbar als aus dem Internet: die eigene Datenbank, das Nachbarsystem "
+            "hinter der Firewall, der Metadatendienst des Cloud-Anbieters unter "
+            "169.254.169.254. Eine Sperrliste aus Zeichenketten genügt nicht, weil ein Name "
+            "eine Behauptung ist; und eine Prüfung nur der ersten Adresse genügt nicht, weil "
+            "ein Name mehrere führen kann. Die Weiterleitung ist der klassische Weg um jede "
+            "Eingangsprüfung herum."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="integrations.web",
+    ),
+    Invariant(
         id="resource-ownership-checked-once",
         title="Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen",
         statement=(

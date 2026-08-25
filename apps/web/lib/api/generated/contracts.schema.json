@@ -8876,6 +8876,55 @@
       ],
       "title": "WebAuthnChallenge",
       "type": "object"
+    },
+    "WebConstraints": {
+      "$defs": {
+        "TimeWindow": {
+          "description": "Tageszeitfenster, in dem ein Scope nutzbar ist.",
+          "properties": {
+            "end": {
+              "format": "time",
+              "title": "End",
+              "type": "string"
+            },
+            "start": {
+              "format": "time",
+              "title": "Start",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "title": "TimeWindow",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Einschränkungen für ``web.fetch``.\n\n**Anders als bei Dateien ist die Liste hier nicht Pflicht.** Bei\n``files.read`` ist eine Berechtigung ohne Pfadgrenze keine Berechtigung —\ndas Dateisystem ist privat, und wer keine Wurzel nennt, meint alles. Das\nWeb ist öffentlich; eine Berechtigung ohne Hostliste bedeutet „öffentliche\nSeiten\", nicht „alles\". Die Grenze, die niemals fehlen darf, ist eine\nandere: keine Adresse im privaten Netz. Sie hängt an keiner Berechtigung\nund steht im Adapter.\n\nWer die Erlaubnis dennoch eng ziehen will, führt Hosts auf — dann gilt\nausschließlich diese Liste.",
+      "properties": {
+        "allowed_hosts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Hosts",
+          "type": "array"
+        },
+        "time_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "WebConstraints",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
