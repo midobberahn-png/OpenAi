@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1506** Python + 21 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1509** Python + 22 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **61/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
@@ -1279,11 +1279,45 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   `text()` mit der Bindesyntax (`CAST(:x AS interval)`), und asyncpg bindet ein
   Intervall nur aus einem `timedelta`, nicht aus `'1 hour'`.
 
-* **Ein Flackern im Browsertest.** Einmal in etwa dreißig Durchgängen scheiterte
-  die Anmeldung in `laufdetail.spec.ts` („nicht angemeldet" nach 20 s). Die
-  Ursache ist nicht gefunden; ein Retry wäre die falsche Antwort (die
-  Konfiguration führt bewusst `retries: 0`). Wer es wiedersieht, hat mehr
-  Material als ich.
+* **Ein Flackern im Browsertest — Ursache weiterhin offen, aber es versteckt
+  sich nicht mehr.** Etwa einmal in hundertfünfzig Testausführungen bleibt die
+  Anmeldung auf „nicht angemeldet" stehen; heute zweimal gesehen, einmal in
+  `laufdetail.spec.ts`, einmal in `chat.spec.ts` — es hängt also an
+  `angemeldet()` und nicht an einem bestimmten Test. Gejagt wurde es mit zwölf
+  Durchgängen am Stück (252 Ausführungen): einmal gefangen, danach zwölf
+  Durchgänge ohne Fehlschlag.
+
+  **Was der eine gefangene Fehlschlag sagt:** keine Fehlerkarte, kein
+  abgewiesener Anmelde-Aufruf, Leiste auf „nicht angemeldet". Die Oberfläche
+  hielt die Zeremonie also für **gelungen** — gescheitert ist danach die eine
+  Frage `GET /auth/me`, mit der die Leiste sich vergewissert.
+
+  **Zwei Sackgassen, damit sie niemand zweimal geht:** Es ist kein
+  Parallelrennen (`workers: 1`, `fullyParallel: false`), und es ist nicht das
+  klassische Commit-nach-Antwort-Rennen — FastAPI 0.141 beendet
+  `yield`-Abhängigkeiten **vor** dem Senden der Antwort.
+
+  **Was sich geändert hat:** Der Helfer legt jetzt den Grund in die
+  Fehlermeldung — Zustand der Leiste, Fehlerkarte der Oberfläche und
+  **sämtliche** Anmelde-Aufrufe mit ihrem Ausgang, auch die, die gar nicht
+  ankamen. Ein Retry wäre weiterhin die falsche Antwort; die Konfiguration
+  führt bewusst `retries: 0`.
+
+  **Ein Fallstrick dabei, und er ist der Grund, warum der erste Fang nichts
+  hergab:** Die erste Fassung der Instrumentierung filterte das reguläre
+  `401 /auth/me` vor der Anmeldung heraus — und versteckte damit genau den
+  Hauptverdächtigen. **Wer filtert, entscheidet vorab, was die Ursache nicht
+  ist.** (Dieselbe Fassung hängte den Verlauf außerdem an den Vergleichswert
+  und färbte 19 von 21 Tests rot. Zu Recht.)
+
+* ~~Und die Folge des Flackerns.~~ **Behoben, unabhängig von seiner Ursache.**
+  Die Leiste fragt genau **einmal** und fing bisher *jeden* Fehler als „nicht
+  angemeldet" ab: „der Server sagt nein" (401) und „die Frage kam nicht durch"
+  waren dasselbe. Ein Augenblicksfehler hinterließ damit dauerhaft eine
+  Anmeldemaske, obwohl die Sitzung galt — ohne Hinweis und ohne Ausweg. Es gibt
+  jetzt drei Zustände; „unbekannt" zeigt, was man weiß („abgemeldet wurden Sie
+  nicht"), und einen Knopf, der die Frage wiederholt. Der Browsertest bricht
+  `/auth/me` ab und prüft, dass **keine** Anmeldemaske erscheint.
 * ~~Und ein zweites, in pytest.~~ **Gefunden und behoben** (25.08.2026, am
   selben Tag wiedergesehen). Der Verdacht stimmte, und diesmal ließ er sich
   messen statt vermuten:

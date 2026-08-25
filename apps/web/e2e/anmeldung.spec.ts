@@ -41,3 +41,36 @@ test("Ohne Anmeldung ist nichts zu sehen", async ({ page }) => {
   await expect(page.getByTestId("eingabe")).toHaveCount(0);
   await expect(page.getByTestId("laufliste")).toHaveCount(0);
 });
+
+/**
+ * Eine Frage ohne Antwort ist kein „Nein".
+ *
+ * Die Leiste fragt genau **einmal** `GET /auth/me`. Die erste Fassung fing
+ * jeden Fehler und zeigte „nicht angemeldet" — ein einzelner misslungener
+ * Aufruf hinterließ damit dauerhaft eine Anmeldemaske, obwohl die Sitzung
+ * galt, ohne Hinweis und ohne Ausweg.
+ *
+ * Aufgefallen beim Nachgehen des Testflackerns: Der Fehlschlag zeigte „nicht
+ * angemeldet" ohne Fehlerkarte und ohne abgewiesenen Aufruf. Die Ursache des
+ * Flackerns ist damit nicht gefunden — der Grund, warum es dauerhaft wirkte,
+ * schon.
+ */
+test("Bleibt die Antwort aus, behauptet die Leiste nichts", async ({ page }) => {
+  frischesSystem();
+  // Nachgestellt wird der Aufruf, der nicht ankommt — nicht einer, der „nein"
+  // sagt. Genau diese beiden hat die Oberfläche verwechselt.
+  await page.route("**/auth/me", (weg) => weg.abort());
+  await page.goto("/");
+
+  await expect(page.getByTestId("verbindung")).toHaveText("Status unbekannt");
+  await expect(page.getByTestId("status-unbekannt")).toBeVisible();
+  // Keine Anmeldemaske: Wer eine gültige Sitzung hat, soll sich nicht ein
+  // zweites Mal anmelden, weil eine Frage unterwegs verloren ging.
+  await expect(page.getByTestId("einrichten")).toHaveCount(0);
+
+  await page.unroute("**/auth/me");
+  await page.getByTestId("erneut-pruefen").click();
+
+  await expect(page.getByTestId("verbindung")).toHaveText("nicht angemeldet");
+  await expect(page.getByTestId("anmelden")).toBeVisible();
+});
