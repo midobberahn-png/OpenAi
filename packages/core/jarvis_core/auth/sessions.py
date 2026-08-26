@@ -34,7 +34,7 @@ from jarvis_contracts import (
 )
 from jarvis_core.audit.chain import AuditEntry, AuditSink
 from jarvis_core.clock import utc_now
-from jarvis_core.ports.sessions import SessionStore
+from jarvis_core.ports.sessions import SessionLookup, SessionStore
 
 __all__ = [
     "SESSION_TOKEN_BYTES",
@@ -249,21 +249,14 @@ class SessionManager:
             return SessionCheck(grund=SessionRejection.LEERLAUF)
 
         if gefunden.ist_vorgaenger:
-            # **Der ersetzte Token** (ADR-020). Innerhalb des Fensters ist das
-            # eine Anfrage, die zum Zeitpunkt der Rotation schon unterwegs war;
-            # danach ist es eine Kopie.
-            if not self._im_fenster(gefunden.rotation_alter):
-                # **Erst widerrufen, dann schreiben.** Der Widerruf ist der
-                # Schutz und läuft in eigener Transaktion; der Eintrag ist die
-                # Spur. Scheitert das Schreiben, gilt der Widerruf trotzdem —
-                # und der Fehler schlägt durch, statt still zu bleiben: Ein
-                # Angriff ohne Spur ist genau das, was hier zugesagt war.
-                await self._store.revoke(session.id, moment)
-                await self._spur(session, moment)
-                return SessionCheck(grund=SessionRejection.WIEDERVERWENDET)
-            # Kein zweites Mal rotieren: Der neue Token ist bereits unterwegs.
-            await self._store.touch(session.id, moment)
-            return SessionCheck(session=session.model_copy(update={"last_seen_at": moment}))
+            return await self._vorgaenger(gefunden, session, moment, rotieren=rotieren)
+
+        if gefunden.rotation_alter is not None and not gefunden.ersatz_bestaetigt:
+            # **Der Ersatz ist angekommen.** Diese eine Tatsache unterscheidet
+            # später einen Diebstahl von einem verlorenen Antwortpaket
+            # (ADR-020, Nachtrag) — festgehalten in dem Moment, in dem sie
+            # eintritt, und nicht rekonstruiert, wenn es zu spät ist.
+            await self._store.confirm_rotation(session.id)
 
         await self._store.touch(session.id, moment)
         aktuell = session.model_copy(update={"last_seen_at": moment})
@@ -271,15 +264,79 @@ class SessionManager:
         if not rotieren or gefunden.token_alter < self._rotation_interval:
             return SessionCheck(session=aktuell)
 
-        ersatz = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
-        gedreht = await self._store.rotate(
-            session.id, alt_hash=abdruck, neu_hash=token_fingerprint(ersatz)
-        )
-        # **Der Verlierer des Wettlaufs arbeitet weiter.** ``False`` heißt: Eine
+        # **Der Verlierer des Wettlaufs arbeitet weiter.** ``None`` heißt: Eine
         # gleichzeitige Anfrage war schneller. Ihr Token gilt, unserer liegt ab
         # jetzt als Vorgänger daneben und gilt im Fenster — abgemeldet wird
         # niemand.
-        return SessionCheck(session=aktuell, neuer_token=ersatz if gedreht else None)
+        return SessionCheck(session=aktuell, neuer_token=await self._drehen(gefunden))
+
+    async def _vorgaenger(
+        self,
+        gefunden: SessionLookup,
+        session: Session,
+        moment: datetime,
+        *,
+        rotieren: bool,
+    ) -> SessionCheck:
+        """Ein ersetzter Token — und die Frage, ob er gestohlen ist.
+
+        **Drei Lagen, und sie sind verschieden** (ADR-020, Nachtrag):
+
+        1. *Im Fenster.* Eine Anfrage, die zum Zeitpunkt der Rotation schon
+           unterwegs war. Sie trägt.
+        2. *Nach dem Fenster, Ersatz nie benutzt.* Der Client hat ihn offenbar
+           nie bekommen — ein verlorenes Antwortpaket genügt dafür. Kein
+           Verdacht: Es wird **erneut rotiert**, damit er eine zweite
+           Gelegenheit bekommt.
+        3. *Nach dem Fenster, Ersatz schon benutzt.* Der rechtmäßige Client
+           führt nachweislich den neuen Token. Ein alter in fremder Hand ist
+           eine Kopie — Sitzung widerrufen, Spur in die Kette.
+
+        Die erste Fassung kannte nur 1 und 3 und zahlte damit für jeden
+        Paketverlust mit einer Abmeldung. Ein externes Review hat es gefunden.
+        """
+        if self._im_fenster(gefunden.rotation_alter):
+            await self._store.touch(session.id, moment)
+            return SessionCheck(session=session.model_copy(update={"last_seen_at": moment}))
+
+        if not gefunden.ersatz_bestaetigt:
+            await self._store.touch(session.id, moment)
+            aktuell = session.model_copy(update={"last_seen_at": moment})
+            if not rotieren:
+                return SessionCheck(session=aktuell)
+            # Zweiter Versuch: Der Ersatz von vorhin ist verschollen, also
+            # bekommt der Client einen neuen. Gedreht wird gegen den Token, den
+            # die Zeile **jetzt** führt — nicht gegen den vorgelegten, der ja
+            # bereits der Vorgänger ist.
+            return SessionCheck(session=aktuell, neuer_token=await self._drehen(gefunden))
+
+        # **Erst widerrufen, dann schreiben.** Der Widerruf ist der Schutz und
+        # läuft in eigener Transaktion; der Eintrag ist die Spur. Scheitert das
+        # Schreiben, gilt der Widerruf trotzdem — und der Fehler schlägt durch,
+        # statt still zu bleiben: Ein Angriff ohne Spur ist genau das, was hier
+        # zugesagt war.
+        await self._store.revoke(session.id, moment)
+        await self._spur(session, moment)
+        return SessionCheck(grund=SessionRejection.WIEDERVERWENDET)
+
+    async def _drehen(self, gefunden: SessionLookup) -> str | None:
+        """Erzeugt einen Ersatz und schreibt ihn — oder gibt ``None`` zurück.
+
+        Gedreht wird gegen ``aktueller_hash``, also gegen den Abdruck, den die
+        Zeile **jetzt** führt. Das ist in der Regel der vorgelegte Token; beim
+        zweiten Versuch nach einem verschollenen Ersatz ist es dieser Ersatz.
+        Die Vergleiche-und-setze-Bedingung bleibt dabei unangetastet.
+
+        ``None`` heißt: Eine gleichzeitige Anfrage war schneller. Der Aufrufer
+        arbeitet mit dem Token weiter, den er hat; abgemeldet wird niemand.
+        """
+        ersatz = secrets.token_urlsafe(SESSION_TOKEN_BYTES)
+        gedreht = await self._store.rotate(
+            gefunden.session.id,
+            alt_hash=gefunden.aktueller_hash,
+            neu_hash=token_fingerprint(ersatz),
+        )
+        return ersatz if gedreht else None
 
     async def _spur(self, session: Session, moment: datetime) -> None:
         """Schreibt den Fund in die Audit-Kette (ADR-020 §5).

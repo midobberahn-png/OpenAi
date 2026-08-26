@@ -209,6 +209,12 @@ class TestDerWettlaufGegenPostgres:
                 ).pruefen(ausgestellt.token, now=spaeter, rotieren=True)
             assert gedreht.neuer_token is not None
 
+            # **Der rechtmäßige Client führt den Ersatz** (ADR-020, Nachtrag).
+            # Ohne diesen Schritt wäre der alte Token ein verlorenes
+            # Antwortpaket und kein Diebstahl.
+            async with engine.connect() as conn:
+                await _manager(engine, conn).pruefen(gedreht.neuer_token, now=spaeter)
+
             # Das Fenster läuft ab — wieder auf der Uhr, die es rechnet.
             await _rotation_altern(engine, ausgestellt.session.id, timedelta(minutes=5))
             danach = spaeter + timedelta(seconds=61)
@@ -247,9 +253,12 @@ class TestDieSpurEinesFundes:
             spaeter = NOW + timedelta(minutes=20)
 
             async with engine.connect() as conn:
-                await _manager(engine, conn, rotation_interval=timedelta(minutes=15)).pruefen(
-                    ausgestellt.token, now=spaeter, rotieren=True
-                )
+                gedreht = await _manager(
+                    engine, conn, rotation_interval=timedelta(minutes=15)
+                ).pruefen(ausgestellt.token, now=spaeter, rotieren=True)
+            assert gedreht.neuer_token is not None
+            async with engine.connect() as conn:
+                await _manager(engine, conn).pruefen(gedreht.neuer_token, now=spaeter)
             await _rotation_altern(engine, ausgestellt.session.id, timedelta(minutes=5))
 
             async with engine.connect() as conn:
@@ -292,9 +301,12 @@ class TestDieSpurEinesFundes:
             await _token_altern(engine, ausgestellt.session.id, timedelta(minutes=20))
             spaeter = NOW + timedelta(minutes=20)
             async with engine.connect() as conn:
-                await _manager(engine, conn, rotation_interval=timedelta(minutes=15)).pruefen(
-                    ausgestellt.token, now=spaeter, rotieren=True
-                )
+                gedreht = await _manager(
+                    engine, conn, rotation_interval=timedelta(minutes=15)
+                ).pruefen(ausgestellt.token, now=spaeter, rotieren=True)
+            assert gedreht.neuer_token is not None
+            async with engine.connect() as conn:
+                await _manager(engine, conn).pruefen(gedreht.neuer_token, now=spaeter)
             await _rotation_altern(engine, ausgestellt.session.id, timedelta(minutes=5))
             async with engine.connect() as conn:
                 await _manager(engine, conn, overlap=timedelta(seconds=60)).pruefen(
@@ -314,5 +326,90 @@ class TestDieSpurEinesFundes:
 
             assert ausgestellt.token not in inhalt
             assert token_fingerprint(ausgestellt.token) not in inhalt
+        finally:
+            await _aufraeumen(engine, uid)
+
+
+class TestEinVerschollenerErsatzGegenPostgres:
+    """Der Befund des Reviews an einer echten Zeile.
+
+    Die Rotation ist festgeschrieben, die Antwort ging verloren. Der Client
+    hält weiter den alten Token — und wurde dafür ausgesperrt.
+    """
+
+    @pytest.mark.invariant("session-token-rotation")
+    async def test_ohne_benutzten_ersatz_wird_niemand_ausgesperrt(
+        self, engine: AsyncEngine
+    ) -> None:
+        uid = await _nutzer(engine)
+        try:
+            async with engine.begin() as conn:
+                ausgestellt = await _manager(engine, conn).issue(uid, now=NOW)
+            await _token_altern(engine, ausgestellt.session.id, timedelta(minutes=20))
+            spaeter = NOW + timedelta(minutes=20)
+
+            async with engine.connect() as conn:
+                erster = await _manager(
+                    engine, conn, rotation_interval=timedelta(minutes=15)
+                ).pruefen(ausgestellt.token, now=spaeter, rotieren=True)
+            assert erster.neuer_token is not None
+
+            # Der Ersatz kommt nie an, das Fenster läuft ab.
+            await _rotation_altern(engine, ausgestellt.session.id, timedelta(minutes=5))
+
+            async with engine.connect() as conn:
+                zweiter = await _manager(engine, conn, overlap=timedelta(seconds=60)).pruefen(
+                    ausgestellt.token, now=spaeter + timedelta(minutes=5), rotieren=True
+                )
+
+            assert zweiter.session is not None, (
+                "Ein verlorenes Antwortpaket darf keine Abmeldung sein."
+            )
+            assert zweiter.neuer_token is not None, (
+                "Und er bekommt eine zweite Gelegenheit, den Ersatz zu erhalten."
+            )
+            assert zweiter.neuer_token != erster.neuer_token
+
+            async with engine.connect() as conn:
+                manager = _manager(engine, conn)
+                assert await manager.verify(zweiter.neuer_token, now=spaeter) is not None
+        finally:
+            await _aufraeumen(engine, uid)
+
+    async def test_kein_eintrag_in_der_kette_ohne_diebstahl(self, engine: AsyncEngine) -> None:
+        """Die Gegenprobe zur Spur: Ein verschollener Ersatz ist kein Fund.
+
+        Ein Protokoll, das bei jedem Paketverlust einen Sicherheitsvorfall
+        meldet, wird nach drei Tagen ignoriert — dieselbe Überlegung wie bei der
+        Kettenprüfung, die nur bei neuen Brüchen schreibt.
+        """
+        uid = await _nutzer(engine)
+        try:
+            async with engine.begin() as conn:
+                ausgestellt = await _manager(engine, conn).issue(uid, now=NOW)
+            await _token_altern(engine, ausgestellt.session.id, timedelta(minutes=20))
+            spaeter = NOW + timedelta(minutes=20)
+            async with engine.connect() as conn:
+                await _manager(engine, conn, rotation_interval=timedelta(minutes=15)).pruefen(
+                    ausgestellt.token, now=spaeter, rotieren=True
+                )
+            await _rotation_altern(engine, ausgestellt.session.id, timedelta(minutes=5))
+            async with engine.connect() as conn:
+                await _manager(engine, conn, overlap=timedelta(seconds=60)).pruefen(
+                    ausgestellt.token, now=spaeter + timedelta(minutes=5), rotieren=True
+                )
+
+            async with engine.connect() as conn:
+                anzahl = (
+                    await conn.execute(
+                        text(
+                            "SELECT count(*) FROM audit_log "
+                            "WHERE action = 'session.token-reuse' AND user_id = :u"
+                        ),
+                        {"u": uid},
+                    )
+                ).scalar_one()
+
+            assert anzahl == 0
         finally:
             await _aufraeumen(engine, uid)

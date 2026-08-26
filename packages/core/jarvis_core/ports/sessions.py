@@ -27,6 +27,14 @@ class SessionLookup:
     ist_vorgaenger: bool
     """``True``, wenn der Token bereits ersetzt wurde."""
 
+    aktueller_hash: str
+    """Der Abdruck, den die Zeile **jetzt** führt.
+
+    Nicht zwingend der des vorgelegten Tokens: Wer den Vorgänger vorlegt, findet
+    hier den Ersatz. Gebraucht wird er, um erneut zu rotieren, ohne die
+    Vergleiche-und-setze-Bedingung aufzugeben — und ein Abdruck ist kein
+    Geheimnis, das sich damit öffnen ließe."""
+
     token_alter: timedelta
     """Wie alt der **aktuelle** Token ist — seit der letzten Rotation, sonst
     seit der Ausgabe.

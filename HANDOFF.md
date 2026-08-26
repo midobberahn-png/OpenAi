@@ -45,11 +45,11 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1565** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1574** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **62/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
-| Datenbank | 33 Tabellen, 11 Migrationen, bi-direktional geprüft |
+| Datenbank | 33 Tabellen, 12 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
 
 ### Was seit dem letzten Dossier geschah
@@ -2017,17 +2017,24 @@ Richtungen.
 
 **Offen, mit Reihenfolge:**
 
-* **Ein verlorenes Rotationscookie meldet den rechtmäßigen Nutzer ab.** Die
-  Rotation committet, bevor die Antwort ankommt; geht sie verloren, hält der
-  Browser den alten Token und wird nach 60 Sekunden als Kopie behandelt.
-* **Die Wiederverwendungserkennung ist als DoS gegen den Eigentümer nutzbar.**
-  Wer nur den alten Token hat, beendet die ganze Sitzung. ADR-020 wägt den
-  Fehlalarm ab, nicht den Missbrauch.
+* ~~Ein verlorenes Rotationscookie meldet den rechtmäßigen Nutzer ab.~~ und
+  ~~die Wiederverwendungserkennung als DoS.~~ **Beide behoben** (ADR-020,
+  Nachtrag). Sie hingen an derselben Frage — *wann ist eine Wiederverwendung
+  ein Diebstahl?* —, und die Antwort ist eine Tatsache, die das System kennen
+  kann: **Wurde der Ersatz je benutzt?**
 
-  Beide hängen an derselben Frage — *wann ist eine Wiederverwendung ein
-  Diebstahl?* Naheliegend: erst widerrufen, wenn der **neue** Token
-  nachweislich benutzt wurde. Das gehört in einen ADR-Nachtrag, nicht in eine
-  stille Änderung.
+  `rotation_confirmed_at` hält es fest, sobald der neue Token zum ersten Mal
+  vorgelegt wird. Damit zerfällt der eine Fall in drei: im Fenster trägt der
+  alte Token; danach ohne benutzten Ersatz bekommt der Client eine **zweite
+  Gelegenheit** (es wird erneut rotiert, der Verlust wird behoben statt
+  bestraft); danach mit benutztem Ersatz ist es eine Kopie und die Sitzung
+  endet.
+
+  Der DoS bleibt möglich und ist **einmalig**: Wer einen ersetzten Token
+  besitzt, beendet damit genau eine Sitzung — danach ist auch sein eigener
+  Zugang weg, und der rechtmäßige Nutzer meldet sich mit Passkey neu an. Das
+  steht so im Nachtrag; eine Erkennung, die bei Verdacht nichts tut, wäre
+  keine.
 * **`files.list` kann über eine getauschte Elternkomponente hinausgreifen.**
   `O_NOFOLLOW` schützt nur den letzten Bestandteil — die strukturelle Grenze
   ist im Lesepfad seit jeher dokumentiert. Neu ist, dass die Aufzählung **den

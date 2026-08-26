@@ -50,7 +50,8 @@ _LOOKUP = text(
            (token_hash <> :h) AS ist_vorgaenger,
            now() - COALESCE(rotated_at, created_at) AS token_alter,
            now() - rotated_at AS rotation_alter,
-           (rotation_confirmed_at IS NOT NULL) AS ersatz_bestaetigt
+           (rotation_confirmed_at IS NOT NULL) AS ersatz_bestaetigt,
+           token_hash AS aktueller_hash
       FROM sessions
      WHERE token_hash = :h OR prev_token_hash = :h
     """
@@ -171,9 +172,11 @@ class PostgresSessionStore:
         token_alter = felder.pop("token_alter")
         rotation_alter = felder.pop("rotation_alter")
         bestaetigt = bool(felder.pop("ersatz_bestaetigt"))
+        aktueller = str(felder.pop("aktueller_hash"))
         return SessionLookup(
             session=Session(**felder),
             ist_vorgaenger=ist_vorgaenger,
+            aktueller_hash=aktueller,
             token_alter=token_alter,
             rotation_alter=rotation_alter,
             ersatz_bestaetigt=bestaetigt,
