@@ -60,11 +60,26 @@ _LOOKUP = text(
 Zeile hat, hat auch die Antwort, und eine zweite Auswertung im Python-Teil wäre
 eine zweite Wahrheit über dieselbe Zeile.
 
-**Und die beiden Alter ebenfalls.** ``rotated_at`` und ``created_at`` stehen auf
-der Uhr der Datenbank; wer sie gegen einen Zeitpunkt aus dem Prozess vergliche,
-machte die Gültigkeit eines Tokens von der Uhrendrift zwischen beiden abhängig.
-Genau das hat ein Integrationstest hier gefunden: Mit gestellter Prozessuhr galt
-ein ersetzter Token weiter, weil die Differenz negativ wurde."""
+**Und die beiden Alter ebenfalls** — hier statt im Prozess, weil ein Vergleich
+gegen einen Zeitpunkt von dort die Gültigkeit eines Tokens von der Uhrendrift
+abhängig machte. Ein Integrationstest hat genau das gefunden: Mit gestellter
+Prozessuhr galt ein ersetzter Token weiter, weil die Differenz negativ wurde.
+
+**Eine Einschränkung, die hier stehen muss** (ein externes Review hat sie
+gefunden, nachdem eine frühere Fassung dieses Absatzes das Gegenteil
+behauptete): ``rotated_at`` setzt die Datenbank, ``created_at`` dagegen der
+**Prozess** beim Anlegen. Für ``rotation_alter`` — die Frist, an der die
+Wiederverwendungserkennung hängt — ist das ohne Belang, sie rechnet
+ausschließlich mit ``rotated_at``. ``token_alter`` mischt bei einer noch nie
+rotierten Sitzung dagegen beide Uhren: Läuft der ausstellende Prozess vor,
+verzögert sich die erste Rotation um die Drift; läuft er nach, kommt sie zu
+früh. Beides ist begrenzt und ohne Sicherheitsfolge — zu früh rotieren ist
+harmlos, zu spät verschiebt den Schutz um die Drift.
+
+Die saubere Behebung wäre, ``created_at`` ebenfalls von der Datenbank setzen zu
+lassen. Das hängt an ``expires_at`` und damit an der Zeitsteuerung der halben
+Testsuite; es steht als eigener Punkt im Dossier statt als stille Halbheit
+hier."""
 
 _ROTATE = text(
     """

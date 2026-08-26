@@ -223,12 +223,21 @@ Permissions = Annotated[PostgresPermissionStore, Depends(permission_store)]
 def session_manager(conn: DbConnection, engine: DbEngine) -> SessionManager:
     """Der Sitzungsmanager — mit beidem: Request-Verbindung und Engine.
 
-    Anlegen und Widerrufen gehören in die Transaktion des Requests: Eine
-    Anmeldung, die scheitert, soll keine Sitzung hinterlassen. ``touch()``
-    gehört daneben — sonst hält ein Request die Zeile gesperrt, solange er
-    läuft, und ein Ereignisstrom läuft für immer.
+    Anlegen gehört in die Transaktion des Requests: Eine Anmeldung, die
+    scheitert, soll keine Sitzung hinterlassen. ``touch()``, die Rotation und
+    der Widerruf gehören daneben in eigene Transaktionen — sonst hält ein
+    Request die Zeile gesperrt, solange er läuft (ein Ereignisstrom läuft für
+    immer), und schlimmer: Ein Widerruf in der Request-Transaktion würde von
+    der 401-Ausnahme zurückgerollt, die unmittelbar darauf folgt.
+
+    **Und die Audit-Senke gehört dazu** (ADR-020 §5): Eine erkannte
+    Token-Wiederverwendung hinterlässt eine Spur in der Kette. Ohne diese Zeile
+    stünde die Zusage im Entscheidungsdokument und nirgends sonst — genau das
+    hat ein externes Review hier gefunden.
     """
-    return SessionManager(PostgresSessionStore(conn, engine=engine))
+    return SessionManager(
+        PostgresSessionStore(conn, engine=engine), audit=PostgresAuditSink(engine)
+    )
 
 
 Sessions = Annotated[SessionManager, Depends(session_manager)]

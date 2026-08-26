@@ -1986,6 +1986,63 @@ wartet, sieht im Protokoll nach `grund=unbekannt` — das wäre die Datenbank �
 oder nach `grund=kein-token` **unmittelbar nach** einem erfolgreichen
 `login/finish`, und dann läge es am Browser.
 
+### 19. Ein externes Review über die Blöcke dieses Tages — und was es fand
+
+Nach elf Blöcken (#16–#26) ein Codex-Review über `git diff 443b941..origin/main`,
+57 Dateien, ~4.800 Zeilen. Es hat geliefert: **vier der sechs Befunde sind
+Fehler, die an diesem Tag entstanden sind.** Nachgeprüft wurde jeder, bevor
+etwas geändert wurde — die Regel aus §9 gilt für Prüferaussagen in beide
+Richtungen.
+
+**Behoben:**
+
+1. **Fail-open in der Kettenprüfung** (§8 Abschnitt 17 wird damit erst wahr).
+   `ChainWatch.pruefen()` setzte den Takt **vor** `verify()`. Ein einzelner
+   Datenbankfehler ließ die Prüfung eine Stunde lang als erledigt gelten, und
+   in dieser Stunde wirkte der Arbeiter weiter. Ich hatte das Verhalten sogar
+   in einem Test festgeschrieben und mit Sparsamkeit begründet. Eine Abfrage je
+   Minute ist der billigere Preis; der Test ist umgekehrt, und der Fall, der
+   zwischen zwei Tests durchfiel, ist jetzt gemessen.
+2. **Die Audit-Spur aus ADR-020 gab es nicht.** `session.token-reuse` stand im
+   Entscheidungsdokument und nirgends im Code — `grep` fand genau einen
+   Treffer, und der war das ADR selbst. **Dasselbe Muster wie bei
+   `zero_retention` und der Kettenprüfung ohne Aufrufer**, an einem Tag, der
+   überwiegend aus dem Beheben genau dieses Musters bestand. Ein Dokument, das
+   etwas zusagt, ist keine Umsetzung.
+3. **Ein Kommentar, der die Unwahrheit sagte.** Er behauptete, `rotated_at`
+   *und* `created_at` stünden auf der Uhr der Datenbank. `created_at` kommt aus
+   dem Prozess. Für die Wiederverwendungserkennung ist das ohne Belang — sie
+   rechnet nur mit `rotated_at` —, für die **erste** Rotation nicht: Sie
+   verschiebt sich um die Uhrendrift. Der Kommentar sagt das jetzt.
+
+**Offen, mit Reihenfolge:**
+
+* **Ein verlorenes Rotationscookie meldet den rechtmäßigen Nutzer ab.** Die
+  Rotation committet, bevor die Antwort ankommt; geht sie verloren, hält der
+  Browser den alten Token und wird nach 60 Sekunden als Kopie behandelt.
+* **Die Wiederverwendungserkennung ist als DoS gegen den Eigentümer nutzbar.**
+  Wer nur den alten Token hat, beendet die ganze Sitzung. ADR-020 wägt den
+  Fehlalarm ab, nicht den Missbrauch.
+
+  Beide hängen an derselben Frage — *wann ist eine Wiederverwendung ein
+  Diebstahl?* Naheliegend: erst widerrufen, wenn der **neue** Token
+  nachweislich benutzt wurde. Das gehört in einen ADR-Nachtrag, nicht in eine
+  stille Änderung.
+* **`files.list` kann über eine getauschte Elternkomponente hinausgreifen.**
+  `O_NOFOLLOW` schützt nur den letzten Bestandteil — die strukturelle Grenze
+  ist im Lesepfad seit jeher dokumentiert. Neu ist, dass die Aufzählung **den
+  Identitätsvergleich nach dem Öffnen nicht macht**, den der Leser macht.
+* **`created_at` von der Datenbank setzen lassen.** Die saubere Behebung zu
+  Punkt 3. Sie hängt an `expires_at` und damit an der Zeitsteuerung der halben
+  Testsuite — deshalb als eigener Punkt und nicht als Beifang.
+
+**Und vier Tests, die grün sind, ohne die behauptete Eigenschaft zu prüfen** —
+der Fehlertyp, der dieses Projekt am meisten gekostet hat. Der schwerste war
+die fehlende Kombination zu Befund 1 (behoben). Offen: `FakePermissions` in
+`test_grenzen_im_angebot.py` ignoriert `user_id`, es gibt also keinen Test mit
+**zwei** Nutzern; die Isolation ist korrekt (das Review hat sie bestätigt), aber
+nicht geprüft.
+
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
 Der Schutz steht (`enforce_admins: true`, keine Force-Pushes, keine Löschung,
