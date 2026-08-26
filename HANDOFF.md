@@ -1311,6 +1311,27 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   hielt die Zeremonie also für **gelungen** — gescheitert ist danach die eine
   Frage `GET /auth/me`, mit der die Leiste sich vergewissert.
 
+  **26.08.2026, zweiter Fang — und diesmal steht die Kette da.** Die
+  geschärfte Instrumentierung hat geliefert, wofür sie gebaut wurde:
+
+  ```
+  401 /auth/me → 201 /auth/bootstrap → 201 /auth/register/finish
+              → 200 /auth/login/start → 200 /auth/login/finish → 401 /auth/me
+  ```
+
+  Jeder Schritt der Zeremonie **gelingt**, `login/finish` antwortet mit 200 —
+  und der unmittelbar folgende `/auth/me` antwortet **401**. Die Sitzung
+  entsteht also und gilt einen Wimpernschlag später nicht. Damit ist die Suche
+  von „irgendwo in der Anmeldung" auf **eine** Stelle eingegrenzt: was zwischen
+  dem Setzen des Sitzungs-Cookies und seiner ersten Prüfung geschieht.
+
+  Zwei Kandidaten, beide ungeprüft: Das Cookie erreicht den nächsten Aufruf
+  nicht (dann läge es im Browser), oder die Sitzung ist beim Lesen noch nicht
+  sichtbar (dann läge es an der Transaktion, in der sie entsteht). Der nächste,
+  der das aufnimmt, hat damit eine Frage statt eines Suchraums — und die
+  Zeilen, um sie zu beantworten, stehen in `auth/sessions.py` und in der Route
+  `login/finish`.
+
   **Zwei Sackgassen, damit sie niemand zweimal geht:** Es ist kein
   Parallelrennen (`workers: 1`, `fullyParallel: false`), und es ist nicht das
   klassische Commit-nach-Antwort-Rennen — FastAPI 0.141 beendet
