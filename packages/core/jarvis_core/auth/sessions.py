@@ -32,6 +32,7 @@ from jarvis_contracts import (
     IssuedSession,
     Session,
 )
+from jarvis_core.audit.chain import AuditEntry, AuditSink
 from jarvis_core.clock import utc_now
 from jarvis_core.ports.sessions import SessionStore
 
@@ -142,8 +143,17 @@ class SessionManager:
         rotation_interval: timedelta = DEFAULT_ROTATION_INTERVAL,
         overlap: timedelta = DEFAULT_OVERLAP,
         clock: Callable[[], datetime] = utc_now,
+        audit: AuditSink | None = None,
     ) -> None:
         self._store = store
+        self._audit = audit
+        """Wohin ein Fund geschrieben wird (ADR-020 §5).
+
+        ``None`` heißt: keine Spur. Zulässig für Aufrufer ohne Kette — und
+        ausdrücklich **nicht** die Vorgabe im Betrieb, wo ``deps.py`` sie
+        mitgibt. Ein Angriff, der keine Spur hinterlässt, ist die Hälfte
+        dessen, was ADR-020 zusagt."""
+
         self._ttl = ttl
         self._idle_timeout = idle_timeout
         self._rotation_interval = rotation_interval
@@ -243,7 +253,13 @@ class SessionManager:
             # eine Anfrage, die zum Zeitpunkt der Rotation schon unterwegs war;
             # danach ist es eine Kopie.
             if not self._im_fenster(gefunden.rotation_alter):
+                # **Erst widerrufen, dann schreiben.** Der Widerruf ist der
+                # Schutz und läuft in eigener Transaktion; der Eintrag ist die
+                # Spur. Scheitert das Schreiben, gilt der Widerruf trotzdem —
+                # und der Fehler schlägt durch, statt still zu bleiben: Ein
+                # Angriff ohne Spur ist genau das, was hier zugesagt war.
                 await self._store.revoke(session.id, moment)
+                await self._spur(session, moment)
                 return SessionCheck(grund=SessionRejection.WIEDERVERWENDET)
             # Kein zweites Mal rotieren: Der neue Token ist bereits unterwegs.
             await self._store.touch(session.id, moment)
@@ -264,6 +280,35 @@ class SessionManager:
         # jetzt als Vorgänger daneben und gilt im Fenster — abgemeldet wird
         # niemand.
         return SessionCheck(session=aktuell, neuer_token=ersatz if gedreht else None)
+
+    async def _spur(self, session: Session, moment: datetime) -> None:
+        """Schreibt den Fund in die Audit-Kette (ADR-020 §5).
+
+        **Der Eintrag stand im ADR und nirgends im Code** — ein externes Review
+        hat es gefunden: ``grep`` fand ``session.token-reuse`` ausschließlich im
+        Entscheidungsdokument. Dasselbe Muster wie bei ``zero_retention``, das
+        ein Jahr lang im Vertrag stand und von nichts gelesen wurde.
+
+        Der Token selbst kommt **nicht** hinein, auch nicht als Abdruck: Was in
+        einer manipulationssicheren Kette steht, steht dort dauerhaft, und ein
+        Abdruck erlaubt den Abgleich mit einem geratenen Token.
+        """
+        if self._audit is None:
+            return
+        await self._audit.append(
+            AuditEntry(
+                occurred_at=moment,
+                actor="jarvis",
+                action="session.token-reuse",
+                resource=str(session.id),
+                details={
+                    "user_id": str(session.user_id),
+                    "client": session.client,
+                    "channel": session.channel,
+                },
+                user_id=session.user_id,
+            )
+        )
 
     def _im_fenster(self, rotation_alter: timedelta | None) -> bool:
         """Gilt der vorige Token noch?

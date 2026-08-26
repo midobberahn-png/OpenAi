@@ -25,6 +25,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from jarvis_api.db.audit_store import PostgresAuditSink
 from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_core.auth import SessionManager, SessionRejection, token_fingerprint
 
@@ -83,6 +84,7 @@ def _manager(engine: AsyncEngine, conn: object, **kw: object) -> SessionManager:
     """
     return SessionManager(
         PostgresSessionStore(conn, engine=engine),  # type: ignore[arg-type]
+        audit=PostgresAuditSink(engine),
         **kw,  # type: ignore[arg-type]
     )
 
@@ -222,5 +224,95 @@ class TestDerWettlaufGegenPostgres:
                     "Nach einer erkannten Kopie muss die ganze Sitzung enden — sonst "
                     "arbeitet der Dieb mit dem neuen Token weiter, falls er auch den hat."
                 )
+        finally:
+            await _aufraeumen(engine, uid)
+
+
+class TestDieSpurEinesFundes:
+    """Was ADR-020 §5 zusagt — und was ein externes Review vermisst hat.
+
+    Der Eintrag ``session.token-reuse`` stand im Entscheidungsdokument und
+    nirgends im Code; `grep` fand ihn ausschließlich dort. Dasselbe Muster wie
+    bei ``zero_retention``, das ein Jahr lang im Vertrag stand und von nichts
+    gelesen wurde — und wie bei der Kettenprüfung, die niemand aufrief.
+    """
+
+    @pytest.mark.invariant("session-token-rotation")
+    async def test_eine_erkannte_kopie_steht_in_der_kette(self, engine: AsyncEngine) -> None:
+        uid = await _nutzer(engine)
+        try:
+            async with engine.begin() as conn:
+                ausgestellt = await _manager(engine, conn).issue(uid, now=NOW)
+            await _token_altern(engine, ausgestellt.session.id, timedelta(minutes=20))
+            spaeter = NOW + timedelta(minutes=20)
+
+            async with engine.connect() as conn:
+                await _manager(engine, conn, rotation_interval=timedelta(minutes=15)).pruefen(
+                    ausgestellt.token, now=spaeter, rotieren=True
+                )
+            await _rotation_altern(engine, ausgestellt.session.id, timedelta(minutes=5))
+
+            async with engine.connect() as conn:
+                fund = await _manager(engine, conn, overlap=timedelta(seconds=60)).pruefen(
+                    ausgestellt.token, now=spaeter + timedelta(minutes=5)
+                )
+            assert fund.grund is SessionRejection.WIEDERVERWENDET
+
+            async with engine.connect() as conn:
+                zeile = (
+                    (
+                        await conn.execute(
+                            text(
+                                "SELECT action, actor, resource, details FROM audit_log "
+                                "WHERE action = 'session.token-reuse' AND user_id = :u"
+                            ),
+                            {"u": uid},
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+
+            assert zeile["actor"] == "jarvis"
+            assert zeile["resource"] == str(ausgestellt.session.id)
+            assert zeile["details"]["user_id"] == str(uid)
+        finally:
+            await _aufraeumen(engine, uid)
+
+    async def test_kein_token_steht_in_der_spur(self, engine: AsyncEngine) -> None:
+        """Auch kein Abdruck.
+
+        Was in einer manipulationssicheren Kette steht, steht dort dauerhaft —
+        und ein Abdruck erlaubt den Abgleich mit einem geratenen Token.
+        """
+        uid = await _nutzer(engine)
+        try:
+            async with engine.begin() as conn:
+                ausgestellt = await _manager(engine, conn).issue(uid, now=NOW)
+            await _token_altern(engine, ausgestellt.session.id, timedelta(minutes=20))
+            spaeter = NOW + timedelta(minutes=20)
+            async with engine.connect() as conn:
+                await _manager(engine, conn, rotation_interval=timedelta(minutes=15)).pruefen(
+                    ausgestellt.token, now=spaeter, rotieren=True
+                )
+            await _rotation_altern(engine, ausgestellt.session.id, timedelta(minutes=5))
+            async with engine.connect() as conn:
+                await _manager(engine, conn, overlap=timedelta(seconds=60)).pruefen(
+                    ausgestellt.token, now=spaeter + timedelta(minutes=5)
+                )
+
+            async with engine.connect() as conn:
+                inhalt = (
+                    await conn.execute(
+                        text(
+                            "SELECT details::text AS t FROM audit_log "
+                            "WHERE action = 'session.token-reuse' AND user_id = :u"
+                        ),
+                        {"u": uid},
+                    )
+                ).scalar_one()
+
+            assert ausgestellt.token not in inhalt
+            assert token_fingerprint(ausgestellt.token) not in inhalt
         finally:
             await _aufraeumen(engine, uid)
