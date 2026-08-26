@@ -57,19 +57,30 @@ class InMemorySessions:
         prüften die Tests eine Rotation, die es in der Datenbank nicht gibt.
         """
         if (session := self.rows.get(token_hash)) is not None:
-            return SessionLookup(
-                session=session,
-                ist_vorgaenger=False,
-                rotated_at=self.rotated.get(session.id),
-            )
+            return self._befund(session, ist_vorgaenger=False)
         for vorher, sid in self.vorgaenger.items():
             if vorher == token_hash:
-                for s in self.rows.values():
-                    if s.id == sid:
-                        return SessionLookup(
-                            session=s, ist_vorgaenger=True, rotated_at=self.rotated.get(sid)
-                        )
+                for kandidat in self.rows.values():
+                    if kandidat.id == sid:
+                        return self._befund(kandidat, ist_vorgaenger=True)
         return None
+
+    def _befund(self, session: Session, *, ist_vorgaenger: bool) -> SessionLookup:
+        """Bildet die **Alter** nach, die die Abfrage rechnet.
+
+        Nicht die Zeitstempel: Der echte Speicher gibt ``now() - rotated_at``
+        zurück, weil beide Seiten der Frist auf derselben Uhr stehen müssen.
+        Eine Attrappe, die stattdessen Zeitpunkte liefert, prüfte eine andere
+        Bauart als die, die im Betrieb läuft — und genau diese Abweichung hat
+        ein Integrationstest schon einmal aufgedeckt.
+        """
+        rotiert = self.rotated.get(session.id)
+        return SessionLookup(
+            session=session,
+            ist_vorgaenger=ist_vorgaenger,
+            token_alter=self.uhr - (rotiert if rotiert is not None else session.created_at),
+            rotation_alter=None if rotiert is None else self.uhr - rotiert,
+        )
 
     async def rotate(self, session_id: UUID, *, alt_hash: str, neu_hash: str) -> bool:
         """Vergleiche-und-setze — der Kern des Wettlaufs.
@@ -416,9 +427,11 @@ class TestRotation:
         store.uhr = NOW + timedelta(minutes=20)
         await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
 
-        # Weit nach dem Fenster — der Dieb meldet sich.
-        spaeter = store.uhr + timedelta(minutes=5)
-        geprueft = await manager.pruefen(issued.token, now=spaeter)
+        # Weit nach dem Fenster — der Dieb meldet sich. Gestellt wird die Uhr
+        # des **Speichers**: Das Überlappungsfenster rechnet gegen ein Alter
+        # aus der Datenbank, und die Prozessuhr erreicht es nicht.
+        store.uhr += timedelta(minutes=5)
+        geprueft = await manager.pruefen(issued.token, now=store.uhr)
 
         assert geprueft.session is None
 
@@ -511,11 +524,11 @@ class TestDerWettlauf:
         gedreht = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
         assert gedreht.neuer_token is not None
 
-        spaeter = store.uhr + timedelta(seconds=61)
-        geprueft = await manager.pruefen(issued.token, now=spaeter)
+        store.uhr += timedelta(seconds=61)
+        geprueft = await manager.pruefen(issued.token, now=store.uhr)
 
         assert geprueft.grund is SessionRejection.WIEDERVERWENDET
-        assert await manager.verify(gedreht.neuer_token, now=spaeter) is None, (
+        assert await manager.verify(gedreht.neuer_token, now=store.uhr) is None, (
             "Nach einer erkannten Kopie muss die ganze Sitzung enden — sonst arbeitet "
             "der Dieb mit dem neuen Token weiter, falls er auch den hat."
         )
