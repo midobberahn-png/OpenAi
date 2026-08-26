@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { angemeldet, haengenLassen } from "./system";
+import { angemeldet, haengenLassen, verschwindet } from "./system";
 
 const TERMIN = {
   title: "Fokuszeit aus dem Browser",
@@ -155,6 +155,6 @@ test("Ein unklarer Schritt lässt sich entscheiden", async ({ page }) => {
 
   await page.getByTestId("entscheidung-verbuchen").click();
 
-  await expect(page.getByTestId("entscheidung")).toBeHidden();
+  await verschwindet(page, "entscheidung");
   await expect(page.getByTestId("schrittstand-1")).toHaveText("done");
 });

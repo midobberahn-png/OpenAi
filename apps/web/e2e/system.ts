@@ -154,3 +154,44 @@ export async function angemeldet(page: Page): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Wartet, bis ein Element verschwunden ist — und sagt sonst, **warum** nicht.
+ *
+ * `toBeHidden()` meldet im Fehlfall „expected hidden, received visible". Das
+ * ist wahr und nutzlos: Die Oberfläche zeigt daneben die ganze Zeit eine
+ * Fehlerkarte mit dem Grund, den der Server genannt hat, und niemand sieht
+ * hin. Genau diese Lücke hat beim Anmeldeflackern einen Durchgang gekostet,
+ * ohne Material zu liefern — beim zweiten Mal wird sie nicht noch einmal
+ * gebaut.
+ *
+ * Zusätzlich werden abgewiesene Aufrufe mitgeschrieben: Verschwindet ein
+ * Element nicht, weil der Aufruf dahinter mit 409 endete, steht das hier und
+ * muss nicht erschlossen werden.
+ */
+export async function verschwindet(page: Page, kennung: string, pfad = "/runs/"): Promise<void> {
+  const abgewiesen: string[] = [];
+  page.on("response", (antwort) => {
+    const url = new URL(antwort.url()).pathname;
+    if (url.includes(pfad) && !antwort.ok()) abgewiesen.push(`${antwort.status()} ${url}`);
+  });
+
+  try {
+    await expect(page.getByTestId(kennung)).toBeHidden();
+  } catch (problem) {
+    const karte = page.getByTestId("fehler");
+    throw new Error(
+      [
+        `„${kennung}" ist nicht verschwunden.`,
+        (await karte.count()) > 0
+          ? `Grund laut Oberfläche: ${(await karte.innerText()).trim()}`
+          : "Keine Fehlerkarte — die Oberfläche hält den Vorgang für gelungen.",
+        abgewiesen.length > 0
+          ? `Abgewiesene Aufrufe: ${abgewiesen.join(", ")}`
+          : "Kein abgewiesener Aufruf.",
+        `Ursprünglich: ${problem instanceof Error ? problem.message.split("\n")[0] : problem}`,
+      ].join(" · "),
+    );
+  }
+}
