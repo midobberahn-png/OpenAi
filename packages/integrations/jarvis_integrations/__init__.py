@@ -16,5 +16,4 @@ Zwei Regeln, beide aus dem Anbieteradapter übernommen und beide hier schärfer:
 
 from .localfs import LocalDirectoryLister, LocalFileReader
 
-__all__ = ["LocalDirectoryLister",
-    "LocalFileReader"]
+__all__ = ["LocalDirectoryLister", "LocalFileReader"]
