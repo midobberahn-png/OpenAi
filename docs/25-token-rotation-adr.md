@@ -131,3 +131,49 @@ verschiebt.
   Tests, die den Wettlauf nachstellen und nicht nur den Normalfall.
 * Der Fund aus Punkt 5 braucht einen Eintrag in der Audit-Kette und ist damit
   der erste Fall, in dem die Anmeldeschicht dorthin schreibt.
+
+
+---
+
+## Nachtrag (26.08.2026): Wann eine Wiederverwendung ein Diebstahl ist
+
+Ein externes Review hat zwei Lagen benannt, die Punkt 5 gleich behandelt und
+die nicht gleich sind.
+
+**Die eine: Der Ersatz kam nie an.** Die Rotation wird in eigener Transaktion
+festgeschrieben, *bevor* die Antwort den Client erreicht. Bricht die Verbindung
+danach ab, hält der Browser weiter den alten Token — und wird nach 60 Sekunden
+als Kopie behandelt und ausgesperrt. Der rechtmäßige Nutzer zahlt für einen
+Paketverlust mit einer Abmeldung.
+
+**Die andere: Jemand benutzt einen Token, den der rechtmäßige Client längst
+ersetzt hat.** Das ist der Fall, für den die Erkennung gebaut ist.
+
+Bisher sahen beide identisch aus. Der Unterschied liegt in einer Tatsache, die
+das System kennen kann: **Wurde der Ersatz je benutzt?**
+
+### Entscheidung: erst bestätigen, dann verdächtigen
+
+`sessions.rotation_confirmed_at` wird gesetzt, sobald der **neue** Token zum
+ersten Mal vorgelegt wird. Damit gilt:
+
+| Lage | Alter Token nach dem Fenster |
+|---|---|
+| Ersatz **nie** benutzt | Kein Verdacht. Der alte Token trägt weiter, und es wird **erneut rotiert** — der Client bekommt eine zweite Gelegenheit, den Ersatz zu erhalten. |
+| Ersatz **schon** benutzt | Diebstahl. Sitzung widerrufen, Eintrag in die Kette. |
+
+Die zweite Zeile ist scharf, und sie darf es sein: Wenn der rechtmäßige Client
+nachweislich den neuen Token führt, ist ein alter in fremder Hand.
+
+### Was das am Missbrauch ändert — und was nicht
+
+Der DoS aus dem Review bleibt **möglich**, aber er ist einmalig: Wer einen
+ersetzten Token besitzt, kann damit genau eine Sitzung beenden — danach ist
+auch sein eigener Zugang weg, und der rechtmäßige Nutzer meldet sich mit
+Passkey neu an. Ein Angreifer, der das erreichen will, hat ohnehin bereits
+einen Token gestohlen; der Schaden ist eine Neuanmeldung, nicht ein Zugriff.
+
+**Das ist der bewusste Tausch:** Eine Erkennung, die bei Verdacht nichts tut,
+ist keine. Eine, die bei jedem Paketverlust zuschlägt, verliert das Vertrauen
+ihres Nutzers. Zwischen beidem liegt die Frage, ob der Ersatz je ankam — und
+die lässt sich beantworten.

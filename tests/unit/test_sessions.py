@@ -44,6 +44,10 @@ class InMemorySessions:
         """Was die Datenbank als ``now()`` einsetzen würde. Der Test stellt sie,
         weil ein Fenster von 60 Sekunden sonst nicht prüfbar wäre."""
 
+        self.bestaetigt: set[UUID] = set()
+        """Sitzungen, deren Ersatztoken schon einmal vorgelegt wurde — die
+        Spalte ``rotation_confirmed_at``, nachgebaut."""
+
     async def create(self, session: Session, token_hash: str) -> None:
         self.rows[token_hash] = session
 
@@ -65,6 +69,15 @@ class InMemorySessions:
                         return self._befund(kandidat, ist_vorgaenger=True)
         return None
 
+    async def confirm_rotation(self, session_id: UUID) -> None:
+        self.bestaetigt.add(session_id)
+
+    def _aktueller_hash(self, session: Session) -> str:
+        for h, s in self.rows.items():
+            if s.id == session.id:
+                return h
+        return ""
+
     def _befund(self, session: Session, *, ist_vorgaenger: bool) -> SessionLookup:
         """Bildet die **Alter** nach, die die Abfrage rechnet.
 
@@ -78,8 +91,10 @@ class InMemorySessions:
         return SessionLookup(
             session=session,
             ist_vorgaenger=ist_vorgaenger,
+            aktueller_hash=self._aktueller_hash(session),
             token_alter=self.uhr - (rotiert if rotiert is not None else session.created_at),
             rotation_alter=None if rotiert is None else self.uhr - rotiert,
+            ersatz_bestaetigt=session.id in self.bestaetigt,
         )
 
     async def rotate(self, session_id: UUID, *, alt_hash: str, neu_hash: str) -> bool:
@@ -96,6 +111,9 @@ class InMemorySessions:
         self.rows[neu_hash] = session
         self.vorgaenger[alt_hash] = session_id
         self.rotated[session_id] = self.uhr
+        # Wie die Spalte: Jede Rotation setzt die Bestätigung zurück — der neue
+        # Ersatz ist noch nicht angekommen.
+        self.bestaetigt.discard(session_id)
         return True
 
     async def touch(self, session_id: UUID, now: datetime) -> None:
@@ -418,14 +436,20 @@ class TestRotation:
     @pytest.mark.invariant("session-token-rotation")
     async def test_der_alte_token_ist_danach_wertlos(self) -> None:
         """Der ganze Zweck: Eine Kopie verliert ihren Wert, sobald der
-        rechtmäßige Nutzer arbeitet."""
+        rechtmäßige Nutzer arbeitet.
+
+        **„Arbeitet" heißt hier: benutzt den Ersatz** (ADR-020, Nachtrag). Ohne
+        diesen Schritt wäre nicht zu unterscheiden, ob der Ersatz je ankam.
+        """
         store = InMemorySessions()
         manager = _manager(
             store, rotation_interval=timedelta(minutes=15), overlap=timedelta(seconds=60)
         )
         issued = await manager.issue(USER, now=NOW)
         store.uhr = NOW + timedelta(minutes=20)
-        await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        gedreht = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        assert gedreht.neuer_token is not None
+        await manager.pruefen(gedreht.neuer_token, now=store.uhr)
 
         # Weit nach dem Fenster — der Dieb meldet sich. Gestellt wird die Uhr
         # des **Speichers**: Das Überlappungsfenster rechnet gegen ein Alter
@@ -523,6 +547,9 @@ class TestDerWettlauf:
         store.uhr = NOW + timedelta(minutes=20)
         gedreht = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
         assert gedreht.neuer_token is not None
+        # Der rechtmäßige Client führt den Ersatz — ab hier ist ein alter Token
+        # eine Kopie und kein verlorenes Antwortpaket.
+        await manager.pruefen(gedreht.neuer_token, now=store.uhr)
 
         store.uhr += timedelta(seconds=61)
         geprueft = await manager.pruefen(issued.token, now=store.uhr)
@@ -533,15 +560,108 @@ class TestDerWettlauf:
             "der Dieb mit dem neuen Token weiter, falls er auch den hat."
         )
 
-    async def test_ein_vorgaenger_ohne_zeitpunkt_gilt_nicht(self) -> None:
-        """Die strengere Antwort auf einen Datensatz, den niemand erklären kann."""
+    async def test_ein_vorgaenger_ohne_zeitpunkt_faellt_aus_dem_fenster(self) -> None:
+        """Ein Datensatz, den niemand erklären kann, gilt als „außerhalb".
+
+        Was danach geschieht, entscheidet die Bestätigung — nicht dieser Test:
+        Ohne benutzten Ersatz bekommt der Client eine zweite Gelegenheit, mit
+        benutztem Ersatz endet die Sitzung. Geprüft wird hier nur, dass ein
+        fehlender Zeitpunkt **nicht** als offenes Fenster durchgeht.
+        """
         store = InMemorySessions()
         manager = _manager(store, overlap=timedelta(seconds=60))
         issued = await manager.issue(USER, now=NOW)
         store.uhr = NOW + timedelta(minutes=20)
-        await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        gedreht = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        assert gedreht.neuer_token is not None
+        await manager.pruefen(gedreht.neuer_token, now=store.uhr)
         store.rotated.clear()
 
         geprueft = await manager.pruefen(issued.token, now=store.uhr)
 
         assert geprueft.grund is SessionRejection.WIEDERVERWENDET
+
+
+class TestEinVerschollenerErsatz:
+    """**Der Befund, den ein externes Review gefunden hat** (ADR-020, Nachtrag).
+
+    Die Rotation wird festgeschrieben, bevor die Antwort den Client erreicht.
+    Geht sie verloren, hält der Browser weiter den alten Token — und wurde
+    dafür nach 60 Sekunden ausgesperrt. Der rechtmäßige Nutzer zahlte für einen
+    Paketverlust mit einer Abmeldung.
+
+    Die Unterscheidung ist eine Tatsache, die das System kennen kann: **Wurde
+    der Ersatz je benutzt?**
+    """
+
+    @staticmethod
+    def _lauf() -> tuple[InMemorySessions, SessionManager]:
+        store = InMemorySessions()
+        return store, _manager(
+            store, rotation_interval=timedelta(minutes=15), overlap=timedelta(seconds=60)
+        )
+
+    async def test_ohne_benutzten_ersatz_bleibt_der_alte_token_gueltig(self) -> None:
+        store, manager = self._lauf()
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+
+        # Weit nach dem Fenster — der Ersatz kam nie an.
+        store.uhr += timedelta(minutes=5)
+        geprueft = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+
+        assert geprueft.session is not None, (
+            "Ein verlorenes Antwortpaket darf keine Abmeldung sein."
+        )
+        assert geprueft.grund is None
+
+    async def test_er_bekommt_eine_zweite_gelegenheit(self) -> None:
+        """Nicht nur geduldet, sondern behoben: Es wird erneut rotiert."""
+        store, manager = self._lauf()
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        erster = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        store.uhr += timedelta(minutes=5)
+
+        zweiter = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+
+        assert zweiter.neuer_token is not None
+        assert zweiter.neuer_token != erster.neuer_token
+        assert (await manager.verify(zweiter.neuer_token, now=store.uhr)) is not None
+
+    async def test_mit_benutztem_ersatz_ist_es_ein_diebstahl(self) -> None:
+        """Die Gegenprobe — sonst wäre die Erkennung abgeschafft statt geschärft."""
+        store, manager = self._lauf()
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        gedreht = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        assert gedreht.neuer_token is not None
+        await manager.pruefen(gedreht.neuer_token, now=store.uhr)
+
+        store.uhr += timedelta(minutes=5)
+        geprueft = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+
+        assert geprueft.grund is SessionRejection.WIEDERVERWENDET
+        assert await manager.verify(gedreht.neuer_token, now=store.uhr) is None
+
+    async def test_die_bestaetigung_ueberlebt_keine_zweite_rotation(self) -> None:
+        """Jede Rotation setzt sie zurück: Der **neue** Ersatz ist noch nicht
+        angekommen, gleich wie oft vorher schon einer ankam."""
+        store, manager = self._lauf()
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        erster = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        assert erster.neuer_token is not None
+        await manager.pruefen(erster.neuer_token, now=store.uhr)
+
+        store.uhr += timedelta(minutes=20)
+        zweiter = await manager.pruefen(erster.neuer_token, now=store.uhr, rotieren=True)
+        assert zweiter.neuer_token is not None
+
+        store.uhr += timedelta(minutes=5)
+        geprueft = await manager.pruefen(erster.neuer_token, now=store.uhr, rotieren=True)
+
+        assert geprueft.session is not None, (
+            "Nach der zweiten Rotation gilt wieder: unbestätigt heißt zweite Gelegenheit."
+        )
