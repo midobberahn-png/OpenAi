@@ -10,13 +10,13 @@ Code auszuführen.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from secrets import compare_digest
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from jarvis_contracts import RiskLevel, ToolResult, ToolSpec
+from jarvis_contracts import RiskLevel, ToolResult, ToolSpec, mit_hinweisen
 from jarvis_core.ports.grants import GrantConsumer, UndoConsumer
 
 if TYPE_CHECKING:  # nur für die Typprüfung — zur Laufzeit ein lokaler Import
@@ -387,25 +387,39 @@ class ToolRegistry:
     def by_risk(self, minimum: RiskLevel) -> list[ToolSpec]:
         return [s for s in self.all_specs() if s.risk >= minimum]
 
-    def to_schema(self, names: set[str] | None = None) -> list[dict[str, Any]]:
+    def to_schema(
+        self,
+        names: set[str] | None = None,
+        *,
+        hinweise: Mapping[str, dict[str, str]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Werkzeugdefinitionen für ein Sprachmodell.
 
         Nur die übergebenen Namen — der Aufrufer hat die Verengung durch
         Berechtigungen und Taint bereits vorgenommen. Die Registry entscheidet
         das nicht selbst.
+
+        ``hinweise`` trägt die Grenzen **eines** Nutzers je Werkzeug und
+        Argument (``PolicyEngine.hinweise()``). Sie kommen von außen und werden
+        hier nicht ermittelt: Die Registry kennt keine Berechtigungen, und sie
+        soll auch keine kennen — sie hielte sonst zwei Wahrheiten über
+        dieselbe Grenze.
         """
         selected = (
             self.all_specs()
             if names is None
             else [self._specs[n] for n in sorted(names) if n in self._specs]
         )
+        angereichert = [
+            mit_hinweisen(spec, (hinweise or {}).get(spec.name, {})) for spec in selected
+        ]
         return [
             {
                 "name": spec.name,
                 "description": spec.description,
                 "input_schema": spec.parameters,
             }
-            for spec in selected
+            for spec in angereichert
         ]
 
     def __len__(self) -> int:

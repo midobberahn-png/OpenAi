@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1528** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1542** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **61/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
@@ -1003,12 +1003,25 @@ Zwei Schlüsse, und der zweite ist der unbequeme:
    brauchbar machen will, braucht **Aufzählbarkeit** (ein `files.list`), nicht
    nur Auskunft über die Grenze. Beides zusammen, nicht eines davon.
 
-**Stand 26.08.2026: die erste Hälfte steht** (`files.list`, ADR-019, §8
-Abschnitt 15). Die zweite — dem Modell sagen, *welche* Ordner ihm freigegeben
-sind — fehlt weiterhin, und sie gehört in die Angebotsschicht, nicht in den
-Werkzeugkatalog. **Der Befund oben gilt deshalb als offen**, bis die mittlere
-Zeile der Tabelle mit beiden Hälften neu gemessen ist. Ein Werkzeug, das
-dazugekommen ist, ist noch keine Messung.
+**Stand 26.08.2026: beide Hälften stehen, und es ist nachgemessen** (§8
+Abschnitte 15 und 16). Dieselbe Lage, llama3.1:8b, `temperature=0`, drei
+Durchgänge je Zeile:
+
+| Lage | Ergebnis |
+|---|---|
+| Ohne Auskunft, ohne Aufzählung | **0/3** — `/Projektnotiz.txt`, **außerhalb** jeder Freigabe |
+| Nur die Wurzel im Schema | **3/3** innerhalb der Freigabe; der Name bleibt geraten |
+| Wurzel **und** Aufzählung im Kontext | **3/3 exakt** `/Users/test/Notizen/projektnotiz.md` |
+
+Damit ist der Befund beantwortet — und die Behauptung aus ADR-019 in beide
+Richtungen bestätigt: Die Auskunft allein bringt das Raten *in* die Freigabe,
+treffen tut es erst mit der Aufzählung. **Beides zusammen, nicht eines davon.**
+
+Ein Nachtrag zum Beispiel-Fallstrick: `/Users/ich/Notizen/plan.md` kommt nicht
+mehr zurück, weil es nicht mehr in der Beschreibung steht. Ohne Tatsachen
+erfindet das Modell stattdessen `/Projektnotiz.txt` — falscher Ordner, falscher
+Name, falsche Endung. **Ein Modell ohne Tatsachen rät nicht besser oder
+schlechter, es rät nur anders.**
 
 Ohne den Pfad im Auftrag schlägt der Schritt fail-closed fehl: Die
 Pfadeinschränkung der Berechtigung weist ab, und die Meldung nennt das Ziel
@@ -1836,6 +1849,42 @@ Eigenschaft wäre Doppelzählung — die Kennzahl bleibt **61/62**.
 **Was offen bleibt, steht in Abschnitt 5:** Das Modell erfährt nach wie vor
 nicht, welche Ordner ihm freigegeben sind. Ohne Startpunkt hilft
 Aufzählbarkeit nicht.
+
+### 16. Erledigt: Die Grenzen stehen im Angebot — und der Befund ist beantwortet
+
+Die zweite Hälfte, unmittelbar im Anschluss gebaut (ADR-019, Nachtrag). Zwei
+Entscheidungen kamen dabei hinzu.
+
+**Der Satz gehört der Einschränkung, nicht der Angebotsschicht.**
+`ScopeConstraints.hints()` liefert je Argument einen Satz, `FilesConstraints`
+nennt darin seine Wurzeln; die Policy sammelt ein und hängt an
+(`PolicyEngine.angebot()`), formuliert aber nichts selbst.
+
+Der Grund ist derselbe, aus dem `ToolSpec.parameters` einmal keinen Leser
+hatte: **Eine Auskunft, die neben der Prüfung gepflegt wird, driftet von ihr
+ab** — dann verspricht das Angebot etwas, das die Ablehnung später bestreitet,
+und das Modell rät weiter, nur mit falschem Vorwand. Ankündigung und
+Durchsetzung kommen aus **einem** Objekt.
+
+**Beide Modellwege bekommen dieselbe Auskunft**, und das war Absicht: Die
+Argumentquelle über `PolicyEngine.angebot()`, die Agentenschleife über
+`ToolRegistry.to_schema(hinweise=…)` aus `AgentSession.current_hints()`. Eine
+Auskunft, die nur an einem von zwei Wegen anliegt, ist keine — der Sub-Agent
+riete genau dort weiter, wo die Argumentquelle es nicht mehr tut. Ermittelt
+wird je Runde neu: Ein Hinweis, der eine entzogene Freigabe weiter nennt, wäre
+die schlechteste Sorte Falschaussage.
+
+**Die Spezifikation im Katalog wird kopiert, nicht beschriftet.** Sie ist je
+Prozess dieselbe für alle; sie hier zu verändern hieße, die Grenzen eines
+Nutzers dem nächsten mitzugeben. Ein Test hält das fest.
+
+**Die Messung steht in Abschnitt 5.** Kurz: 0/3 → 3/3, und der Zwischenschritt
+zeigt, dass tatsächlich beide Hälften nötig sind.
+
+**Was dabei auffiel:** Der Live-Durchstich, der das misst, wird in CI
+übersprungen — dort läuft kein Modell. Was nur mit Ollama geprüft ist, ist in
+der Pipeline ungeprüft; deshalb liegt der Mechanismus daneben in einer
+modellfreien Suite (`tests/unit/test_grenzen_im_angebot.py`).
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 

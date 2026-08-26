@@ -112,3 +112,58 @@ auch hin, *womit* es sie benutzen darf. Das ist ein eigener Block, und erst mit
 beiden Hälften ist die mittlere Zeile der Tabelle oben wieder zu messen. **Vor
 dieser Messung gilt der Befund als offen** — nicht als behoben, weil ein
 Werkzeug dazugekommen ist.
+
+---
+
+## Nachtrag (26.08.2026): die zweite Hälfte, und die Messung
+
+Gebaut, unmittelbar im Anschluss. Zwei Entscheidungen kamen dabei hinzu.
+
+**Der Satz gehört der Einschränkung, nicht der Angebotsschicht.**
+`ScopeConstraints.hints()` liefert je Argument einen Satz; `FilesConstraints`
+nennt darin seine Wurzeln. Die Policy sammelt nur ein und hängt an
+(`PolicyEngine.angebot()`), formuliert aber nichts selbst.
+
+Der Grund ist derselbe, aus dem `ToolSpec.parameters` einmal keinen Leser hatte:
+**Eine Auskunft, die neben der Prüfung gepflegt wird, driftet von ihr ab.** Dann
+verspricht das Angebot etwas, das die Ablehnung später bestreitet — und ein
+Modell kann daraus nichts lernen, es rät weiter, nur mit falschem Vorwand.
+Ankündigung und Durchsetzung kommen deshalb aus **einem** Objekt.
+
+Was `hints()` ausdrücklich *nicht* nennt: die gesperrten Endungen. Eine Liste
+von Absagen ist kein Startpunkt, und ein Modell, das sie aufzählen könnte,
+wüsste nur, was es nicht darf.
+
+**Beide Modellwege bekommen dieselbe Auskunft.** Die Argumentquelle über
+`PolicyEngine.angebot()`, die Agentenschleife über
+`ToolRegistry.to_schema(hinweise=…)`, gespeist aus `AgentSession.current_hints()`.
+Eine Auskunft, die nur an einem von zwei Wegen anliegt, ist keine: Der
+Sub-Agent riete sonst genau dort weiter, wo die Argumentquelle es nicht mehr
+tut. Beides wird je Runde neu ermittelt — ein Hinweis, der eine entzogene
+Freigabe weiter nennt, wäre die schlechteste Sorte Falschaussage.
+
+**Und die Spezifikation im Katalog wird kopiert, nicht verändert.** Sie ist je
+Prozess dieselbe für alle; sie an dieser Stelle zu beschreiben hieße, die
+Grenzen eines Nutzers dem nächsten mitzugeben. Ein Test hält das fest.
+
+### Die Neumessung
+
+llama3.1:8b, `temperature=0`, drei Durchgänge je Lage, gesucht war
+`/Users/test/Notizen/projektnotiz.md` bei einem Auftrag ohne Pfad:
+
+| Lage | Ergebnis |
+|---|---|
+| Ohne Auskunft, ohne Aufzählung | **0/3** — geraten wurde `/Projektnotiz.txt`, **außerhalb** jeder Freigabe |
+| Nur die Wurzel im Schema | **3/3** innerhalb der Freigabe; der Name bleibt geraten |
+| Wurzel **und** Aufzählung im Kontext | **3/3 exakt** der gesuchte Pfad |
+
+Damit ist die mittlere Zeile der Tabelle oben beantwortet, und die Aussage von
+ADR-019 bestätigt sich in beide Richtungen: Die Auskunft allein bringt das
+Raten in die Freigabe, aber erst mit der Aufzählung trifft es. **Beides
+zusammen, nicht eines davon.**
+
+Die Zahl ganz oben (`/Users/ich/Notizen/plan.md`, 3 von 3 wörtlich) taucht
+nicht mehr auf — das Beispiel steht nicht mehr in der Beschreibung. Was das
+Modell ohne Auskunft stattdessen erfindet, ist `/Projektnotiz.txt`: falscher
+Ordner, falscher Name, falsche Endung. **Ein Modell ohne Tatsachen rät nicht
+schlechter oder besser, es rät nur anders.**

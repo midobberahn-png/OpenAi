@@ -8,6 +8,7 @@ Ausführung — das tut ausschließlich die Policy Engine.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Literal
@@ -93,6 +94,39 @@ class Source(BaseModel):
     """Seite, Abschnitt oder Zeilenbereich innerhalb der Quelle."""
 
     retrieved_at: datetime | None = None
+
+
+def mit_hinweisen(spec: ToolSpec, hinweise: dict[str, str]) -> ToolSpec:
+    """Ein Werkzeugschema, dessen Argumente ihre Grenze mitteilen.
+
+    Angehängt statt ersetzt: Die Beschreibung sagt, **was** ein Argument ist,
+    der Hinweis, **welche Werte** dieser Nutzer nennen darf. Beides ist wahr,
+    und das eine ersetzt das andere nicht.
+
+    Das Ergebnis ist eine Kopie. Die Spezifikation im Katalog ist je Prozess
+    dieselbe für alle; sie an dieser Stelle zu verändern hieße, die Grenzen
+    eines Nutzers dem nächsten mitzugeben — der teuerste denkbare Fehler an
+    genau dieser Stelle.
+    """
+    if not hinweise:
+        return spec
+
+    schema = deepcopy(spec.parameters)
+    eigenschaften = schema.get("properties")
+    if not isinstance(eigenschaften, dict):
+        # Ein Schema ohne Eigenschaften kann keinen Hinweis tragen. Kein
+        # Fehler: Werkzeuge ohne Argumente gibt es, und eine Ausnahme hier
+        # machte aus einer Auskunft eine Bedingung.
+        return spec
+
+    for feld, hinweis in hinweise.items():
+        eintrag = eigenschaften.get(feld)
+        if not isinstance(eintrag, dict):
+            continue
+        vorher = eintrag.get("description")
+        eintrag["description"] = f"{vorher} {hinweis}" if vorher else hinweis
+
+    return spec.model_copy(update={"parameters": schema})
 
 
 class ToolSpec(BaseModel):

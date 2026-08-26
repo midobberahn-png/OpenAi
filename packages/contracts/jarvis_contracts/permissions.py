@@ -221,6 +221,22 @@ class ScopeConstraints(BaseModel):
 
     time_window: TimeWindow | None = None
 
+    def hints(self) -> dict[str, str]:
+        """Was ein Modell über diese Grenze wissen darf — je Argument ein Satz.
+
+        **Die Auskunft entsteht dort, wo die Grenze durchgesetzt wird**, und
+        das ist der ganze Zweck dieser Methode. Eine Beschreibung, die
+        woanders gepflegt wird, driftet von der Prüfung ab — und dann sagt das
+        Angebot etwas anderes, als die Ablehnung später verlangt. Ein Modell
+        kann daraus nicht lernen; es rät weiter, nur mit falschem Vorwand.
+
+        Vorgabe ist **leer**: Eine Einschränkung, die nichts erklärt, verrät
+        auch nichts. Wer eine neue einführt, entscheidet ausdrücklich, was ein
+        Modell davon erfahren soll — dieselbe Beweislast wie bei
+        ``model_visible_fields``.
+        """
+        return {}
+
     def check(
         self, arguments: dict[str, Any], *, now: datetime | None = None
     ) -> ConstraintViolation | None:
@@ -368,6 +384,27 @@ class FilesConstraints(ScopeConstraints):
             if ".." in PurePosixPath(root).parts:
                 raise ValueError(f"allowed_roots dürfen kein '..' enthalten: {root!r}")
         return value
+
+    def hints(self) -> dict[str, str]:
+        """Die freigegebenen Wurzeln — die Auskunft, ohne die Aufzählbarkeit
+        nichts nützt.
+
+        Gemessen: Ein Modell, dem nur die Wurzel *fehlt*, rät den Dateinamen
+        und liegt falsch (0 von 3, ADR-019). Genannt werden ausschließlich die
+        Wurzeln, nicht ihr Inhalt — was darin liegt, beantwortet ``files.list``
+        und hinterlässt dabei einen Protokolleintrag.
+
+        Die gesperrten Endungen stehen bewusst **nicht** hier: Sie sind eine
+        Liste von Absagen, kein Startpunkt, und ein Modell, das sie aufzählen
+        könnte, wüsste nur, was es nicht darf.
+        """
+        return {
+            "path": (
+                "Zugelassen sind ausschließlich Pfade unterhalb von: "
+                + ", ".join(self.allowed_roots)
+                + ". Andere Pfade werden abgewiesen."
+            )
+        }
 
     def check(
         self, arguments: dict[str, Any], *, now: datetime | None = None

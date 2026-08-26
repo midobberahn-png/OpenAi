@@ -90,6 +90,7 @@ class AgentSession:
         tracker: BudgetTracker,
         chain: AgentChain,
         tools: Callable[[Run], Awaitable[frozenset[str]]],
+        hints: Callable[[Run, frozenset[str]], Awaitable[dict[str, dict[str, str]]]] | None = None,
         session_id: UUID | None,
         channel: ApprovalChannel = "ui",
         plan_step_seq: int | None = None,
@@ -104,6 +105,15 @@ class AgentSession:
         # Set würde in der nächsten Runde das Angebot von vorhin anbieten — und
         # genau darauf zielt ein Angreifer, der eine Mail unterschiebt.
         self._tools = tools
+        self._hints = hints
+        """Woher die Grenzen dieses Nutzers kommen — oder ``None``.
+
+        ``None`` heißt „keine Auskunft", nicht „keine Grenzen": Das Angebot
+        bleibt dasselbe, das Modell erfährt nur nicht, worauf es sich
+        beschränken muss. Für Aufrufer ohne Policy (Tests, ältere Verdrahtung)
+        ist das die richtige Vorgabe — eine Ausnahme machte aus einer Auskunft
+        eine Bedingung."""
+
         self._plan_step_seq = plan_step_seq
         """Zu welchem **Planschritt** die Aufrufe dieser Sitzung gehören.
 
@@ -137,6 +147,16 @@ class AgentSession:
         und was es nicht sieht, kann es nicht vorschlagen.
         """
         return await self._tools(self._run)
+
+    async def current_hints(self) -> dict[str, dict[str, str]]:
+        """Was das Modell über die Grenzen der angebotenen Werkzeuge erfährt.
+
+        Aus demselben Grund eine Methode wie ``current_tools()``: Der Wert
+        gehört zum *jetzigen* Stand des Laufs.
+        """
+        if self._hints is None:
+            return {}
+        return await self._hints(self._run, await self.current_tools())
 
     @property
     def chain(self) -> AgentChain:
@@ -243,6 +263,22 @@ class AgentRuntime:
         )
         return frozenset(allowed)
 
+    async def hinweise(self, namen: frozenset[str], run: Run) -> dict[str, dict[str, str]]:
+        """Die Grenzen dieses Nutzers je angebotenem Werkzeug.
+
+        Dasselbe, was die Argumentquelle über ``PolicyEngine.angebot()``
+        bekommt — hier nur für mehrere Werkzeuge auf einmal, weil ein
+        Sub-Agent eine Menge angeboten bekommt und keine Einzelwahl.
+
+        Ohne diese Zeilen rät ein Sub-Agent genau dort weiter, wo die
+        Argumentquelle es nicht mehr tut. Eine Auskunft, die nur an einem von
+        zwei Modellwegen anliegt, ist keine.
+        """
+        return {
+            name: await self._policy.hinweise(self._tools.require(name), run.user_id)
+            for name in sorted(namen)
+        }
+
     async def delegate(
         self,
         *,
@@ -298,6 +334,11 @@ class AgentRuntime:
             # Die Menge wird bei jedem Zugriff neu bestimmt — aus dem Lauf, wie
             # er *jetzt* ist, nicht wie er beim Start war.
             tools=lambda aktueller: self.effective_tools(extended, aktueller),
+            # Ebenfalls eine Funktion und kein fertiges Ergebnis: Was ein
+            # Werkzeug erlaubt, kann sich zwischen zwei Runden ändern — eine
+            # zurückgezogene Berechtigung darf nicht als Hinweis stehen
+            # bleiben, den das Modell für gültig hält.
+            hints=lambda aktueller, namen: self.hinweise(namen, aktueller),
             session_id=session_id,
             plan_step_seq=plan_step_seq,
         )

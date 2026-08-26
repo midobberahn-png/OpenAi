@@ -25,6 +25,7 @@ from jarvis_contracts import (
     TaintGateOutcome,
     TaintLevel,
     ToolSpec,
+    mit_hinweisen,
 )
 from jarvis_core.ports.permissions import PermissionStore, RateLimiter, ToolLookup
 from jarvis_core.tools.registry import UnknownTool
@@ -240,6 +241,49 @@ class PolicyEngine:
                 continue
             allowed.add(name)
         return allowed
+
+    async def angebot(self, spec: ToolSpec, user_id: UUID) -> ToolSpec:
+        """Dasselbe Werkzeug, mit den Grenzen **dieses** Nutzers im Schema.
+
+        Die zweite Hälfte des Befundes aus ADR-019. Aufzählbarkeit allein hilft
+        nicht: Wer nicht weiß, wo er nachsehen darf, sieht nach und findet
+        trotzdem nichts. Gemessen wurde genau das — bei bekannter Wurzel und
+        unbekanntem Dateinamen traf das Modell 0 von 3.
+
+        **Hier und nicht im Werkzeugkatalog.** Der Katalog ist je Prozess
+        derselbe; welche Ordner freigegeben sind, steht in der Berechtigung
+        *eines* Nutzers. Diese Schicht entscheidet ohnehin schon, *welche*
+        Werkzeuge jemand angeboten bekommt — dass sie auch sagt, *womit* er sie
+        benutzen darf, ist dieselbe Frage und nicht eine neue.
+
+        **Und der Satz stammt von der Einschränkung selbst** (``hints()``),
+        nicht von hier. Eine Auskunft, die neben der Prüfung gepflegt wird,
+        driftet von ihr ab — dann verspricht das Angebot etwas, das die
+        Ablehnung später bestreitet, und das Modell rät weiter, nur mit
+        falschem Vorwand.
+
+        Ohne Berechtigung bleibt die Spezifikation unverändert. Das ist kein
+        Sonderfall, sondern der Normalfall der Vorsicht: Was nicht erteilt ist,
+        wird auch nicht beschrieben — und angeboten wird das Werkzeug dann
+        ohnehin nicht.
+        """
+        return mit_hinweisen(spec, await self.hinweise(spec, user_id))
+
+    async def hinweise(self, spec: ToolSpec, user_id: UUID) -> dict[str, str]:
+        """Die Sätze zu den Grenzen dieses Nutzers, je Argument.
+
+        Getrennt von ``angebot()``, weil es zwei Verbraucher gibt: Die
+        Argumentquelle bekommt **ein** Werkzeug und will die fertige
+        Spezifikation; die Agentenschleife baut ihre Schemata selbst und
+        braucht nur die Sätze.
+        """
+        gesammelt: dict[str, str] = {}
+        for scope in spec.scopes:
+            grant = await self._permissions.get_grant(user_id, scope)
+            if grant is None:
+                continue
+            gesammelt.update(grant.constraints.hints())
+        return gesammelt
 
     # -- Hilfsmittel -----------------------------------------------------
     def _preview(self, spec: ToolSpec, req: PolicyRequest) -> ActionPreview:

@@ -141,6 +141,7 @@ from .tools import (
     ToolInvocation,
     ToolResult,
     ToolSpec,
+    mit_hinweisen,
 )
 
 __version__ = "0.1.0"
@@ -186,6 +187,7 @@ __all__ = [  # noqa: RUF022 — bewusst nach Modulen gruppiert, nicht alphabetis
     "is_sensitive_filename",
     "AmountConstraints",
     "constraints_for",
+    "mit_hinweisen",
     "ConstraintViolation",
     "PermissionGrant",
     "PolicyRequest",
