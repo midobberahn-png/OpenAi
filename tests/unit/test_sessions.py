@@ -7,6 +7,7 @@ und dass aus dem Gespeicherten kein Zugang zu gewinnen ist.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ import pytest
 
 from jarvis_contracts import IssuedSession, Session
 from jarvis_core.auth import SessionManager, SessionRejection, token_fingerprint
+from jarvis_core.ports.sessions import SessionLookup
 
 pytestmark = pytest.mark.security
 
@@ -32,12 +34,58 @@ class InMemorySessions:
 
     def __init__(self) -> None:
         self.rows: dict[str, Session] = {}
+        self.vorgaenger: dict[str, UUID] = {}
+        """Ersetzte Hashes → Sitzung. Die Spalte ``prev_token_hash``, nachgebaut."""
+
+        self.rotated: dict[UUID, datetime] = {}
+        """Wann zuletzt rotiert wurde — die Grundlage des Überlappungsfensters."""
+
+        self.uhr = NOW
+        """Was die Datenbank als ``now()`` einsetzen würde. Der Test stellt sie,
+        weil ein Fenster von 60 Sekunden sonst nicht prüfbar wäre."""
 
     async def create(self, session: Session, token_hash: str) -> None:
         self.rows[token_hash] = session
 
     async def by_token_hash(self, token_hash: str) -> Session | None:
         return self.rows.get(token_hash)
+
+    async def lookup(self, token_hash: str) -> SessionLookup | None:
+        """Bildet ``_LOOKUP`` nach: aktueller **oder** voriger Hash.
+
+        Die Attrappe führt den Vorgänger genauso wie die Tabelle — sonst
+        prüften die Tests eine Rotation, die es in der Datenbank nicht gibt.
+        """
+        if (session := self.rows.get(token_hash)) is not None:
+            return SessionLookup(
+                session=session,
+                ist_vorgaenger=False,
+                rotated_at=self.rotated.get(session.id),
+            )
+        for vorher, sid in self.vorgaenger.items():
+            if vorher == token_hash:
+                for s in self.rows.values():
+                    if s.id == sid:
+                        return SessionLookup(
+                            session=s, ist_vorgaenger=True, rotated_at=self.rotated.get(sid)
+                        )
+        return None
+
+    async def rotate(self, session_id: UUID, *, alt_hash: str, neu_hash: str) -> bool:
+        """Vergleiche-und-setze — der Kern des Wettlaufs.
+
+        Trifft nur, solange ``alt_hash`` noch der **aktuelle** ist. Genau das
+        macht den zweiten gleichzeitigen Aufruf wirkungslos, ohne ihn
+        abzumelden.
+        """
+        session = self.rows.get(alt_hash)
+        if session is None or session.id != session_id:
+            return False
+        del self.rows[alt_hash]
+        self.rows[neu_hash] = session
+        self.vorgaenger[alt_hash] = session_id
+        self.rotated[session_id] = self.uhr
+        return True
 
     async def touch(self, session_id: UUID, now: datetime) -> None:
         for key, session in self.rows.items():
@@ -331,3 +379,156 @@ class TestDerGrundEinerAblehnung:
             gilt = issued.session.is_valid_at(moment, idle_timeout=timedelta(hours=12))
 
             assert (geprueft.grund is None) is gilt
+
+
+class TestRotation:
+    """Der Schutz, der bisher fehlte — und der Wettlauf, der ihn aufgehalten hat.
+
+    ADR-020. Die Invariante ``session-token-rotation`` stand seit dem ersten
+    Entwurf auf `PLANNED`, mit genau einer Begründung: **Zwei gleichzeitige
+    Anfragen mit demselben Token dürfen nicht dazu führen, dass eine davon
+    abgemeldet wird.** Rotation ohne Sorgfalt ist schlechter als keine — wer
+    zufällig abgemeldet wird, baut sich einen Weg daran vorbei.
+    """
+
+    @pytest.mark.invariant("session-token-rotation")
+    async def test_ein_benutzter_token_wird_ersetzt(self) -> None:
+        store = InMemorySessions()
+        manager = _manager(store, rotation_interval=timedelta(minutes=15))
+        issued = await manager.issue(USER, now=NOW)
+
+        store.uhr = NOW + timedelta(minutes=20)
+        geprueft = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+
+        assert geprueft.session is not None
+        assert geprueft.neuer_token is not None
+        assert geprueft.neuer_token != issued.token
+
+    @pytest.mark.invariant("session-token-rotation")
+    async def test_der_alte_token_ist_danach_wertlos(self) -> None:
+        """Der ganze Zweck: Eine Kopie verliert ihren Wert, sobald der
+        rechtmäßige Nutzer arbeitet."""
+        store = InMemorySessions()
+        manager = _manager(
+            store, rotation_interval=timedelta(minutes=15), overlap=timedelta(seconds=60)
+        )
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+
+        # Weit nach dem Fenster — der Dieb meldet sich.
+        spaeter = store.uhr + timedelta(minutes=5)
+        geprueft = await manager.pruefen(issued.token, now=spaeter)
+
+        assert geprueft.session is None
+
+    async def test_vor_dem_takt_wird_nicht_rotiert(self) -> None:
+        """Nicht bei jedem Aufruf: Sonst wäre jeder der drei Takte dieser
+        Oberfläche ein Wettlauf."""
+        store = InMemorySessions()
+        manager = _manager(store, rotation_interval=timedelta(minutes=15))
+        issued = await manager.issue(USER, now=NOW)
+
+        geprueft = await manager.pruefen(
+            issued.token, now=NOW + timedelta(minutes=5), rotieren=True
+        )
+
+        assert geprueft.session is not None
+        assert geprueft.neuer_token is None
+
+    async def test_ohne_ausdrueckliches_rotieren_geschieht_nichts(self) -> None:
+        """Wer keinen Ersatz zurückgeben kann, darf keinen erzeugen — sonst
+        hat die Datenbank einen neuen Token und der Client den alten."""
+        store = InMemorySessions()
+        manager = _manager(store, rotation_interval=timedelta(minutes=15))
+        issued = await manager.issue(USER, now=NOW)
+
+        store.uhr = NOW + timedelta(minutes=20)
+        geprueft = await manager.pruefen(issued.token, now=store.uhr)
+
+        assert geprueft.neuer_token is None
+        assert (await manager.verify(issued.token, now=store.uhr)) is not None
+
+
+class TestDerWettlauf:
+    """**Der Grund, warum diese Invariante zwei Monate lag.**"""
+
+    @pytest.mark.invariant("session-token-rotation")
+    async def test_zwei_gleichzeitige_anfragen_melden_niemanden_ab(self) -> None:
+        """Beide Anfragen tragen denselben Token. Genau eine rotiert; die
+        andere arbeitet weiter — und zwar **erfolgreich**."""
+        store = InMemorySessions()
+        manager = _manager(
+            store, rotation_interval=timedelta(minutes=15), overlap=timedelta(seconds=60)
+        )
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+
+        erste, zweite = await asyncio.gather(
+            manager.pruefen(issued.token, now=store.uhr, rotieren=True),
+            manager.pruefen(issued.token, now=store.uhr, rotieren=True),
+        )
+
+        assert erste.session is not None, "Die erste Anfrage wurde abgemeldet."
+        assert zweite.session is not None, "Die zweite Anfrage wurde abgemeldet."
+        ersatzstuecke = [g.neuer_token for g in (erste, zweite) if g.neuer_token is not None]
+        assert len(ersatzstuecke) == 1, (
+            f"Genau einer darf rotieren, es waren {len(ersatzstuecke)}. Zwei Ersatztoken "
+            "hießen: Der zweite überschreibt den ersten, und dessen Empfänger fliegt raus."
+        )
+
+    async def test_der_verlierer_arbeitet_im_fenster_weiter(self) -> None:
+        """Die Anfrage, die zum Zeitpunkt der Rotation schon unterwegs war."""
+        store = InMemorySessions()
+        manager = _manager(
+            store, rotation_interval=timedelta(minutes=15), overlap=timedelta(seconds=60)
+        )
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+
+        # 30 Sekunden später, noch im Fenster, mit dem alten Token:
+        geprueft = await manager.pruefen(issued.token, now=store.uhr + timedelta(seconds=30))
+
+        assert geprueft.session is not None
+        assert geprueft.grund is None
+
+    @pytest.mark.invariant("session-token-rotation")
+    async def test_nach_dem_fenster_endet_die_sitzung(self) -> None:
+        """Wiederverwendungserkennung: Wer eine Kopie benutzt, soll damit nicht
+        weiterkommen, sondern auffallen.
+
+        Und die schärfere Zusage steht in der zweiten Zusicherung: Danach gilt
+        auch der **neue** Token nicht mehr — die Sitzung ist beendet, nicht nur
+        der eine Aufruf abgelehnt.
+        """
+        store = InMemorySessions()
+        manager = _manager(
+            store, rotation_interval=timedelta(minutes=15), overlap=timedelta(seconds=60)
+        )
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        gedreht = await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        assert gedreht.neuer_token is not None
+
+        spaeter = store.uhr + timedelta(seconds=61)
+        geprueft = await manager.pruefen(issued.token, now=spaeter)
+
+        assert geprueft.grund is SessionRejection.WIEDERVERWENDET
+        assert await manager.verify(gedreht.neuer_token, now=spaeter) is None, (
+            "Nach einer erkannten Kopie muss die ganze Sitzung enden — sonst arbeitet "
+            "der Dieb mit dem neuen Token weiter, falls er auch den hat."
+        )
+
+    async def test_ein_vorgaenger_ohne_zeitpunkt_gilt_nicht(self) -> None:
+        """Die strengere Antwort auf einen Datensatz, den niemand erklären kann."""
+        store = InMemorySessions()
+        manager = _manager(store, overlap=timedelta(seconds=60))
+        issued = await manager.issue(USER, now=NOW)
+        store.uhr = NOW + timedelta(minutes=20)
+        await manager.pruefen(issued.token, now=store.uhr, rotieren=True)
+        store.rotated.clear()
+
+        geprueft = await manager.pruefen(issued.token, now=store.uhr)
+
+        assert geprueft.grund is SessionRejection.WIEDERVERWENDET

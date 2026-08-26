@@ -17,7 +17,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 import structlog
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
@@ -98,6 +98,9 @@ __all__ = [
 
 
 _log = structlog.get_logger(__name__)
+
+STROMPFAD = "/events"
+"""Der Ereignisstrom — dort wird nicht rotiert (ADR-020 §6)."""
 
 
 async def db_connection(
@@ -269,8 +272,30 @@ def session_token_from(request: Request, settings: Settings) -> str:
     return ""
 
 
+def sitzungscookie_setzen(
+    response: Response, token: str, settings: Settings, *, gilt_bis: int
+) -> None:
+    """Setzt das Sitzungscookie — **die einzige Stelle, die seine Flags kennt.**
+
+    Vorher stand ``set_cookie`` genau einmal in ``login/finish``. Mit der
+    Rotation (ADR-020) käme eine zweite Stelle dazu, und zwei Stellen mit
+    Cookie-Flags sind eine Gelegenheit, sie auseinanderlaufen zu lassen: Ein
+    Ersatzcookie ohne ``httponly`` wäre die Lücke, gegen die das erste gebaut
+    wurde. Deshalb eine Funktion, die beide benutzen.
+    """
+    response.set_cookie(
+        settings.session_cookie_name,
+        token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="strict",
+        max_age=gilt_bis,
+    )
+
+
 async def current_session(
     request: Request,
+    response: Response,
     sessions: Sessions,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> Session:
@@ -280,7 +305,16 @@ async def current_session(
     ``session_id`` in der gesamten HTTP-Schicht. Ein Strukturtest hält fest,
     dass daneben kein zweiter Weg entsteht.
     """
-    geprueft = await sessions.pruefen(session_token_from(request, settings))
+    # **Rotiert wird nur über den Cookie-Weg** (ADR-020 §4): Wer den Token als
+    # ``Authorization: Bearer`` vorlegt, bekämt einen Ersatz, den er nie zu
+    # sehen bekommt — das wäre eine Abmeldung mit Ansage. Und nicht im
+    # Ereignisstrom (§6): Diese Antwort bleibt Stunden offen, ein Ersatz darin
+    # erreichte die übrigen Anfragen des Browsers nicht.
+    ueber_cookie = request.cookies.get(settings.session_cookie_name) is not None
+    geprueft = await sessions.pruefen(
+        session_token_from(request, settings),
+        rotieren=ueber_cookie and request.url.path != STROMPFAD,
+    )
     if geprueft.session is None:
         # **Der Grund geht ins Protokoll, nicht in die Antwort.** Nach außen
         # bleibt jedes 401 dasselbe — eine Unterscheidung dort wäre ein
@@ -296,6 +330,20 @@ async def current_session(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Nicht angemeldet.",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if geprueft.neuer_token is not None:
+        # Der Ersatz **muss** hier hinaus. Läge er nur in der Datenbank, hätte
+        # der Client den alten — und liefe nach dem Überlappungsfenster in die
+        # Wiederverwendungserkennung, also in eine Abmeldung, die er nicht
+        # verdient hat.
+        sitzungscookie_setzen(
+            response,
+            geprueft.neuer_token,
+            settings,
+            gilt_bis=int(
+                (geprueft.session.expires_at - geprueft.session.created_at).total_seconds()
+            ),
         )
     return geprueft.session
 

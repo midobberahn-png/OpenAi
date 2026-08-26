@@ -320,18 +320,22 @@ INVARIANTS: tuple[Invariant, ...] = (
         id="session-token-rotation",
         title="Ein benutzter Sitzungstoken wird ersetzt",
         statement=(
-            "Nach einer Nutzung wird der Sitzungstoken durch einen neuen ersetzt; der "
-            "alte bleibt nur für ein kurzes Überlappungsfenster gültig."
+            "Ein Sitzungstoken wird nach spätestens 15 Minuten Nutzung ersetzt; der alte "
+            "gilt noch 60 Sekunden weiter und danach nicht mehr. Von zwei gleichzeitigen "
+            "Anfragen rotiert genau eine, und keine wird abgemeldet."
         ),
         why=(
             "Ohne Rotation bleibt ein entwendeter Token bis zum Ablauf gültig, auch wenn "
             "der rechtmäßige Nutzer weiterarbeitet — das Zeitfenster für einen Replay ist "
-            "die volle Sitzungsdauer. Der Grund für den Aufschub ist ein Wettlauf: Zwei "
-            "gleichzeitige Anfragen mit demselben Token dürfen nicht dazu führen, dass "
-            "eine davon abgemeldet wird. Die Semantik des Überlappungsfensters ist zu "
-            "spezifizieren, bevor sie implementiert wird (ADR-007, Nachtrag)."
+            "die volle Sitzungsdauer. Der Aufschub hatte einen Grund, und er ist jetzt "
+            "gelöst: Zwei gleichzeitige Anfragen mit demselben Token dürfen nicht dazu "
+            "führen, dass eine davon abgemeldet wird. Die Einmaligkeit entsteht in der "
+            "Anweisung, die auch schreibt (Vergleiche-und-setze), und ein "
+            "Überlappungsfenster von 60 Sekunden trägt die Anfragen, die zum Zeitpunkt "
+            "der Rotation schon unterwegs waren. Wer den ersetzten Token danach vorlegt, "
+            "beendet die Sitzung (ADR-020)."
         ),
-        status=InvariantStatus.PLANNED,
+        status=InvariantStatus.ENFORCED,
         component="core.auth",
     ),
     Invariant(

@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_contracts import Session
+from jarvis_core.ports.sessions import SessionLookup
 
 __all__ = ["PostgresSessionStore"]
 
@@ -42,6 +43,39 @@ _SELECT_COLUMNS = """
 """
 
 _BY_HASH = text(f"SELECT {_SELECT_COLUMNS} FROM sessions WHERE token_hash = :h")
+
+_LOOKUP = text(
+    f"""
+    SELECT {_SELECT_COLUMNS},
+           (token_hash <> :h) AS ist_vorgaenger,
+           now() - COALESCE(rotated_at, created_at) AS token_alter,
+           now() - rotated_at AS rotation_alter
+      FROM sessions
+     WHERE token_hash = :h OR prev_token_hash = :h
+    """
+)
+"""Sucht über beide Hashes (ADR-020).
+
+``ist_vorgaenger`` wird in der Abfrage entschieden und nicht danach: Wer die
+Zeile hat, hat auch die Antwort, und eine zweite Auswertung im Python-Teil wäre
+eine zweite Wahrheit über dieselbe Zeile.
+
+**Und die beiden Alter ebenfalls.** ``rotated_at`` und ``created_at`` stehen auf
+der Uhr der Datenbank; wer sie gegen einen Zeitpunkt aus dem Prozess vergliche,
+machte die Gültigkeit eines Tokens von der Uhrendrift zwischen beiden abhängig.
+Genau das hat ein Integrationstest hier gefunden: Mit gestellter Prozessuhr galt
+ein ersetzter Token weiter, weil die Differenz negativ wurde."""
+
+_ROTATE = text(
+    """
+    UPDATE sessions
+       SET token_hash = :neu, prev_token_hash = :alt, rotated_at = now()
+     WHERE id = :id AND token_hash = :alt
+    RETURNING id
+    """
+)
+"""Vergleiche-und-setze. Die Bedingung auf den **aktuellen** Hash entscheidet
+den Wettlauf: Von zwei gleichzeitigen Anfragen trifft genau eine die Zeile."""
 
 _TOUCH = text("UPDATE sessions SET last_seen_at = :now WHERE id = :id AND revoked_at IS NULL")
 """``last_seen_at`` wandert, ``expires_at`` nicht. Wer eine gestohlene Sitzung
@@ -103,6 +137,39 @@ class PostgresSessionStore:
         row = (await self._conn.execute(_BY_HASH, {"h": token_hash})).first()
         return _to_session(row) if row is not None else None
 
+    async def lookup(self, token_hash: str) -> SessionLookup | None:
+        row = (await self._conn.execute(_LOOKUP, {"h": token_hash})).mappings().first()
+        if row is None:
+            return None
+        felder = dict(row)
+        ist_vorgaenger = bool(felder.pop("ist_vorgaenger"))
+        token_alter = felder.pop("token_alter")
+        rotation_alter = felder.pop("rotation_alter")
+        return SessionLookup(
+            session=Session(**felder),
+            ist_vorgaenger=ist_vorgaenger,
+            token_alter=token_alter,
+            rotation_alter=rotation_alter,
+        )
+
+    async def rotate(self, session_id: UUID, *, alt_hash: str, neu_hash: str) -> bool:
+        """Eigene Transaktion, wie beim Anspruch — und aus demselben Grund.
+
+        Die Rotation muss auch dann gelten, wenn der Request danach scheitert:
+        Der Aufrufer hat den neuen Token bereits in seiner Antwort. Eine
+        Rotation, die mit dem Request zurückrollt, gäbe ihm ein Cookie, das zu
+        keiner Zeile gehört — und damit eine Abmeldung beim nächsten Aufruf.
+        """
+        if self._engine is None:
+            # Wie bei ``touch()``: Wer den Speicher ohne Engine baut, rotiert
+            # nicht. Kein Fehler, sondern die ehrliche Antwort „nicht getan".
+            return False
+        async with self._engine.begin() as conn:
+            treffer = (
+                await conn.execute(_ROTATE, {"id": session_id, "alt": alt_hash, "neu": neu_hash})
+            ).first()
+        return treffer is not None
+
     async def touch(self, session_id: UUID, now: datetime) -> None:
         """Setzt ``last_seen_at`` fort — in **eigener**, kurzer Transaktion.
 
@@ -135,7 +202,29 @@ class PostgresSessionStore:
             await conn.execute(_TOUCH, {"id": session_id, "now": now})
 
     async def revoke(self, session_id: UUID, now: datetime) -> None:
-        await self._conn.execute(_REVOKE, {"id": session_id, "now": now})
+        """Widerruft eine Sitzung — in **eigener** Transaktion, wenn möglich.
+
+        **Ein Integrationstest hat den Grund geliefert, und er ist unangenehm.**
+        Die Wiederverwendungserkennung (ADR-020 §5) widerruft die Sitzung und
+        lässt danach ein 401 los. Lief der Widerruf in der Transaktion des
+        Requests, rollte genau diese Ausnahme ihn wieder zurück: Die
+        Sicherheitsmaßnahme hätte sich selbst rückgängig gemacht, und der Dieb
+        hätte weitergearbeitet.
+
+        Dieselbe Lehre wie beim Ausführungsanspruch und beim Grant-Verbrauch:
+        Wo eine Wirkung auch dann gelten muss, wenn der Aufrufer scheitert,
+        gehört ihr eine eigene Transaktion.
+
+        Ohne Engine bleibt es bei der Verbindung des Aufrufers — für einen
+        Speicher, der nur zum Anlegen gebaut wurde, ist das die richtige
+        Vorgabe, und die Abmeldung über ``POST /auth/logout`` committet
+        ohnehin.
+        """
+        if self._engine is None:
+            await self._conn.execute(_REVOKE, {"id": session_id, "now": now})
+            return
+        async with self._engine.begin() as conn:
+            await conn.execute(_REVOKE, {"id": session_id, "now": now})
 
     async def revoke_all_for_user(self, user_id: UUID, now: datetime) -> int:
         result = await self._conn.execute(_REVOKE_ALL, {"u": user_id, "now": now})
