@@ -34,6 +34,7 @@ import pytest
 from jarvis_contracts import (
     CompletionRequest,
     DataClass,
+    FilesConstraints,
     FinishReason,
     Message,
     MessageRole,
@@ -41,17 +42,21 @@ from jarvis_contracts import (
     PayloadInspectability,
     PlanStep,
     RiskLevel,
+    Run,
+    StepOutcome,
     TaintGateOutcome,
     TaintLevel,
     ToolResult,
     ToolSpec,
+    mit_hinweisen,
 )
 from jarvis_core.orchestrator.plan_arguments import PlanArgumentSource
 from jarvis_core.orchestrator.plan_response import PlanResponseSource
 from jarvis_core.providers import ModelGateway, ModelNotPermitted
 from jarvis_core.tools import validate_arguments
+from jarvis_core.tools.builtin import FILES_READ
 from jarvis_providers.ollama import OllamaError, OllamaProvider
-from tests.fakes import build_run
+from tests.fakes import NOW, build_run
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -508,3 +513,110 @@ class TestWerkzeugdatenMitEchtemModell:
         )
         assert ergebnis.taints is True
         assert ergebnis.text.strip()
+
+
+class TestWasEinModellNichtRatenMuss:
+    """**Die Neumessung zum Befund aus §8.5.**
+
+    Gemessen wurde damals, dreimal je Lage, gesucht war ``projektnotiz.md``:
+    Pfad im Auftrag 3/3, nur die Wurzel bekannt **0/3**, Wurzel und Dateiname
+    3/3. Die mittlere Zeile scheiterte an der Groß- und Kleinschreibung — an
+    einer Tatsache über die Welt, die im Prompt nicht stand.
+
+    Zwei Hälften sollten das beheben: ``files.list`` (nachsehen können) und die
+    Auskunft über die freigegebenen Wurzeln (wissen, wo). Diese Klasse misst
+    beide — einzeln und zusammen, damit sichtbar bleibt, welche Hälfte was
+    beiträgt.
+    """
+
+    WURZEL = "/Users/test/Notizen"
+    DATEI = f"{WURZEL}/projektnotiz.md"
+
+    @staticmethod
+    def _quelle() -> PlanArgumentSource:
+        return PlanArgumentSource(
+            gateway=ModelGateway({"ollama": OllamaProvider(base_url=URL)}, [LOKAL])
+        )
+
+    def _schritt(self) -> PlanStep:
+        return PlanStep(
+            seq=2,
+            description="Lies die Projektnotiz aus dem freigegebenen Ordner.",
+            kind="tool",
+            target="files.read",
+        )
+
+    def _lauf_mit_aufzaehlung(self) -> Run:
+        """Ein Lauf, in dem der Aufzählungsschritt bereits gelaufen ist.
+
+        So sieht der Kontext aus, den ``plan_context`` baut: das Ergebnis des
+        vorigen Schrittes als eigene, als Fremdinhalt markierte Nachricht.
+        """
+        lauf = build_run()
+        return lauf.model_copy(
+            update={
+                "state": lauf.state.model_copy(
+                    update={
+                        "completed_steps": [
+                            StepOutcome(
+                                seq=1,
+                                ok=True,
+                                summary=f"{self.WURZEL} — 3 Einträge",
+                                model_view=(
+                                    "[Werkzeugergebnis files.list]\n"
+                                    '{"entries": [{"name": "archiv", "kind": "ordner"}, '
+                                    '{"name": "einkaufsliste.md", "kind": "datei"}, '
+                                    '{"name": "projektnotiz.md", "kind": "datei"}]}'
+                                ),
+                                finished_at=NOW,
+                            )
+                        ]
+                    }
+                )
+            }
+        )
+
+    async def _pfad(self, *, spec: ToolSpec, lauf: Run) -> str:
+        ergebnis = await self._quelle().for_step(
+            spec=spec,
+            step=self._schritt(),
+            run=lauf,
+            goal="Lies mir die Projektnotiz vor.",
+            model=MODELL,
+        )
+        return str(ergebnis.arguments.get("path", ""))
+
+    async def test_mit_beiden_haelften_wird_die_datei_gefunden(self) -> None:
+        """Der Fall, um den es geht: Wurzel bekannt, Dateiname unbekannt."""
+        mit_grenze = mit_hinweisen(
+            FILES_READ,
+            FilesConstraints(allowed_roots=[self.WURZEL]).hints(),
+        )
+
+        pfad = await self._pfad(spec=mit_grenze, lauf=self._lauf_mit_aufzaehlung())
+
+        assert pfad == self.DATEI, (
+            "Mit Aufzählung im Kontext und Wurzel im Schema steht der Name da — "
+            f"geraten wurde trotzdem: {pfad!r}"
+        )
+
+    async def test_die_auskunft_allein_bringt_den_pfad_in_die_freigabe(self) -> None:
+        """Die Hälfte, die dieser Block hinzufügt.
+
+        Ohne Aufzählung kann das Modell den Dateinamen nicht wissen — und soll
+        ihn auch nicht treffen. Was es jetzt aber kann: innerhalb der Freigabe
+        bleiben, statt einen Pfad zu erfinden. Genau das war vorher nicht der
+        Fall; das Beispiel aus der Schemabeschreibung
+        (``/Users/ich/Notizen/plan.md``) kam 3 von 3 Mal zurück.
+        """
+        mit_grenze = mit_hinweisen(
+            FILES_READ,
+            FilesConstraints(allowed_roots=[self.WURZEL]).hints(),
+        )
+
+        pfad = await self._pfad(spec=mit_grenze, lauf=build_run())
+
+        assert pfad.startswith(f"{self.WURZEL}/"), (
+            f"Der Pfad liegt außerhalb der Freigabe: {pfad!r}. Die Auskunft im Schema "
+            "hat das Raten nicht eingegrenzt."
+        )

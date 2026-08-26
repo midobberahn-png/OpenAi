@@ -197,7 +197,15 @@ class ModelLoop:
         getrennt: Die Registry entscheidet nicht, was angeboten wird, und die
         Sitzung kennt keine JSON-Schemata.
         """
-        return list(self._tools.to_schema(set(await session.current_tools())))
+        return list(
+            self._tools.to_schema(
+                set(await session.current_tools()),
+                # Die Grenzen dieses Nutzers gehören ins Schema, sonst rät der
+                # Sub-Agent dort weiter, wo die Argumentquelle es nicht mehr
+                # tut (ADR-019, Nachtrag).
+                hinweise=await session.current_hints(),
+            )
+        )
 
     async def _versuche(self, session: AgentSession, vorschlag: ProposedToolCall) -> _Ausgang:
         """Reicht einen Vorschlag weiter — und übersetzt das Ergebnis zurück.

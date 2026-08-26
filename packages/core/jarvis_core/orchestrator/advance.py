@@ -448,7 +448,12 @@ class RunAdvancer:
 
         try:
             formuliert = await self._arguments.for_step(
-                spec=self._tools.require(schritt.target),
+                # **Mit den Grenzen dieses Nutzers im Schema** (ADR-019,
+                # Nachtrag). Ohne sie muss das Modell raten, wo es nachsehen
+                # dürfte — gemessen 0 von 3. Der Katalog kann das nicht
+                # liefern: Er ist je Prozess derselbe, die Wurzeln stehen in
+                # der Berechtigung eines Nutzers.
+                spec=await self._policy.angebot(self._tools.require(schritt.target), lauf.user_id),
                 step=schritt,
                 run=lauf,
                 goal=plan.goal,
