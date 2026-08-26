@@ -131,7 +131,7 @@ Die ursprüngliche Fassung dieses ADR sah „serverseitige Sessions in Redis mit
 
 Redis bleibt für das, wofür es gedacht war: flüchtige Zustände wie Rate-Limits und Streaming-Puffer.
 
-**Offen:** Token-Rotation bei jeder Nutzung („rotierende Cookies") ist **nicht** umgesetzt. Sie ist ein echter Schutz — ein gestohlener Token wird entwertet, sobald der rechtmäßige Nutzer sich meldet —, hat aber bei parallelen Anfragen ein Wettlaufproblem, das ohne Sorgfalt zu zufälligen Abmeldungen führt. Bis dahin tragen die Doppelfrist (absolut plus Leerlauf) und der sofort wirksame Widerruf.
+~~**Offen:** Token-Rotation…~~ **Erledigt am 26.08.2026 — siehe ADR-020** (`docs/25-token-rotation-adr.md`). Der Einwand hier war richtig und ist beantwortet: Rotiert wird nicht bei *jeder* Nutzung, sondern nach 15 Minuten; die Einmaligkeit entsteht in der Anweisung, die auch schreibt; und ein Überlappungsfenster von 60 Sekunden trägt die Anfragen, die zum Zeitpunkt der Rotation schon unterwegs waren. Zufällige Abmeldungen gibt es damit nicht — zehn gleichzeitige Anfragen gegen echtes Postgres belegen es.
 
 ---
 

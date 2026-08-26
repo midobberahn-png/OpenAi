@@ -45,11 +45,11 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1550** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
-| **Security Invariant Coverage** | **61/62** |
+| Tests | **1563** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| **Security Invariant Coverage** | **62/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
-| Datenbank | 33 Tabellen, 10 Migrationen, bi-direktional geprüft |
+| Datenbank | 33 Tabellen, 11 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
 
 ### Was seit dem letzten Dossier geschah
@@ -2026,13 +2026,58 @@ das eine Zeremonie ohne Prüfer; verlangt ist die CI.
 eine schwächere Zusage als ein grünes lokales Gate — und das gehört gewusst,
 bevor sich jemand darauf verlässt.
 
-### Bewusst aufgeschoben: Token-Rotation
+### 18. Erledigt: Token-Rotation — und der Wettlauf, der sie aufgehalten hat
 
-`session-token-rotation` bleibt `PLANNED`. Ein gestohlener Token ist bis zum
-Ablauf gültig, auch wenn der rechtmäßige Nutzer weiterarbeitet — das ist eine
-reale Lücke. Sie wird trotzdem nicht schnell implementiert: Zwei gleichzeitige
-Anfragen mit demselben Token dürfen nicht dazu führen, dass eine davon
-abgemeldet wird. **Erst die Race-Semantik spezifizieren (ADR), dann bauen.**
+Die letzte Invariante auf `PLANNED`, und sie stand dort mit gutem Grund: „Zwei
+gleichzeitige Anfragen mit demselben Token dürfen nicht dazu führen, dass eine
+davon abgemeldet wird." Erst die Semantik (ADR-020,
+`docs/25-token-rotation-adr.md`), dann der Code — genau in dieser Reihenfolge.
+
+**Die vier Entscheidungen:**
+
+* **Nicht bei jeder Nutzung, sondern nach 15 Minuten.** Diese Oberfläche stellt
+  mehrere Anfragen gleichzeitig (3-Sekunden-Takt, 10-Sekunden-Takt, offener
+  Ereignisstrom); bei Rotation je Aufruf wäre jeder Takt ein Wettlauf. Der
+  Schutz bleibt derselbe: Wer eine Kopie hat, verliert sie, sobald der
+  rechtmäßige Nutzer arbeitet.
+* **Die Einmaligkeit entsteht in der Anweisung, die auch schreibt.**
+  `UPDATE … WHERE id = :id AND token_hash = :alt` — von zwei gleichzeitigen
+  Anfragen trifft genau eine die Zeile. Dieselbe Bauart wie beim
+  Schrittanspruch, und aus demselben Grund: Wer erst liest und dann schreibt,
+  hat dazwischen ein Fenster.
+* **60 Sekunden Überlappung.** Der vorige Token gilt kurz weiter — die Antwort
+  auf „zufällige Abmeldungen": Eine Anfrage, die zum Zeitpunkt der Rotation
+  schon unterwegs war, darf nicht scheitern.
+* **Danach ist er ein Fund.** Wer den ersetzten Token nach dem Fenster vorlegt,
+  beendet die Sitzung. Der rechtmäßige Client hat längst gewechselt; was danach
+  mit dem alten kommt, ist eine Kopie.
+
+**Und zwei Befunde, die erst der Durchstich gegen echtes Postgres gebracht hat
+— beide hätte die Attrappe nie gezeigt:**
+
+1. **Zwei Uhren, zum zweiten Mal.** `rotated_at` setzt die Datenbank, verglichen
+   wurde im Prozess mit gestellter Testuhr — die Differenz wurde negativ, und
+   ein ersetzter Token galt weiter. Behoben an der Wurzel: Das **Alter** wird
+   dort gerechnet, wo der Zeitstempel steht (`now() - rotated_at` in der
+   Abfrage), und die Prozessuhr kommt in dieser Frist nicht mehr vor. Der
+   Preis ist sichtbar und richtig so: Die Tests müssen jetzt die
+   Datenbankuhr stellen, wie `e2e_haengenlassen.py` es tut.
+2. **Der Widerruf hätte sich selbst zurückgerollt.** Die
+   Wiederverwendungserkennung widerruft die Sitzung und lässt danach ein 401
+   los — und genau diese Ausnahme rollte die Transaktion des Requests zurück,
+   in der der Widerruf lief. Die Sicherheitsmaßnahme hätte sich aufgehoben, und
+   der Dieb hätte weitergearbeitet. `revoke()` nimmt jetzt eine eigene
+   Transaktion, wie Anspruch und Grant-Verbrauch. **Das ist die dritte Stelle
+   mit demselben Muster** — wo eine Wirkung auch dann gelten muss, wenn der
+   Aufrufer scheitert, gehört ihr eine eigene Transaktion.
+
+**Was die Maßnahme nicht leistet, steht im ADR:** Wer ein gestohlenes Cookie
+als `Authorization: Bearer` vorlegt, entgeht der Rotation — es gibt keinen
+Kanal, über den er einen Ersatz bekäme. Sie schützt dadurch den rechtmäßigen
+Nutzer, dessen Arbeit die Kopie entwertet, nicht gegen einen Dieb, der sich
+still verhält.
+
+Kennzahl: **62/62.** Zum ersten Mal steht keine Invariante mehr offen.
 
 ## 9. Arbeitsweise
 

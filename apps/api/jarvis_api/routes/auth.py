@@ -29,7 +29,14 @@ from webauthn.helpers.structs import (
 )
 
 from jarvis_api.db.webauthn_store import PostgresCredentialStore
-from jarvis_api.deps import CurrentSession, DbConnection, Passkeys, Sessions, rate_limited
+from jarvis_api.deps import (
+    CurrentSession,
+    DbConnection,
+    Passkeys,
+    Sessions,
+    rate_limited,
+    sitzungscookie_setzen,
+)
 from jarvis_api.settings import Settings, get_settings
 from jarvis_core.auth import AuthenticationFailed, CloneSuspicion
 from jarvis_core.limits import AUTH_CHALLENGE, AUTH_FINISH, BOOTSTRAP
@@ -334,13 +341,11 @@ async def login_finish(
     except AuthenticationFailed as error:
         raise _fail(error) from error
 
-    response.set_cookie(
-        settings.session_cookie_name,
+    sitzungscookie_setzen(
+        response,
         issued.token,
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite="strict",
-        max_age=int((issued.session.expires_at - issued.session.created_at).total_seconds()),
+        settings,
+        gilt_bis=int((issued.session.expires_at - issued.session.created_at).total_seconds()),
     )
     return {"session_id": str(issued.session.id)}
 

@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 61/62**
+**Security Invariant Coverage: 62/62**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -35,6 +35,7 @@ nicht nachträglich passend machen.
 | `bootstrap-only-once` | Die Erstinbetriebnahme gelingt genau einmal | Der Bootstrap-Endpunkt legt einen Nutzer nur an, solange die Nutzertabelle leer ist; die Bedingung liegt im INSERT, nicht in einer Prüfung davor. | `api.http` |
 | `auth-endpoints-rate-limited` | Der Anmeldeweg ist begrenzt — auch über viele Adressen | Jeder ohne Anmeldung erreichbare Endpunkt zählt gegen zwei Grenzen: eine je Client und eine globale je Route. Registrierung, Anmeldung und Erstinbetriebnahme haben getrennte Zähler. | `api.http` |
 | `rate-limit-counting-is-atomic` | Zählen und Fristsetzen sind unteilbar | Der Zähler wird erhöht und seine Frist gesetzt in einem einzigen, atomaren Schritt; gleichzeitige Anfragen zählen vollständig. | `api.rate_limit` |
+| `session-token-rotation` | Ein benutzter Sitzungstoken wird ersetzt | Ein Sitzungstoken wird nach spätestens 15 Minuten Nutzung ersetzt; der alte gilt noch 60 Sekunden weiter und danach nicht mehr. Von zwei gleichzeitigen Anfragen rotiert genau eine, und keine wird abgemeldet. | `core.auth` |
 | `session-verified-before-approval` | Eine Bestätigung verlangt eine echte Sitzung | Eine Bestätigung wird nur eingelöst, wenn der vorgelegte Sitzungstoken zu genau dieser Sitzung dieses Nutzers gehört und die Sitzung weder abgelaufen noch widerrufen ist. | `core.auth` |
 | `passkey-challenge-single-use` | Eine Challenge gilt einmal und für einen Zweck | Eine WebAuthn-Challenge wird genau einmal eingelöst, verfällt nach kurzer Frist und schließt nur die Zeremonie ab, für die sie ausgestellt wurde. | `core.auth` |
 | `passkey-clone-detection` | Ein Signaturzähler, der nicht steigt, ist ein Klon | Eine Anmeldung wird abgelehnt, wenn der vorgelegte Signaturzähler nicht über dem gespeicherten liegt — außer beide sind null. | `core.auth` |
@@ -77,12 +78,3 @@ nicht nachträglich passend machen.
 | `uncertain-effect-resolved-only-by-owner` | Einen unklaren Schritt löst nur sein Eigentümer auf — gegen den aktuellen Anspruch | Ein Schritt mit möglicher, aber unbestätigter Wirkung bleibt gesperrt, bis der Eigentümer des Laufs eine von genau drei benannten Entscheidungen trifft; sie gilt nur gegen das Fencing-Token des gehaltenen Anspruchs und wird in derselben Anweisung geprüft, die schreibt. | `core.orchestrator.resolution` |
 | `layering-contracts-independent` | Verträge hängen von nichts ab | packages/contracts importiert nichts aus dem Projekt. | `repo` |
 | `layering-no-provider-sdk-in-core` | Kein Provider-SDK im Kern | Weder core noch contracts importieren Anbieter-SDKs oder Agenten-Frameworks. | `repo` |
-
-## Noch offen
-
-Ausdrücklich ausgewiesen, damit nicht der Eindruck entsteht, etwas sei
-abgesichert, bevor der Kontrollpunkt existiert.
-
-| Kennung | Invariante | Wird gebraucht, weil | Komponente |
-|---|---|---|---|
-| `session-token-rotation` | Ein benutzter Sitzungstoken wird ersetzt | Ohne Rotation bleibt ein entwendeter Token bis zum Ablauf gültig, auch wenn der rechtmäßige Nutzer weiterarbeitet — das Zeitfenster für einen Replay ist die volle Sitzungsdauer. Der Grund für den Aufschub ist ein Wettlauf: Zwei gleichzeitige Anfragen mit demselben Token dürfen nicht dazu führen, dass eine davon abgemeldet wird. Die Semantik des Überlappungsfensters ist zu spezifizieren, bevor sie implementiert wird (ADR-007, Nachtrag). | `core.auth` |
