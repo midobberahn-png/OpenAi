@@ -153,10 +153,24 @@ class ChainWatch:
         verändert worden?" — gefragt ist „ist irgendetwas verändert worden?".
         """
         moment = jetzt or datetime.now(UTC)
-        self._zuletzt = moment
 
         brueche = await self._inspector.verify()
         geprueft = await self._inspector.count()
+
+        # **Der Takt rückt erst nach einer erfolgreichen Prüfung weiter**, und
+        # das ist die Behebung eines Fail-open, den ein externes Review gefunden
+        # hat: Vorher stand diese Zeile *vor* ``verify()``. Warf die Prüfung —
+        # ein kurzer Datenbankfehler genügt —, fing die Schleife die Ausnahme
+        # ab, und die Prüfung galt für eine volle Stunde als erledigt. In dieser
+        # Stunde wirkte der Arbeiter weiter, ohne dass die Kette je nachgerechnet
+        # worden wäre.
+        #
+        # Jetzt bleibt sie fällig und wird im nächsten Takt erneut versucht.
+        # Solange sie scheitert, wirkt der Arbeiter nicht — wer nicht
+        # nachrechnen kann, hat keinen Grund anzunehmen, dass die Kette hält.
+        # Der Preis ist eine Abfrage je Minute statt je Stunde, solange die
+        # Datenbank nicht antwortet; das ist kein Preis.
+        self._zuletzt = moment
 
         if not brueche:
             return ChainReport(geprueft=geprueft, brueche=[], gemeldet=False)
