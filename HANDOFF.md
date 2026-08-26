@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1574** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1577** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **62/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
@@ -2035,10 +2035,27 @@ Richtungen.
   Zugang weg, und der rechtmäßige Nutzer meldet sich mit Passkey neu an. Das
   steht so im Nachtrag; eine Erkennung, die bei Verdacht nichts tut, wäre
   keine.
-* **`files.list` kann über eine getauschte Elternkomponente hinausgreifen.**
-  `O_NOFOLLOW` schützt nur den letzten Bestandteil — die strukturelle Grenze
-  ist im Lesepfad seit jeher dokumentiert. Neu ist, dass die Aufzählung **den
-  Identitätsvergleich nach dem Öffnen nicht macht**, den der Leser macht.
+* ~~`files.list` kann über eine getauschte Elternkomponente hinausgreifen.~~
+  **Behoben** (ADR-019, Nachtrag). Nicht über einen Identitätsvergleich — der
+  hätte nur den letzten Bestandteil belegt —, sondern indem der Weg **begangen
+  statt geprüft** wird: Jedes Segment wird relativ zum offenen Vorgänger
+  geöffnet, jedes mit `O_NOFOLLOW`. Zwischen zwei Schritten gibt es keinen
+  Pfad mehr, den jemand umdeuten könnte. `resolve()` entfällt damit; der
+  begangene Weg ist der Nachweis.
+
+  Der Angriff ist nachgestellt und nicht beschrieben: Ein Test tauscht den
+  Elternordner zwischen zwei Aufrufen gegen einen Verweis nach draußen.
+
+  **Der Lesepfad behält seine Grenze**, und zwar begründet: `files.read`
+  erlaubt ausdrücklich einen Verweis innerhalb der Wurzeln. Dieselbe Strenge
+  wäre dort eine Verhaltensänderung, und der sichere Weg *mit* Verweisen ist
+  ein eigener Pfadauflöser — ein eigener Block.
+
+  Dabei fiel eine Kleinigkeit an, die einen Angriff als Alltag getarnt hätte:
+  `O_NOFOLLOW` meldet einen Verweis je nach System als `ELOOP` **oder**
+  `ENOTDIR` — und `ENOTDIR` meldet auch eine gewöhnliche Datei. Der
+  Ausbruchsversuch wäre als „das ist kein Ordner" durchgegangen, also als
+  `FileUnavailable` statt als `FileAccessDenied`.
 * **`created_at` von der Datenbank setzen lassen.** Die saubere Behebung zu
   Punkt 3. Sie hängt an `expires_at` und damit an der Zeitsteuerung der halben
   Testsuite — deshalb als eigener Punkt und nicht als Beifang.
