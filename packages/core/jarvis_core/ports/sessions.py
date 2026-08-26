@@ -42,6 +42,14 @@ class SessionLookup:
     """Wie lange die Rotation her ist. ``None``, wenn nie rotiert wurde — und
     die Grundlage, auf der das Überlappungsfenster gerechnet wird."""
 
+    ersatz_bestaetigt: bool = False
+    """Ob der **neue** Token schon einmal vorgelegt wurde.
+
+    Die Tatsache, an der sich zwei Lagen unterscheiden lassen, die sonst
+    identisch aussehen (ADR-020, Nachtrag): Ein alter Token nach dem Fenster
+    ist entweder eine Kopie — dann führt der rechtmäßige Client längst den
+    neuen — oder der Beleg dafür, dass der Ersatz nie angekommen ist."""
+
 
 class SessionStore(Protocol):
     """Persistenz der Sitzungen."""
@@ -69,6 +77,16 @@ class SessionStore(Protocol):
         Überlappungsfenster —, oder eine **Kopie**, die zu spät kommt. Das
         auseinanderzuhalten braucht den Zeitpunkt der Rotation, und der steht
         nur hier.
+        """
+        ...
+
+    async def confirm_rotation(self, session_id: UUID) -> None:
+        """Hält fest, dass der neue Token angekommen ist.
+
+        Aufgerufen, sobald er zum ersten Mal vorgelegt wird. Idempotent: Ein
+        zweiter Aufruf ändert nichts, und der Zeitpunkt bleibt der der ersten
+        Benutzung — er ist die Antwort auf „kam der Ersatz an?", nicht auf
+        „wann zuletzt".
         """
         ...
 

@@ -49,7 +49,8 @@ _LOOKUP = text(
     SELECT {_SELECT_COLUMNS},
            (token_hash <> :h) AS ist_vorgaenger,
            now() - COALESCE(rotated_at, created_at) AS token_alter,
-           now() - rotated_at AS rotation_alter
+           now() - rotated_at AS rotation_alter,
+           (rotation_confirmed_at IS NOT NULL) AS ersatz_bestaetigt
       FROM sessions
      WHERE token_hash = :h OR prev_token_hash = :h
     """
@@ -81,10 +82,19 @@ lassen. Das hängt an ``expires_at`` und damit an der Zeitsteuerung der halben
 Testsuite; es steht als eigener Punkt im Dossier statt als stille Halbheit
 hier."""
 
+_CONFIRM = text(
+    """
+    UPDATE sessions
+       SET rotation_confirmed_at = now()
+     WHERE id = :id AND rotation_confirmed_at IS NULL
+    """
+)
+
 _ROTATE = text(
     """
     UPDATE sessions
-       SET token_hash = :neu, prev_token_hash = :alt, rotated_at = now()
+       SET token_hash = :neu, prev_token_hash = :alt, rotated_at = now(),
+           rotation_confirmed_at = NULL
      WHERE id = :id AND token_hash = :alt
     RETURNING id
     """
@@ -160,12 +170,30 @@ class PostgresSessionStore:
         ist_vorgaenger = bool(felder.pop("ist_vorgaenger"))
         token_alter = felder.pop("token_alter")
         rotation_alter = felder.pop("rotation_alter")
+        bestaetigt = bool(felder.pop("ersatz_bestaetigt"))
         return SessionLookup(
             session=Session(**felder),
             ist_vorgaenger=ist_vorgaenger,
             token_alter=token_alter,
             rotation_alter=rotation_alter,
+            ersatz_bestaetigt=bestaetigt,
         )
+
+    async def confirm_rotation(self, session_id: UUID) -> None:
+        """Setzt den Zeitpunkt der ersten Benutzung — einmal.
+
+        ``WHERE rotation_confirmed_at IS NULL`` macht das idempotent **und**
+        nebenläufigkeitsfest: Zwei gleichzeitige Anfragen mit dem neuen Token
+        schreiben nicht zwei verschiedene Zeitpunkte. Eigene Transaktion aus
+        demselben Grund wie bei ``rotate()`` — die Feststellung „der Ersatz kam
+        an" darf nicht zurückgerollt werden, denn sie ist die Grundlage, auf der
+        später ein Diebstahl erkannt wird.
+        """
+        if self._engine is None:
+            await self._conn.execute(_CONFIRM, {"id": session_id})
+            return
+        async with self._engine.begin() as conn:
+            await conn.execute(_CONFIRM, {"id": session_id})
 
     async def rotate(self, session_id: UUID, *, alt_hash: str, neu_hash: str) -> bool:
         """Eigene Transaktion, wie beim Anspruch — und aus demselben Grund.
