@@ -32,24 +32,31 @@ from jarvis_api.db.grant_store import PostgresGrantConsumer
 from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.settings import Settings
 from jarvis_core.ports.calendar import CalendarStore
-from jarvis_core.ports.files import FileReader
+from jarvis_core.ports.files import DirectoryLister, FileReader
 from jarvis_core.ports.web import WebFetcher
 from jarvis_core.tools import ToolRegistry
 from jarvis_core.tools.builtin import (
     CALENDAR_CREATE,
+    FILES_LIST,
     FILES_READ,
     WEB_FETCH,
     calendar_create_handler,
     calendar_undo_handler,
+    files_list_handler,
     files_read_handler,
     web_fetch_handler,
 )
 
-__all__ = ["tool_catalog"]
+__all__ = ["directory_lister_for", "file_reader_for", "tool_catalog"]
 
 
 def tool_catalog(
-    engine: AsyncEngine, *, files: FileReader, calendar: CalendarStore, web: WebFetcher
+    engine: AsyncEngine,
+    *,
+    files: FileReader,
+    ordner: DirectoryLister,
+    calendar: CalendarStore,
+    web: WebFetcher,
 ) -> ToolRegistry:
     """Die Registry der Anwendung — mit persistentem Grant-Verbrauch.
 
@@ -69,6 +76,9 @@ def tool_catalog(
         undo_grants=PostgresInvocationStore(engine),
     )
     registry.register(FILES_READ, files_read_handler(files))
+    # Zwei Ports, zwei Objekte — und deshalb kann der Lesehandler nicht
+    # aufzählen und der Aufzählhandler nicht lesen (ADR-019).
+    registry.register(FILES_LIST, files_list_handler(ordner))
     registry.register(WEB_FETCH, web_fetch_handler(web))
     registry.register(
         CALENDAR_CREATE,
@@ -91,3 +101,16 @@ def file_reader_for(settings: Settings) -> FileReader:
     from jarvis_integrations import LocalFileReader
 
     return LocalFileReader(settings.files_allowed_roots)
+
+
+def directory_lister_for(settings: Settings) -> DirectoryLister:
+    """Das Aufzählen des Prozesses — dieselben Wurzeln, eigenes Objekt.
+
+    Ein zweiter Aufruf und keine zweite Fähigkeit am ersten Objekt: Der
+    Lesehandler soll nicht aufzählen können (ADR-019). Die Wurzeln sind
+    dieselben, weil die Prozessgrenze dieselbe ist; verengt wird je Nutzer über
+    die Berechtigung.
+    """
+    from jarvis_integrations import LocalDirectoryLister
+
+    return LocalDirectoryLister(settings.files_allowed_roots)

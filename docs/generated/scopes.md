@@ -5,7 +5,7 @@
 Standardbelegung nach Erstinstallation. Der Nutzer kann jeden Scope im
 Permission Center ändern; diese Tabelle zeigt den Auslieferungszustand.
 
-**34 Scopes** in 16 Domänen.
+**35 Scopes** in 16 Domänen.
 
 ## `calendar`
 
@@ -35,6 +35,7 @@ Permission Center ändern; diese Tabelle zeigt den Auslieferungszustand.
 | Scope | Beschreibung | Standard | Risiko |
 |---|---|---|---|
 | `files.delete` | Dateien löschen | **verweigern** | critical |
+| `files.list` | Freigegebene Ordner auflisten | erlauben | low |
 | `files.read` | Dateien in freigegebenen Ordnern lesen | erlauben | low |
 | `files.write` | Dateien in freigegebenen Ordnern schreiben | **bestätigen** | high |
 

@@ -878,9 +878,10 @@ INVARIANTS: tuple[Invariant, ...] = (
         id="file-access-confined-to-roots",
         title="Ein Dateizugriff verlässt die freigegebenen Wurzeln nicht",
         statement=(
-            "files.read gibt nur Inhalte heraus, deren Pfad **nach Auflösung** unterhalb "
-            "einer konfigurierten Wurzel liegt und die eine reguläre Datei bezeichnen; "
-            "eine Abweisung verrät nicht, wohin der Pfad zeigte."
+            "files.read gibt nur Inhalte heraus und files.list nur Namen, deren Pfad "
+            "**nach Auflösung** unterhalb einer konfigurierten Wurzel liegt; eine "
+            "Abweisung verrät nicht, wohin der Pfad zeigte, und eine Aufzählung löst "
+            "die Verweise darin nicht auf."
         ),
         why=(
             "Zwei Grenzen, und sie beantworten verschiedene Fragen. Die Berechtigung "

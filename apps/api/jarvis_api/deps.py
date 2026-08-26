@@ -36,7 +36,7 @@ from jarvis_api.events import RedisEventBus
 from jarvis_api.providers import model_gateway
 from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
-from jarvis_api.tools import file_reader_for, tool_catalog
+from jarvis_api.tools import directory_lister_for, file_reader_for, tool_catalog
 from jarvis_contracts import Session
 from jarvis_core.agents import AgentRuntime, AgentStepSource
 from jarvis_core.auth import PasskeyService, SessionManager
@@ -334,6 +334,7 @@ def tool_registry(
     return tool_catalog(
         engine,
         files=file_reader_for(settings),
+        ordner=directory_lister_for(settings),
         calendar=PostgresCalendarStore(engine, user_id=session.user_id),
         # **Kein Nutzerbezug, und das ist richtig.** Der Kalender wird an den
         # Angemeldeten gebunden, weil er *seine* Termine schreibt; das Web
