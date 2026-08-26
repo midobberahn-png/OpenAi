@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.db.approval_store import PostgresApprovalStore
@@ -1147,3 +1147,91 @@ class TestAusfuehrungsanspruch:
             allowed_data_class=DataClass.P2,
         )
         assert grant.tool_name == "calendar.create"
+
+
+class TestDieOffeneListeKostetEineAbfrage:
+    """Der N+1, den das Dossier „vor der UI" behoben haben wollte.
+
+    Die Oberfläche fragt diese Liste bei **jedem** Takt ab. Die erste Fassung
+    las sie und holte danach jede Zeile einzeln nach — bei fünf offenen
+    Vorgängen sechs Abfragen, wo eine reicht.
+
+    **Gezählt statt behauptet.** Ein Test, der nur prüft, dass die richtigen
+    Vorgänge herauskommen, wäre nach der Behebung genauso grün wie davor; er
+    hielte die Verbesserung nicht fest. Deshalb zählt diese Suite die
+    Anweisungen, die tatsächlich an der Datenbank ankommen.
+    """
+
+    @staticmethod
+    def _zaehler(conn: AsyncConnection) -> list[str]:
+        """Hängt sich an die Verbindung und schreibt jede Anweisung mit."""
+        gesehen: list[str] = []
+
+        def mitschreiben(_conn: object, _cursor: object, statement: str, *_rest: object) -> None:
+            gesehen.append(statement)
+
+        event.listen(conn.sync_connection.engine, "before_cursor_execute", mitschreiben)
+        return gesehen
+
+    async def test_fuenf_offene_vorgaenge_kosten_eine_abfrage(self, conn: AsyncConnection) -> None:
+        uid, rid = await _seed(conn)
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+        for i in range(5):
+            # Ein eigener Werkzeugaufruf je Vorgang: Die Tabelle lässt genau
+            # einen offenen Vorgang je Aufruf zu, und das ist richtig so — zwei
+            # Bestätigungen zu derselben Wirkung wären zwei Wege, sie auszulösen.
+            iid = uuid.uuid4()
+            await conn.execute(
+                text(
+                    "INSERT INTO tool_invocations (id, run_id, tool_name, arguments, "
+                    "risk_level, policy_decision, decision_reason) VALUES "
+                    "(:iid, :rid, 'calendar.create', '{}'::jsonb, 'medium', 'confirm', 'test')"
+                ),
+                {"iid": iid, "rid": rid},
+            )
+            await gw.request(
+                spec=CALENDAR_CREATE,
+                arguments={**ARGS, "title": f"Termin {i}"},
+                preview=build_preview(CALENDAR_CREATE, {**ARGS, "title": f"Termin {i}"}),
+                reason="Test",
+                run_id=rid,
+                invocation_id=iid,
+                user_id=uid,
+                session_id=uuid.uuid4(),
+                channel="ui",
+                now=NOW,
+            )
+
+        speicher = PostgresApprovalStore(conn)
+        gesehen = self._zaehler(conn)
+        offen = await speicher.open_for_user(uid)
+
+        assert len(offen) == 5
+        selects = [s for s in gesehen if s.lstrip().upper().startswith("SELECT")]
+        assert len(selects) == 1, (
+            f"Fünf offene Vorgänge kosteten {len(selects)} Abfragen. Die Liste liest "
+            "bereits alle Spalten — was danach nachgeholt wird, lag längst vor."
+        )
+
+    async def test_die_liste_liefert_dasselbe_wie_der_einzelabruf(
+        self, conn: AsyncConnection
+    ) -> None:
+        """Die Gegenprobe zur Behebung.
+
+        Beide Leser teilen sich jetzt **eine** Abbildung. Liefen sie
+        auseinander, wäre der gesparte Rundgang mit einem Feld bezahlt, das in
+        der Liste fehlt — und das fiele erst in der Oberfläche auf.
+        """
+        uid, rid = await _seed(conn)
+        perms = MutablePermissions()
+        perms.allow("calendar.create")
+        gw = _gateway(conn, perms)
+        await _request(gw, uid, rid, uuid.uuid4())
+
+        speicher = PostgresApprovalStore(conn)
+        (aus_liste,) = await speicher.open_for_user(uid)
+        einzeln = await speicher.get(aus_liste.id)
+
+        assert einzeln == aus_liste

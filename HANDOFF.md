@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1563** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1565** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **62/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
@@ -571,7 +571,15 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 
 ### Bekannte kleinere Mängel
 
-- `PostgresApprovalStore.open_for_user()` hat ein N+1. Vor der UI zu beheben.
+- ~~`PostgresApprovalStore.open_for_user()` hat ein N+1.~~ **Behoben**
+  (26.08.2026). Die Oberfläche fragt diese Liste bei jedem Takt ab; fünf offene
+  Vorgänge kosteten sechs Abfragen. **Die Zeilen lagen die ganze Zeit vor** —
+  `_OPEN` wählt dieselben Spalten wie `_SELECT`, nachgeholt wurde Vorhandenes.
+  Der eigentliche Fehler war nicht die Schleife, sondern dass die Abbildung
+  Zeile → Vorgang nur in `get()` stand: Wer sie nicht doppeln wollte, musste
+  `get()` aufrufen. Jetzt steht sie einmal, und beide Leser benutzen sie. Ein
+  Test **zählt** die Anweisungen, statt nur das Ergebnis zu prüfen — sonst wäre
+  er vor und nach der Behebung gleich grün.
 - ~~**Rauschen im Browserlauf.**~~ **Behoben** (25.08.2026, §8 Abschnitt 8).
   Die Diagnose in diesen beiden Einträgen stimmte — „ein Lauf, dessen Nutzer
   der nächste Test schon geräumt hat" —, und sie stand hier zweimal, ohne dass

@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from jarvis_contracts import ApprovalChannel, PendingAction
@@ -159,29 +159,7 @@ class PostgresApprovalStore:
 
     async def get(self, action_id: UUID) -> PendingAction | None:
         row = (await self._conn.execute(_SELECT, {"id": action_id})).mappings().one_or_none()
-        if row is None:
-            return None
-        return PendingAction.model_validate(
-            {
-                "id": row["id"],
-                "run_id": row["run_id"],
-                "invocation_id": row["invocation_id"],
-                "user_id": row["user_id"],
-                "session_id": row["session_id"],
-                "tool_name": row["tool_name"],
-                "preview": row["preview"],
-                "risk": row["risk_level"],
-                "reason": row["reason"],
-                "payload_hash": row["payload_hash"],
-                "nonce": row["nonce"],
-                "requested_channel": row["requested_channel"],
-                "expires_at": row["expires_at"],
-                "created_at": row["created_at"],
-                "response": row["response"],
-                "responded_at": row["responded_at"],
-                "responded_via": row["responded_via"],
-            }
-        )
+        return None if row is None else _als_vorgang(row)
 
     async def frozen_arguments(self, action_id: UUID) -> dict[str, Any]:
         row = (await self._conn.execute(_FROZEN, {"id": action_id})).one_or_none()
@@ -234,13 +212,52 @@ class PostgresApprovalStore:
         await self._conn.execute(_EXPIRE, {"id": action_id, "now": now})
 
     async def open_for_user(self, user_id: UUID) -> list[PendingAction]:
+        """Die offenen Vorgänge eines Nutzers — in **einer** Abfrage.
+
+        Die erste Fassung las die Liste und holte danach jede Zeile einzeln
+        über ``get()`` nach: ein N+1, das das Dossier unter „bekannte kleinere
+        Mängel" führte und ausdrücklich vor der Oberfläche behoben haben
+        wollte. Die Oberfläche fragt diese Liste bei jedem Takt ab.
+
+        **Die Zeilen waren die ganze Zeit schon da.** ``_OPEN`` wählt dieselben
+        Spalten wie ``_SELECT``; nachgeholt wurde, was bereits vorlag. Der
+        eigentliche Fehler war nicht die Schleife, sondern dass die Abbildung
+        Zeile → Vorgang nur in ``get()`` stand — wer sie nicht doppeln wollte,
+        musste ``get()`` aufrufen. Jetzt steht sie in ``_als_vorgang()``, und
+        beide benutzen sie.
+        """
         rows = (await self._conn.execute(_OPEN, {"user_id": user_id})).mappings().all()
-        actions: list[PendingAction] = []
-        for row in rows:
-            action = await self.get(row["id"])
-            if action is not None:
-                actions.append(action)
-        return actions
+        return [_als_vorgang(row) for row in rows]
+
+
+def _als_vorgang(row: RowMapping) -> PendingAction:
+    """Eine Zeile als ``PendingAction``.
+
+    Eine Stelle für beide Leser. Zwei Abbildungen derselben Tabelle wären zwei
+    Wahrheiten darüber, welche Spalte welches Feld füllt — und die zweite
+    vergisst irgendwann eine.
+    """
+    return PendingAction.model_validate(
+        {
+            "id": row["id"],
+            "run_id": row["run_id"],
+            "invocation_id": row["invocation_id"],
+            "user_id": row["user_id"],
+            "session_id": row["session_id"],
+            "tool_name": row["tool_name"],
+            "preview": row["preview"],
+            "risk": row["risk_level"],
+            "reason": row["reason"],
+            "payload_hash": row["payload_hash"],
+            "nonce": row["nonce"],
+            "requested_channel": row["requested_channel"],
+            "expires_at": row["expires_at"],
+            "created_at": row["created_at"],
+            "response": row["response"],
+            "responded_at": row["responded_at"],
+            "responded_via": row["responded_via"],
+        }
+    )
 
 
 def _dump(value: dict[str, Any]) -> str:
