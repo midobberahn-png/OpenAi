@@ -14,6 +14,7 @@ Zwei Regeln, beide aus dem Anbieteradapter übernommen und beide hier schärfer:
    unsichtbar.
 """
 
+from .dateischluessel import DateiSchluessel, schluesseldatei_anlegen
 from .localfs import LocalDirectoryLister, LocalFileReader
 
-__all__ = ["LocalDirectoryLister", "LocalFileReader"]
+__all__ = ["DateiSchluessel", "LocalDirectoryLister", "LocalFileReader", "schluesseldatei_anlegen"]

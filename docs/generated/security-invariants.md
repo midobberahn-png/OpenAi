@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 62/62**
+**Security Invariant Coverage: 64/64**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -67,6 +67,8 @@ nicht nachträglich passend machen.
 | `orchestrator-consumes-decisions` | Der Orchestrator entscheidet nichts über Sicherheit | Der Orchestrator fragt die Policy Engine und das Ausführungs-Gate; er bildet keine eigene Meinung darüber, ob etwas erlaubt ist. | `core.orchestrator` |
 | `agent-chain-preserves-capability-binding` | Delegationsketten erweitern keine Rechte | Über beliebig viele Agentenstufen hinweg bleibt die Rechtemenge die Schnittmenge aller beteiligten Whitelists mit den Nutzerrechten. | `core.agents` |
 | `agent-chain-propagates-taint` | Kontamination wandert durch die ganze Kette | Liest ein Agent auf beliebiger Stufe Fremdinhalt, gilt der gesamte übergeordnete Lauf als kontaminiert. | `core.agents` |
+| `secrets-sealed-at-rest` | Zugangsdaten liegen verschlüsselt und an ihren Platz gebunden | OAuth-Tokens stehen ausschließlich als Geheimtext in der Datenbank; der Datenschlüssel liegt daneben, verpackt mit einem KEK, den der Prozess nicht herausgeben kann. Der Geheimtext ist an die Konto-ID gebunden und öffnet sich in keiner anderen Zeile. | `core.crypto.envelope` |
+| `kek-never-leaves-its-instance` | Der KEK verlässt seine Instanz nicht | Der Port entpackt Datenschlüssel, statt den KEK auszuliefern. Der Datei-Provider ist ausschließlich in der Entwicklung zulässig und wird in jeder anderen Umgebung beim Start abgewiesen. | `api.settings` |
 | `audit-append-only` | Das Audit-Log ist unveränderlich | UPDATE und DELETE werden auf Datenbankebene abgelehnt. | `db.audit_log` |
 | `audit-tamper-evident` | Manipulation ist erkennbar | Änderung, Löschung oder Umsortierung von Einträgen bricht die Hash-Kette. | `core.audit.chain` |
 | `audit-chain-break-is-detected` | Ein Bruch wird gefunden, ohne dass jemand nachsieht | Der Arbeiter rechnet die ganze Kette in eigenem Takt nach. Ein Bruch hält ihn an und steht danach als Eintrag in der Kette, die er betrifft. | `core.audit.watch` |

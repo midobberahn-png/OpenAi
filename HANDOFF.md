@@ -45,8 +45,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1577** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
-| **Security Invariant Coverage** | **62/62** |
+| Tests | **1612** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| **Security Invariant Coverage** | **64/64** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 12 Migrationen, bi-direktional geprüft |
@@ -559,13 +559,12 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 | Fehlt | Auswirkung |
 |---|---|
 | **Werkzeuge — mehr als drei** | `files.read`, `calendar.create`, `web.fetch`. Der Scope-Katalog führt 34 Einträge. Es fehlen `mail.*`, `tasks.*`, `search.web`. |
-| **Ein brauchbarer Antwortschritt** | Er läuft — und sieht nur Schritt*zusammenfassungen*, keine Werkzeug*daten*. „Lies X und fasse es zusammen" endet deshalb mit „ich kenne den Inhalt nicht". Der Weg dorthin führt über Fremdinhalt im Prompt und ist die heikelste offene Entscheidung (Abschnitt 8.4). |
-| **Modellgetriebener Dateizugriff** | Gemessen: Steht der Pfad im Auftrag, trifft das Modell 3/3. Kennt es nur die freigegebene Wurzel, 0/3. Es braucht **Aufzählbarkeit** (`files.list`), nicht nur Auskunft über die Grenze — Abschnitt 8.5. |
 | **Ein Aufruf gegen einen echten Cloud-Endpunkt** | Die Adapter für Anthropic und OpenAI sind gegen aufgezeichnete Antworten geprüft, nie gegen das Netz — es gibt keinen Schlüssel. Was ein Contract-Test nicht findet: ein Feld, das der Anbieter inzwischen anders nennt. Für Ollama gibt es dafür `test_ollama_live.py`; das Gegenstück fehlt. |
 | **Google als Anbieter** | ADR-009 nennt drei. Gebaut sind Ollama, Anthropic, OpenAI. |
 | **Prompt-Caching und Vision** | Beide Cloud-Adapter melden `False`, und das ist ehrlich: `Message.content` ist eine Zeichenkette, und `cache_control` setzt niemand. Was der Anbieter kann, ist eine andere Aussage als was der Adapter tut. |
 | **Idempotency-Keys pro Invocation** | Aus dem Review offen. Der Ausführungsanspruch verhindert einen zweiten Versuch — nicht, dass ein Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen. |
 | **Memory Service** | Nur Verträge und Schema, kein Retrieval. |
+| **OAuth-Flows** | Die Zugangsdaten sind seit Abschnitt 20 verschlüsselt ablegbar — der Weg, auf dem sie entstehen (Zustimmung, Rückruf, Refresh, Kontoverwaltung), fehlt. |
 | **Context Engine** | Verträge da, Provider fehlen. |
 | **Alles ab Phase 2** | Voice, Vision, Integrationen. |
 
@@ -2066,6 +2065,55 @@ die fehlende Kombination zu Befund 1 (behoben). Offen: `FakePermissions` in
 `test_grenzen_im_angebot.py` ignoriert `user_id`, es gibt also keinen Test mit
 **zwei** Nutzern; die Isolation ist korrekt (das Review hat sie bestätigt), aber
 nicht geprüft.
+
+### 20. Envelope Encryption — die Tabellen hatten seit jeher keinen Code
+
+Phase 3 der Roadmap beginnt mit „OAuth-Flows, Envelope Encryption, Token-Refresh,
+Kontoverwaltung". Beim Nachsehen stellte sich heraus, wie weit das schon gediehen
+ist — und wie weit nicht: **`connected_accounts` und `oauth_credentials` stehen
+vollständig**, mit `ciphertext`, `nonce`, `wrapped_dek` und `kek_id`. Dazu gab es
+**keine Zeile Code.** Kein `KeyProvider`, keine Verschlüsselung, kein Speicher.
+Dieselbe Form wie die Audit-Kette vor `a67dd30`: vollständig geschaffen, nirgends
+benutzt — und diesmal an den Zugangsdaten zum Postfach.
+
+**Die Verschärfung V1.1 von ADR-008 bestimmt den Zuschnitt des Ports**, und das
+ist die tragende Entscheidung dieses Blocks. Der naheliegende Port wäre
+`kek() -> bytes`. Genau den schließt V1.1 aus: In Produktion entpackt der
+API-Prozess nicht selbst, sondern schickt den `wrapped_dek` an eine eigene
+Instanz. Ein Port, der den Schlüssel herausgibt, wäre von Vault Transit **gar
+nicht implementierbar** — die Signatur trägt die Zusage also selbst. Ein Test
+hält fest, dass niemand später ein drittes Verfahren ergänzt.
+
+**Und eine Entscheidung, die ADR-008 nicht trifft:** Der Geheimtext ist an
+seinen Platz gebunden. Wer die Datenbank erreicht, kann eine Zeile nicht
+entschlüsseln — aber er könnte sie **verschieben**: den Geheimtext eines fremden
+Kontos in die eigene Zeile kopieren und vom System öffnen lassen. Die Konto-ID
+geht deshalb als zusätzliche authentifizierte Daten in die Verschlüsselung ein.
+Zwei Tests stellen den Angriff nach, einer davon an echten Zeilen.
+
+**Was sonst noch entschieden wurde:**
+
+* Ein DEK **je Datensatz**, nicht ein gemeinsamer — nicht aus Vorsicht, sondern
+  weil es die Nonce-Frage beantwortet: Eine wiederholte Nonce mit demselben
+  Schlüssel beendet bei AES-GCM jede Zusage. Mit einem frischen Schlüssel je
+  Datensatz kann das nicht passieren, ohne dass jemand mitzählt.
+* Die Schlüsseldatei führt **mehrere** KEKs mit einer aktuellen Kennung. Ohne
+  das wäre die Rotation, die `kek_id` in der Tabelle vorsieht, nicht
+  durchführbar — wer rotiert, braucht eine Weile beide.
+* `KEY_PROVIDER=file` wird **beim Start** abgewiesen, wenn die Umgebung nicht
+  `development` ist. Nicht im Adapter: Der griffe erst, wenn zum ersten Mal ein
+  Token geschrieben wird, und dann läuft das System längst.
+* Der Speicher schreibt in **eigener Transaktion**. Ein Token, den der Anbieter
+  ausgestellt hat, muss auch dann liegen, wenn der Request danach scheitert —
+  sonst hat der Nutzer eine Zustimmung erteilt, von der nichts übrig bleibt.
+
+Zwei neue Invarianten (`secrets-sealed-at-rest`, `kek-never-leaves-its-instance`),
+Kennzahl **64/64**.
+
+**Was offen bleibt:** der Weg, auf dem Zugangsdaten überhaupt entstehen —
+Zustimmung, Rückruf, Refresh, Kontoverwaltung. Das ist der Rest von Woche 10 und
+braucht Zugangsdaten eines echten Anbieters. Der Speicher wartet darauf, nicht
+umgekehrt.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
