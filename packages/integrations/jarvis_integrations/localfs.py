@@ -91,6 +91,105 @@ class WurzelGrenze:
             return True
         return False
 
+    def _wurzel_von(self, kandidat: Path) -> Path | None:
+        """Welche Wurzel diesen Pfad enthält — oder ``None``."""
+        for wurzel in self._roots:
+            try:
+                kandidat.relative_to(wurzel)
+            except ValueError:
+                continue
+            return wurzel
+        return None
+
+    def _segmentweise_oeffnen(self, angefragt: Path) -> tuple[int, Path]:
+        """Öffnet ein Verzeichnis **Segment für Segment**, ab der Wurzel.
+
+        **Warum nicht wie beim Lesen.** Dort wird der Pfad aufgelöst, gegen die
+        Wurzeln geprüft und anschließend als ganzer Pfad geöffnet — und der
+        Modulkopf sagt seit jeher, was daran offen bleibt: ``O_NOFOLLOW``
+        schützt nur den **letzten** Bestandteil; die Verzeichnisse auf dem Weg
+        dorthin bleiben zwischen Prüfung und Öffnen veränderbar. Wer eine
+        übergeordnete Komponente gegen einen Verweis tauscht, führt das Öffnen
+        woandershin. Ein externes Review hat genau das für die Aufzählung
+        aufgeschrieben.
+
+        Hier ist es geschlossen: Jedes Segment wird **relativ zum offenen
+        Vorgänger** geöffnet (``dir_fd``), jedes mit ``O_NOFOLLOW``. Zwischen
+        zwei Schritten gibt es keinen Pfad mehr, den jemand umdeuten könnte —
+        nur noch einen Deskriptor, der auf ein bestimmtes Verzeichnis zeigt.
+
+        **Und damit folgt dieser Weg keinem Verweis, auch keinem, der innerhalb
+        der Wurzeln bliebe.** Das ist für eine Aufzählung die richtige Strenge:
+        Sie meldet Verweise ohnehin als Verweise, statt sie aufzulösen (ADR-019)
+        — wer einen Ordner aufzählen will, nennt seinen Pfad und nicht einen
+        Verweis darauf. Für den *Lesepfad* wäre dieselbe Strenge eine
+        Verhaltensänderung: Dort ist ein Verweis innerhalb der Wurzeln
+        ausdrücklich erlaubt.
+
+        Gibt den Deskriptor und den begangenen Pfad zurück. Der Aufrufer
+        schließt.
+        """
+        if not angefragt.is_absolute():
+            raise FileAccessDenied("Nur absolute Pfade werden aufgezählt.")
+        if ".." in angefragt.parts:
+            # Nicht wegrechnen, sondern ablehnen — dieselbe Entscheidung wie in
+            # ``FilesConstraints.check()``: Ein Pfad, der erst gerechnet werden
+            # muss, ist nicht der Pfad, der geöffnet wird.
+            raise FileAccessDenied("Pfade mit '..' werden nicht aufgezählt.")
+
+        wurzel = self._wurzel_von(angefragt)
+        if wurzel is None:
+            raise FileAccessDenied("Pfad liegt außerhalb der freigegebenen Ordner.")
+
+        deskriptor = self._oeffnen(wurzel, dir_fd=None)
+        begangen = wurzel
+        try:
+            for segment in angefragt.relative_to(wurzel).parts:
+                naechster = self._oeffnen(Path(segment), dir_fd=deskriptor)
+                os.close(deskriptor)
+                deskriptor = naechster
+                begangen = begangen / segment
+        except BaseException:
+            os.close(deskriptor)
+            raise
+        return deskriptor, begangen
+
+    @staticmethod
+    def _oeffnen(teil: Path, *, dir_fd: int | None) -> int:
+        """Ein Verzeichnis öffnen — ohne Verweis, ohne Blockieren."""
+        try:
+            return os.open(
+                teil,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY | os.O_NONBLOCK,
+                dir_fd=dir_fd,
+            )
+        except FileNotFoundError as fehlt:
+            raise FileUnavailable("Ordner nicht gefunden.") from fehlt
+        except OSError as fehler:
+            if fehler.errno in {errno.EACCES, errno.EPERM}:
+                raise FileAccessDenied("Ordner nicht lesbar.") from fehler
+            # **Verweis oder schlicht kein Ordner — das ist nicht dasselbe**,
+            # und die Fehlerkennungen sagen es nicht: ``O_NOFOLLOW`` auf einem
+            # Verweis meldet je nach System ``ELOOP`` oder ``ENOTDIR``, und
+            # ``ENOTDIR`` meldet auch eine ganz gewöhnliche Datei. Ein
+            # Ausbruchsversuch über einen Verweis ginge damit als „ist kein
+            # Ordner" durch — als Alltag statt als Sicherheitsereignis.
+            #
+            # Gefragt wird deshalb nach dem Fehlschlag, was dort steht. Das ist
+            # ein zweiter Syscall und **kein** zweites Zeitfenster: Der Zugriff
+            # ist bereits verweigert, entschieden wird nur noch die Meldung.
+            if fehler.errno in {errno.ELOOP, errno.EMLINK, errno.ENOTDIR} and _ist_verweis(
+                teil, dir_fd=dir_fd
+            ):
+                # Wohin er zeigt, wird **nicht** aufgelöst: Das wäre eine
+                # Auskunft über das Dateisystem, und ob er innerhalb bliebe,
+                # ließe sich nur durch genau das Auflösen feststellen, das hier
+                # vermieden wird.
+                raise FileAccessDenied("Pfad führt über einen Verweis.") from fehler
+            if fehler.errno in {errno.ELOOP, errno.EMLINK, errno.ENOTDIR}:
+                raise FileUnavailable("Das ist kein Ordner.") from fehler
+            raise FileUnavailable(f"Ordner nicht lesbar: {fehler.strerror}") from fehler
+
 
 class LocalFileReader(WurzelGrenze):
     """Liest Textdateien — ausschließlich unterhalb der übergebenen Wurzeln."""
@@ -202,6 +301,19 @@ class LocalFileReader(WurzelGrenze):
         )
 
 
+def _ist_verweis(teil: Path, *, dir_fd: int | None) -> bool:
+    """Steht an dieser Stelle ein Verweis?
+
+    Nur zur Wahl der Fehlermeldung — der Zugriff ist zu diesem Zeitpunkt
+    bereits abgelehnt. Ein Fehlschlag hier bedeutet „nicht feststellbar", und
+    dann bleibt es bei der harmloseren Auskunft.
+    """
+    try:
+        return stat.S_ISLNK(os.lstat(teil, dir_fd=dir_fd).st_mode)
+    except OSError:
+        return False
+
+
 class LocalDirectoryLister(WurzelGrenze):
     """Zählt **ein** Verzeichnis auf — innerhalb der Wurzeln, eine Ebene tief.
 
@@ -221,34 +333,14 @@ class LocalDirectoryLister(WurzelGrenze):
         return await asyncio.to_thread(self._auflisten, path, max_entries)
 
     def _auflisten(self, pfad: str, max_entries: int) -> DirectoryListing:
-        angefragt = Path(pfad)
-        if not angefragt.is_absolute():
-            raise FileAccessDenied("Nur absolute Pfade werden aufgezählt.")
+        """Öffnet den Ordner segmentweise und zählt ihn auf.
 
-        try:
-            aufgeloest = angefragt.resolve(strict=True)
-        except FileNotFoundError as fehlt:
-            raise FileUnavailable("Ordner nicht gefunden.") from fehlt
-        except OSError as fehler:  # pragma: no cover - z. B. Symlink-Schleife
-            raise FileUnavailable(f"Pfad nicht auflösbar: {fehler.strerror}") from fehler
-
-        if not self._innerhalb(aufgeloest):
-            # Dieselbe Meldung wie beim Lesen und aus demselben Grund: Ob ein
-            # Verweis im Spiel war und wohin er zeigte, ist eine Auskunft über
-            # das Dateisystem, die eine abgewiesene Anfrage nicht geben soll.
-            raise FileAccessDenied("Pfad liegt außerhalb der freigegebenen Ordner.")
-
-        try:
-            deskriptor = os.open(aufgeloest, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
-        except NotADirectoryError as keiner:
-            raise FileUnavailable("Das ist kein Ordner.") from keiner
-        except OSError as fehler:
-            if fehler.errno in (errno.ELOOP, errno.ENOTDIR):
-                raise FileUnavailable("Das ist kein Ordner.") from fehler
-            if fehler.errno in (errno.EACCES, errno.EPERM):
-                raise FileAccessDenied("Ordner nicht lesbar.") from fehler
-            raise FileUnavailable(f"Ordner nicht lesbar: {fehler.strerror}") from fehler
-
+        Kein ``resolve()`` mehr: Die Auflösung liefert eine Zeichenkette, die
+        zwischen Prüfung und Öffnen ihre Bedeutung ändern kann. Der begangene
+        Weg selbst ist der Nachweis, dass der geöffnete Ordner unterhalb einer
+        Wurzel liegt — dafür braucht es keine zweite Prüfung.
+        """
+        deskriptor, begangen = self._segmentweise_oeffnen(Path(pfad))
         try:
             namen = sorted(os.listdir(deskriptor))
             gekuerzt = len(namen) > max_entries
@@ -256,7 +348,7 @@ class LocalDirectoryLister(WurzelGrenze):
         finally:
             os.close(deskriptor)
 
-        return DirectoryListing(path=str(aufgeloest), entries=eintraege, truncated=gekuerzt)
+        return DirectoryListing(path=str(begangen), entries=eintraege, truncated=gekuerzt)
 
     @staticmethod
     def _eintrag(deskriptor: int, name: str) -> DirectoryEntry:

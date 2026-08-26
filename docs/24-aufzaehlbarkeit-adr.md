@@ -167,3 +167,56 @@ nicht mehr auf — das Beispiel steht nicht mehr in der Beschreibung. Was das
 Modell ohne Auskunft stattdessen erfindet, ist `/Projektnotiz.txt`: falscher
 Ordner, falscher Name, falsche Endung. **Ein Modell ohne Tatsachen rät nicht
 schlechter oder besser, es rät nur anders.**
+
+
+---
+
+## Nachtrag (26.08.2026): Der Weg wird begangen, nicht geprüft
+
+Ein externes Review hat eine Lücke benannt, die aus dem Lesepfad übernommen
+wurde, ohne dass sie für die Aufzählung je jemand abgewogen hätte.
+
+Die erste Fassung löste den Pfad mit `resolve()` auf, prüfte die **Zeichenkette**
+gegen die Wurzeln und öffnete anschließend denselben Pfad. `O_NOFOLLOW` schützt
+dabei nur den letzten Bestandteil. Wer zwischen Prüfung und Öffnen eine
+**übergeordnete** Komponente gegen einen Verweis tauscht, führt das Öffnen
+woandershin — und `os.listdir()` gibt die Namen eines fremden Ordners heraus.
+Der Modulkopf von `localfs.py` benennt diese Grenze für den Lesepfad seit jeher
+und sagt auch, was sie schließen würde: die Kette Segment für Segment öffnen.
+
+### Entscheidung: für die Aufzählung wird sie geschlossen
+
+Jedes Segment wird **relativ zum offenen Vorgänger** geöffnet (`dir_fd`), jedes
+mit `O_NOFOLLOW`. Zwischen zwei Schritten existiert kein Pfad mehr, den jemand
+umdeuten könnte, sondern nur noch ein Deskriptor auf ein bestimmtes
+Verzeichnis. Damit ist der begangene Weg selbst der Nachweis der Einschließung —
+eine Prüfung der Zeichenkette braucht es nicht mehr, und `resolve()` entfällt.
+
+**Der Preis ist eine Strenge, die der Lesepfad nicht hat:** Dieser Weg folgt
+*keinem* Verweis, auch keinem, der innerhalb der Wurzeln bliebe. Für eine
+Aufzählung ist das stimmig — sie meldet Verweise ohnehin als Verweise, statt
+sie aufzulösen (Punkt 5 oben). Wer einen Ordner aufzählen will, nennt seinen
+Pfad und nicht einen Verweis darauf.
+
+### Was das für den Lesepfad bedeutet
+
+**Er behält seine Grenze**, und das ist keine Nachlässigkeit, sondern der
+Unterschied im Vertrag: `files.read` erlaubt ausdrücklich einen Verweis
+innerhalb der Wurzeln (`FileContent.path` führt deshalb den *aufgelösten* Pfad).
+Dieselbe Strenge dort wäre eine Verhaltensänderung, und der sichere Weg mit
+Verweisen ist deutlich mehr als ein umgebautes `open()`: Er müsste jeden
+Verweis selbst lesen, ihm folgen und die Einschließung nach jedem Schritt neu
+belegen — ein eigener Pfadauflöser.
+
+Das ist ein eigener Block, und bis dahin gilt für `files.read` unverändert, was
+im Modulkopf steht. Neu ist nur, dass die Aufzählung ihn nicht mehr teilt.
+
+### Eine Kleinigkeit, die einen Angriff als Alltag getarnt hätte
+
+`O_NOFOLLOW` auf einem Verweis meldet je nach System `ELOOP` **oder**
+`ENOTDIR` — und `ENOTDIR` meldet auch eine ganz gewöhnliche Datei. Ein
+Ausbruchsversuch über einen Verweis wäre damit als „das ist kein Ordner"
+durchgegangen: als `FileUnavailable` statt als `FileAccessDenied`, also als
+Alltag statt als Sicherheitsereignis. Gefragt wird deshalb **nach** dem
+Fehlschlag per `lstat`, was dort steht. Das ist kein zweites Zeitfenster: Der
+Zugriff ist bereits verweigert, entschieden wird nur noch die Meldung.

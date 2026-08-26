@@ -206,3 +206,76 @@ class TestWasKeinOrdnerIst:
         aufzaehlung = await lister.list_dir(str(freigegeben), max_entries=200)
 
         assert "rohr" in [e.name for e in aufzaehlung.entries]
+
+
+class TestDasZeitfensterZwischenPruefungUndOeffnen:
+    """**Der Befund eines externen Reviews** — und die Bauart, die ihn schließt.
+
+    Die erste Fassung löste den Pfad auf, prüfte die Zeichenkette gegen die
+    Wurzeln und öffnete danach denselben Pfad noch einmal. `O_NOFOLLOW` schützt
+    dabei nur den **letzten** Bestandteil; wer in der Zwischenzeit eine
+    übergeordnete Komponente gegen einen Verweis tauscht, führt das Öffnen
+    woandershin. Der Modulkopf des Lesepfads benennt diese Grenze seit jeher —
+    für die Aufzählung war sie neu und unbenannt.
+
+    Jetzt wird Segment für Segment relativ zum offenen Vorgänger geöffnet.
+    Zwischen zwei Schritten gibt es keinen Pfad mehr, den jemand umdeuten
+    könnte, sondern nur noch einen Deskriptor.
+    """
+
+    @pytest.mark.invariant("file-access-confined-to-roots")
+    async def test_ein_getauschter_elternordner_traegt_nicht_hinaus(
+        self, freigegeben: Path, geheim: Path
+    ) -> None:
+        """Der Angriff, nachgestellt statt beschrieben.
+
+        Der Ordner ``eltern`` wird zwischen zwei Aufrufen durch einen Verweis
+        nach draußen ersetzt — genau der Tausch, den eine Prüfung auf der
+        Zeichenkette nicht sehen kann.
+        """
+        eltern = freigegeben / "eltern"
+        eltern.mkdir()
+        (eltern / "kind").mkdir()
+        lister = LocalDirectoryLister([freigegeben])
+        # Vorher: derselbe Pfad ist regulär aufzählbar.
+        assert (await lister.list_dir(str(eltern / "kind"), max_entries=200)).entries == []
+
+        (geheim / "kind").mkdir()
+        eltern.rename(freigegeben / "weg")
+        (freigegeben / "eltern").symlink_to(geheim, target_is_directory=True)
+
+        with pytest.raises(FileAccessDenied):
+            await lister.list_dir(str(eltern / "kind"), max_entries=200)
+
+    @pytest.mark.invariant("file-access-confined-to-roots")
+    async def test_ein_verweis_als_ordner_wird_nicht_begangen(self, freigegeben: Path) -> None:
+        """Auch dann nicht, wenn er **innerhalb** der Wurzeln bliebe.
+
+        Das ist strenger als der Lesepfad, und mit Grund: Eine Aufzählung meldet
+        Verweise als Verweise, statt sie aufzulösen (ADR-019). Wer einen Ordner
+        aufzählen will, nennt seinen Pfad — nicht einen Verweis darauf. Für den
+        Lesepfad wäre dieselbe Strenge eine Verhaltensänderung; dort ist ein
+        Verweis innerhalb der Wurzeln ausdrücklich erlaubt.
+        """
+        echt = freigegeben / "echt"
+        echt.mkdir()
+        (echt / "notiz.md").touch()
+        (freigegeben / "abkuerzung").symlink_to(echt, target_is_directory=True)
+        lister = LocalDirectoryLister([freigegeben])
+
+        with pytest.raises(FileAccessDenied):
+            await lister.list_dir(str(freigegeben / "abkuerzung"), max_entries=200)
+
+        # Der Ordner selbst bleibt aufzählbar — abgelehnt wird der Weg, nicht das Ziel.
+        assert [e.name for e in (await lister.list_dir(str(echt), max_entries=200)).entries] == [
+            "notiz.md"
+        ]
+
+    async def test_die_gemeldete_wurzel_ist_der_begangene_weg(self, freigegeben: Path) -> None:
+        """Kein `resolve()` mehr — gemeldet wird, was tatsächlich geöffnet wurde."""
+        (freigegeben / "unter").mkdir(exist_ok=True)
+        lister = LocalDirectoryLister([freigegeben])
+
+        aufzaehlung = await lister.list_dir(str(freigegeben / "unter"), max_entries=200)
+
+        assert aufzaehlung.path == str(freigegeben / "unter")
