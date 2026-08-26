@@ -20,7 +20,9 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -35,7 +37,9 @@ from jarvis_core.ports.sessions import SessionStore
 
 __all__ = [
     "SESSION_TOKEN_BYTES",
+    "SessionCheck",
     "SessionManager",
+    "SessionRejection",
     "token_fingerprint",
 ]
 
@@ -55,6 +59,45 @@ def token_fingerprint(token: str) -> str:
     Dekoration (dieselbe Begründung wie bei der Nonce in ``PendingAction``).
     """
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+class SessionRejection(StrEnum):
+    """Warum ein Token nicht gilt.
+
+    **Nach außen bleibt das ein einziges 401.** Der Docstring von ``verify()``
+    sagt seit jeher, die Fälle seien „nach innen unterscheidbar, weil das Audit
+    sie braucht" — nur gab es innen niemanden, der sie unterschied: Alle vier
+    Wege endeten in demselben ``None``.
+
+    Aufgefallen ist das beim Nachgehen eines Testflackerns. Die Anmeldung
+    gelang vollständig (``login/finish`` mit 200), und der unmittelbar folgende
+    ``/auth/me`` antwortete 401 — ohne dass irgendwo stand, welcher der vier
+    Fälle das war. „Kein Cookie angekommen" und „Zeile noch nicht sichtbar"
+    verlangen entgegengesetzte Untersuchungen und sahen identisch aus.
+    """
+
+    KEIN_TOKEN = "kein-token"
+    """Es wurde gar keiner vorgelegt — weder Cookie noch Kopfzeile."""
+
+    UNBEKANNT = "unbekannt"
+    """Vorgelegt, aber zu diesem Abdruck gibt es keine Sitzung."""
+
+    WIDERRUFEN = "widerrufen"
+    ABGELAUFEN = "abgelaufen"
+    LEERLAUF = "leerlauf"
+    """Zu lange nicht benutzt — die zweite Frist neben der absoluten."""
+
+
+@dataclass(frozen=True)
+class SessionCheck:
+    """Das Ergebnis einer Prüfung: die Sitzung **oder** der Grund.
+
+    Genau eines von beidem ist gesetzt. Ein Grund neben einer gültigen Sitzung
+    wäre eine Aussage, die niemand einlösen kann.
+    """
+
+    session: Session | None = None
+    grund: SessionRejection | None = None
 
 
 class SessionManager:
@@ -123,15 +166,36 @@ class SessionManager:
         Frist zu verlängern. Andernfalls hielte ein Angreifer eine gestohlene
         Sitzung unbegrenzt am Leben, indem er sie benutzt.
         """
+        return (await self.pruefen(token, now=now)).session
+
+    async def pruefen(self, token: str, *, now: datetime | None = None) -> SessionCheck:
+        """Dieselbe Prüfung, aber mit dem Grund einer Ablehnung.
+
+        Für Aufrufer, die den Fall **protokollieren** wollen. Nach außen ändert
+        das nichts: Die Antwort bleibt ein 401 ohne Unterscheidung, sonst wäre
+        sie ein Aufzählungsorakel. Was hier entsteht, gehört ins Protokoll des
+        Betreibers, nicht in den Rumpf der Antwort.
+        """
         moment = self._now(now)
+        if not token:
+            return SessionCheck(grund=SessionRejection.KEIN_TOKEN)
+
         session = await self._store.by_token_hash(token_fingerprint(token))
         if session is None:
-            return None
-        if not session.is_valid_at(moment, idle_timeout=self._idle_timeout):
-            return None
+            return SessionCheck(grund=SessionRejection.UNBEKANNT)
+
+        # Die Reihenfolge bildet ``is_valid_at`` nach — und muss es, sonst
+        # meldete diese Methode einen anderen Grund, als die Prüfung nebenan
+        # anwendet. Ein Strukturtest hält beide gegeneinander.
+        if session.is_revoked:
+            return SessionCheck(grund=SessionRejection.WIDERRUFEN)
+        if moment >= session.expires_at:
+            return SessionCheck(grund=SessionRejection.ABGELAUFEN)
+        if session.is_idle_at(moment, idle_timeout=self._idle_timeout):
+            return SessionCheck(grund=SessionRejection.LEERLAUF)
 
         await self._store.touch(session.id, moment)
-        return session.model_copy(update={"last_seen_at": moment})
+        return SessionCheck(session=session.model_copy(update={"last_seen_at": moment}))
 
     async def belongs_to(
         self, token: str, *, user_id: UUID, session_id: UUID, now: datetime | None = None

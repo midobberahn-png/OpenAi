@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
+import structlog
 from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -94,6 +95,9 @@ __all__ = [
     "spend_reader",
     "tool_registry",
 ]
+
+
+_log = structlog.get_logger(__name__)
 
 
 async def db_connection(
@@ -276,14 +280,24 @@ async def current_session(
     ``session_id`` in der gesamten HTTP-Schicht. Ein Strukturtest hält fest,
     dass daneben kein zweiter Weg entsteht.
     """
-    session = await sessions.verify(session_token_from(request, settings))
-    if session is None:
+    geprueft = await sessions.pruefen(session_token_from(request, settings))
+    if geprueft.session is None:
+        # **Der Grund geht ins Protokoll, nicht in die Antwort.** Nach außen
+        # bleibt jedes 401 dasselbe — eine Unterscheidung dort wäre ein
+        # Aufzählungsorakel. Nach innen ist sie der Unterschied zwischen
+        # „Cookie kam nicht an" und „Zeile war noch nicht sichtbar": zwei
+        # entgegengesetzte Untersuchungen, die bisher identisch aussahen.
+        _log.info(
+            "sitzung.abgewiesen",
+            grund=str(geprueft.grund),
+            pfad=request.url.path,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Nicht angemeldet.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return session
+    return geprueft.session
 
 
 CurrentSession = Annotated[Session, Depends(current_session)]
