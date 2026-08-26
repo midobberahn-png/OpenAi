@@ -1342,9 +1342,29 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
 
   Es ist **nicht** das Anmeldeflackern: Die Anmeldung stand, im Protokoll
   steht kein abgewiesener Zugriff außer dem regulären `kein-token` vor der
-  Anmeldung. Der Verdacht liegt bei der Oberfläche — nach der Entscheidung
-  wird der Lauf neu geladen, und wer dabei nichts abwartet, zeigt die Karte
-  eine Runde zu lang. Nachgesehen ist das noch nicht.
+  Anmeldung.
+
+  **Gemessen, und die Messung ist der eigentliche Hinweis:**
+
+  | Lage | Ergebnis |
+  |---|---|
+  | Nur dieser Test, 25 Wiederholungen am Stück | **25/25 grün** |
+  | In der vollen Suite | einmal in 13 Durchgängen rot |
+
+  In Isolation tritt es also **nicht** auf. Was in der vollen Suite anders ist:
+  Die Chat-Durchstiche stoßen Läufe an, die weiterarbeiten, während spätere
+  Tests laufen — der Server ist beschäftigt, wenn dieser Test seine fünf
+  Sekunden abwartet. Dass die Karte nach dem Verbuchen neu geladen wird und der
+  Ladevorgang unter Last länger dauert als die Zusicherung wartet, ist damit
+  der naheliegende Verdacht. **Bewiesen ist er nicht**, und die nächste Probe
+  wäre die naheliegende: denselben Test wiederholen, während absichtlich
+  Modellast erzeugt wird.
+
+  Was sich geändert hat: `verschwindet()` in `e2e/system.ts` meldet jetzt
+  statt „expected hidden, received visible" die Fehlerkarte der Oberfläche und
+  alle abgewiesenen `/runs/`-Aufrufe. Steht dort beim nächsten Mal „Keine
+  Fehlerkarte", liegt es am Server; steht ein 409 da, an der Entscheidung
+  selbst.
 
   **Zwei Sackgassen, damit sie niemand zweimal geht:** Es ist kein
   Parallelrennen (`workers: 1`, `fullyParallel: false`), und es ist nicht das
