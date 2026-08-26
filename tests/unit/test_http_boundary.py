@@ -375,9 +375,15 @@ def test_die_sitzung_wird_an_genau_einer_stelle_gelesen() -> None:
 def test_current_session_prueft_tatsaechlich() -> None:
     """Die Dependency darf keine Sitzung ohne Verifikation herausgeben.
 
-    Geprüft am Quelltext: ``current_session`` ruft ``verify`` auf und wirft bei
-    ``None``. Ein Rückgabewert ohne diesen Pfad wäre eine Identität, die nur
-    behauptet wurde.
+    Geprüft am Quelltext: ``current_session`` ruft die Prüfung des
+    Sitzungsmanagers auf und wirft, wenn keine Sitzung herauskommt. Ein
+    Rückgabewert ohne diesen Pfad wäre eine Identität, die nur behauptet wurde.
+
+    **Zwei zulässige Namen, und das ist kein Aufweichen.** ``verify`` gibt die
+    Sitzung oder ``None``, ``pruefen`` dieselbe Sitzung samt Ablehnungsgrund
+    fürs Protokoll — beide gehen durch dieselbe Prüfung, ``verify`` ruft
+    inzwischen ``pruefen`` auf. Was diese Wache sichert, ist nicht ein Name,
+    sondern dass hier überhaupt geprüft wird.
     """
     tree = ast.parse(DEPS.read_text(encoding="utf-8"), filename=str(DEPS))
     funktion = next(
@@ -386,7 +392,7 @@ def test_current_session_prueft_tatsaechlich() -> None:
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "current_session"
     )
     quelle = ast.dump(funktion)
-    assert "verify" in quelle, "current_session verifiziert den Token nicht"
+    assert "verify" in quelle or "pruefen" in quelle, "current_session verifiziert den Token nicht"
     assert "HTTPException" in quelle, "current_session lehnt eine ungültige Sitzung nicht ab"
 
 

@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1542** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1550** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **61/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
@@ -1325,12 +1325,26 @@ Registry und lief am Executor vorbei, der sonst protokolliert.
   von „irgendwo in der Anmeldung" auf **eine** Stelle eingegrenzt: was zwischen
   dem Setzen des Sitzungs-Cookies und seiner ersten Prüfung geschieht.
 
-  Zwei Kandidaten, beide ungeprüft: Das Cookie erreicht den nächsten Aufruf
-  nicht (dann läge es im Browser), oder die Sitzung ist beim Lesen noch nicht
-  sichtbar (dann läge es an der Transaktion, in der sie entsteht). Der nächste,
-  der das aufnimmt, hat damit eine Frage statt eines Suchraums — und die
-  Zeilen, um sie zu beantworten, stehen in `auth/sessions.py` und in der Route
-  `login/finish`.
+  Zwei Kandidaten: Das Cookie erreicht den nächsten Aufruf nicht (dann läge es
+  im Browser), oder die Sitzung ist beim Lesen noch nicht sichtbar (dann läge
+  es an der Transaktion, in der sie entsteht).
+
+  **Diese beiden sind ab jetzt unterscheidbar** (§8 Abschnitt 17): Ein 401
+  sagt im Protokoll, welcher der vier Ablehnungsgründe es war. `kein-token`
+  hieße Browser, `unbekannt` hieße Datenbank. Bei der nächsten Gelegenheit
+  steht die Antwort da, statt erschlossen werden zu müssen.
+
+* **Ein zweites Flackern, neu und getrennt zu führen** (26.08.2026). In
+  `laufdetail.spec.ts:129` („Ein unklarer Schritt lässt sich entscheiden")
+  bleibt nach dem Klick auf „verbuchen" die Entscheidungskarte fünf Sekunden
+  lang sichtbar, statt zu verschwinden — `toBeHidden` scheitert, der
+  Schrittstand wird nie geprüft. Einmal gesehen in dreizehn Durchgängen.
+
+  Es ist **nicht** das Anmeldeflackern: Die Anmeldung stand, im Protokoll
+  steht kein abgewiesener Zugriff außer dem regulären `kein-token` vor der
+  Anmeldung. Der Verdacht liegt bei der Oberfläche — nach der Entscheidung
+  wird der Lauf neu geladen, und wer dabei nichts abwartet, zeigt die Karte
+  eine Runde zu lang. Nachgesehen ist das noch nicht.
 
   **Zwei Sackgassen, damit sie niemand zweimal geht:** Es ist kein
   Parallelrennen (`workers: 1`, `fullyParallel: false`), und es ist nicht das
@@ -1906,6 +1920,43 @@ zeigt, dass tatsächlich beide Hälften nötig sind.
 übersprungen — dort läuft kein Modell. Was nur mit Ollama geprüft ist, ist in
 der Pipeline ungeprüft; deshalb liegt der Mechanismus daneben in einer
 modellfreien Suite (`tests/unit/test_grenzen_im_angebot.py`).
+
+### 17. Erledigt: Ein 401 sagt, welcher 401 es war — nach innen
+
+Beim Nachgehen des Anmeldeflackerns aufgefallen, und der Befund ist derselbe
+wie schon dreimal in diesem Dokument: **Der Docstring hatte recht, und niemand
+hat ihn eingelöst.** `SessionManager.verify()` führt seit jeher den Satz
+
+> „``None`` für jeden Fehlerfall, ohne Unterscheidung nach außen. **Nach innen
+> sind die Fälle unterscheidbar, weil das Audit sie braucht.**"
+
+Nach innen unterschied sie niemand: Kein Token, unbekannter Token, widerrufen,
+abgelaufen, Leerlauf — fünf Wege, ein einziges `None`, und nichts, was den
+Unterschied festhielt.
+
+Für das Flackern ist das der ganze Unterschied. „Das Cookie kam nicht an"
+(`kein-token`) und „die Sitzung war beim Lesen noch nicht da" (`unbekannt`)
+verlangen entgegengesetzte Untersuchungen — die eine im Browser, die andere in
+der Transaktion, in der die Sitzung entsteht. Als 401 sahen beide identisch
+aus.
+
+**Was jetzt gilt:** `SessionManager.pruefen()` gibt die Sitzung **oder** den
+Grund; `verify()` bleibt unverändert und ruft es auf. Die HTTP-Schicht legt
+den Grund ins **Protokoll** (`sitzung.abgewiesen grund=… pfad=…`) und nicht in
+die Antwort — eine Unterscheidung im Antwortrumpf wäre ein Aufzählungsorakel.
+Ein Test hält beides fest: dass `verify()` nach außen weiterhin nur ja oder
+nein sagt, und dass der gemeldete Grund mit `is_valid_at` übereinstimmt. Zwei
+Wahrheiten über dieselbe Frage wären hier der eigentliche Fehler.
+
+**Fünfzehn Jagdläufe danach** (390 Testausführungen): 390 Ablehnungen, **alle**
+`kein-token` auf `/auth/me` — die reguläre Frage der Leiste vor jeder
+Anmeldung. Das Anmeldeflackern trat nicht wieder auf.
+
+Die Falle steht also und ist noch nicht zugeschnappt. Das ist der ehrliche
+Stand: Der Grund liegt bereit, wenn es das nächste Mal geschieht. Wer darauf
+wartet, sieht im Protokoll nach `grund=unbekannt` — das wäre die Datenbank —
+oder nach `grund=kein-token` **unmittelbar nach** einem erfolgreichen
+`login/finish`, und dann läge es am Browser.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 

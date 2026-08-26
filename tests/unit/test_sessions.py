@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from jarvis_contracts import IssuedSession, Session
-from jarvis_core.auth import SessionManager, token_fingerprint
+from jarvis_core.auth import SessionManager, SessionRejection, token_fingerprint
 
 pytestmark = pytest.mark.security
 
@@ -238,3 +238,96 @@ class TestFingerabdruck:
         abdruck = token_fingerprint("geheim")
         assert "geheim" not in abdruck
         assert len(abdruck) == 64
+
+
+class TestDerGrundEinerAblehnung:
+    """Vier Wege zu einem 401 — und bis zu diesem Block waren sie ununterscheidbar.
+
+    Der Docstring von ``verify()`` sagt seit jeher, die Fälle seien „nach innen
+    unterscheidbar, weil das Audit sie braucht". Innen unterschied sie
+    niemand: Alle vier endeten in demselben ``None``.
+
+    Aufgefallen beim Nachgehen eines Testflackerns. Die Anmeldung gelang
+    vollständig — ``login/finish`` mit 200 —, und der unmittelbar folgende
+    ``/auth/me`` antwortete 401. Ob das Cookie nicht ankam oder die Sitzung
+    beim Lesen noch nicht sichtbar war, verlangt entgegengesetzte
+    Untersuchungen und sah identisch aus.
+    """
+
+    async def test_ohne_token_heisst_es_so(self) -> None:
+        """Der wichtigste der vier: Er unterscheidet ein Browserproblem von
+        einem Datenbankproblem."""
+        assert (await _manager().pruefen("", now=NOW)).grund is SessionRejection.KEIN_TOKEN
+
+    async def test_ein_unbekannter_token_heisst_unbekannt(self) -> None:
+        assert (await _manager().pruefen("x" * 40, now=NOW)).grund is SessionRejection.UNBEKANNT
+
+    async def test_eine_widerrufene_sitzung_heisst_widerrufen(self) -> None:
+        store = InMemorySessions()
+        manager = _manager(store)
+        issued = await manager.issue(USER, now=NOW)
+        await manager.revoke(issued.session.id, now=NOW)
+
+        geprueft = await manager.pruefen(issued.token, now=NOW + timedelta(minutes=1))
+
+        assert geprueft.grund is SessionRejection.WIDERRUFEN
+
+    async def test_eine_abgelaufene_sitzung_heisst_abgelaufen(self) -> None:
+        manager = _manager(ttl=timedelta(days=14))
+        issued = await manager.issue(USER, now=NOW)
+
+        geprueft = await manager.pruefen(issued.token, now=NOW + timedelta(days=14, seconds=1))
+
+        assert geprueft.grund is SessionRejection.ABGELAUFEN
+
+    async def test_leerlauf_heisst_leerlauf(self) -> None:
+        manager = _manager(idle_timeout=timedelta(hours=12))
+        issued = await manager.issue(USER, now=NOW)
+
+        geprueft = await manager.pruefen(issued.token, now=NOW + timedelta(hours=13))
+
+        assert geprueft.grund is SessionRejection.LEERLAUF
+
+    async def test_eine_gueltige_sitzung_traegt_keinen_grund(self) -> None:
+        """Genau eines von beidem ist gesetzt. Ein Grund neben einer gültigen
+        Sitzung wäre eine Aussage, die niemand einlösen kann."""
+        manager = _manager()
+        issued = await manager.issue(USER, now=NOW)
+
+        geprueft = await manager.pruefen(issued.token, now=NOW + timedelta(minutes=1))
+
+        assert geprueft.session is not None
+        assert geprueft.grund is None
+
+    async def test_verify_antwortet_weiterhin_genau_wie_vorher(self) -> None:
+        """Die Wache gegen ein Aufzählungsorakel.
+
+        ``verify()`` bleibt die Auskunft nach außen und sagt nach wie vor nur
+        ja oder nein. Wer den Grund will, fragt ausdrücklich danach — und die
+        HTTP-Schicht legt ihn ins Protokoll, nicht in die Antwort.
+        """
+        manager = _manager(ttl=timedelta(days=14))
+        issued = await manager.issue(USER, now=NOW)
+
+        assert await manager.verify("", now=NOW) is None
+        assert await manager.verify("x" * 40, now=NOW) is None
+        assert await manager.verify(issued.token, now=NOW + timedelta(days=15)) is None
+        assert await manager.verify(issued.token, now=NOW) is not None
+
+    async def test_der_grund_stimmt_mit_der_pruefung_daneben_ueberein(self) -> None:
+        """**Zwei Wahrheiten über dieselbe Frage wären der eigentliche Fehler.**
+
+        ``pruefen()`` bildet die Reihenfolge von ``is_valid_at`` nach. Liefe
+        sie auseinander, meldete das Protokoll einen Grund, den die Prüfung
+        nicht anwendet — und die nächste Untersuchung liefe in die falsche
+        Richtung.
+        """
+        manager = _manager(ttl=timedelta(days=14), idle_timeout=timedelta(hours=12))
+        issued = await manager.issue(USER, now=NOW)
+
+        for versatz in (timedelta(hours=13), timedelta(days=15)):
+            moment = NOW + versatz
+            geprueft = await manager.pruefen(issued.token, now=moment)
+            gilt = issued.session.is_valid_at(moment, idle_timeout=timedelta(hours=12))
+
+            assert (geprueft.grund is None) is gilt

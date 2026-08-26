@@ -17,7 +17,13 @@ from .passkeys import (
     PasskeyService,
     sign_count_is_plausible,
 )
-from .sessions import SESSION_TOKEN_BYTES, SessionManager, token_fingerprint
+from .sessions import (
+    SESSION_TOKEN_BYTES,
+    SessionCheck,
+    SessionManager,
+    SessionRejection,
+    token_fingerprint,
+)
 
 __all__ = [
     "CHALLENGE_BYTES",
@@ -25,7 +31,9 @@ __all__ = [
     "AuthenticationFailed",
     "CloneSuspicion",
     "PasskeyService",
+    "SessionCheck",
     "SessionManager",
+    "SessionRejection",
     "sign_count_is_plausible",
     "token_fingerprint",
 ]
