@@ -503,6 +503,7 @@ class WebConstraints(ScopeConstraints):
 
 
 CONSTRAINTS_BY_SCOPE: dict[str, type[ScopeConstraints]] = {
+    "files.list": FilesConstraints,
     "files.read": FilesConstraints,
     "files.write": FilesConstraints,
     "files.delete": FilesConstraints,

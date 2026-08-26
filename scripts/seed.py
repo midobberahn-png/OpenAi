@@ -36,6 +36,7 @@ SCOPES: list[tuple[str, str, str, str]] = [
     ("tasks.write", "Aufgaben anlegen und ändern", "allow", "medium"),
     ("tasks.delete", "Aufgaben löschen", "confirm", "medium"),
     # -- Dateien --------------------------------------------------------
+    ("files.list", "Freigegebene Ordner auflisten", "allow", "low"),
     ("files.read", "Dateien in freigegebenen Ordnern lesen", "allow", "low"),
     ("files.write", "Dateien in freigegebenen Ordnern schreiben", "confirm", "high"),
     ("files.delete", "Dateien löschen", "deny", "critical"),

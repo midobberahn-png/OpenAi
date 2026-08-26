@@ -43,7 +43,7 @@ from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_api.providers import model_gateway
 from jarvis_api.settings import Settings
-from jarvis_api.tools import file_reader_for, tool_catalog
+from jarvis_api.tools import directory_lister_for, file_reader_for, tool_catalog
 from jarvis_contracts import Run
 from jarvis_core.agents import AgentRuntime, AgentStepSource
 from jarvis_core.audit import DEFAULT_AUDIT_INTERVAL, ChainReport, ChainWatch
@@ -101,6 +101,7 @@ def worker_for(
             registry = tool_catalog(
                 engine,
                 files=file_reader_for(settings),
+                ordner=directory_lister_for(settings),
                 # Der Eigentümer kommt aus dem Lauf, nicht aus einer Sitzung —
                 # die einzige Stelle, an der sich diese Fassung von der
                 # HTTP-Fassung unterscheidet.

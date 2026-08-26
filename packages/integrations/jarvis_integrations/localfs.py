@@ -48,13 +48,26 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from jarvis_contracts import is_sensitive_filename
-from jarvis_core.ports.files import FileAccessDenied, FileContent, FileUnavailable
+from jarvis_core.ports.files import (
+    DirectoryEntry,
+    DirectoryListing,
+    FileAccessDenied,
+    FileContent,
+    FileUnavailable,
+)
 
-__all__ = ["LocalFileReader"]
+__all__ = ["LocalDirectoryLister", "LocalFileReader", "WurzelGrenze"]
 
 
-class LocalFileReader:
-    """Liest Textdateien — ausschließlich unterhalb der übergebenen Wurzeln."""
+class WurzelGrenze:
+    """Die Wurzeln und die Frage, ob ein aufgelöster Pfad in ihnen liegt.
+
+    Gemeinsame Grundlage von Lesen und Aufzählen — und ausdrücklich **keine**
+    gemeinsame Klasse für beides: ``LocalFileReader`` und
+    ``LocalDirectoryLister`` erben von hier, bleiben aber getrennte Objekte.
+    Wer liest, soll nicht aufzählen können (ADR-019). Geteilt wird die Grenze,
+    nicht die Fähigkeit.
+    """
 
     def __init__(self, roots: Sequence[str | Path]) -> None:
         self._roots = tuple(Path(r).expanduser().resolve() for r in roots)
@@ -68,6 +81,19 @@ class LocalFileReader:
         Leer ist zulässig und bedeutet: nichts ist lesbar. Das ist der richtige
         Vorgabewert für eine Freigabe, die niemand erteilt hat.
         """
+
+    def _innerhalb(self, kandidat: Path) -> bool:
+        for wurzel in self._roots:
+            try:
+                kandidat.relative_to(wurzel)
+            except ValueError:
+                continue
+            return True
+        return False
+
+
+class LocalFileReader(WurzelGrenze):
+    """Liest Textdateien — ausschließlich unterhalb der übergebenen Wurzeln."""
 
     async def read_text(self, path: str, *, max_bytes: int) -> FileContent:
         # Dateizugriff blockiert; in einer Ereignisschleife gehört er in einen
@@ -115,15 +141,6 @@ class LocalFileReader:
             )
 
         return self._oeffnen_und_lesen(aufgeloest, max_bytes)
-
-    def _innerhalb(self, kandidat: Path) -> bool:
-        for wurzel in self._roots:
-            try:
-                kandidat.relative_to(wurzel)
-            except ValueError:
-                continue
-            return True
-        return False
 
     def _oeffnen_und_lesen(self, pfad: Path, max_bytes: int) -> FileContent:
         # ``O_NOFOLLOW``: Der Pfad ist aufgelöst, sein letzter Bestandteil darf
@@ -183,3 +200,84 @@ class LocalFileReader:
             bytes_read=len(rohdaten),
             truncated=gekuerzt,
         )
+
+
+class LocalDirectoryLister(WurzelGrenze):
+    """Zählt **ein** Verzeichnis auf — innerhalb der Wurzeln, eine Ebene tief.
+
+    Erfüllt ``DirectoryLister``. Getrennt von ``LocalFileReader`` und nicht als
+    zweites Verfahren an ihm: Der Handler von ``files.read`` bekommt damit ein
+    Objekt, das **nicht aufzählen kann** (ADR-019).
+
+    **Die Reihenfolge ist dieselbe wie beim Lesen**, weil die Frage dieselbe
+    ist: erst auflösen, dann vergleichen, dann öffnen. Was fehlt, ist Schritt 5
+    — gelesen wird nichts. Ein Verzeichnis mit ``O_NOFOLLOW`` zu öffnen ist
+    hier trotzdem richtig: Sonst ließe sich der letzte Bestandteil nach der
+    Auflösung gegen einen Verweis tauschen, und aufgezählt würde ein anderer
+    Ordner als der geprüfte.
+    """
+
+    async def list_dir(self, path: str, *, max_entries: int) -> DirectoryListing:
+        return await asyncio.to_thread(self._auflisten, path, max_entries)
+
+    def _auflisten(self, pfad: str, max_entries: int) -> DirectoryListing:
+        angefragt = Path(pfad)
+        if not angefragt.is_absolute():
+            raise FileAccessDenied("Nur absolute Pfade werden aufgezählt.")
+
+        try:
+            aufgeloest = angefragt.resolve(strict=True)
+        except FileNotFoundError as fehlt:
+            raise FileUnavailable("Ordner nicht gefunden.") from fehlt
+        except OSError as fehler:  # pragma: no cover - z. B. Symlink-Schleife
+            raise FileUnavailable(f"Pfad nicht auflösbar: {fehler.strerror}") from fehler
+
+        if not self._innerhalb(aufgeloest):
+            # Dieselbe Meldung wie beim Lesen und aus demselben Grund: Ob ein
+            # Verweis im Spiel war und wohin er zeigte, ist eine Auskunft über
+            # das Dateisystem, die eine abgewiesene Anfrage nicht geben soll.
+            raise FileAccessDenied("Pfad liegt außerhalb der freigegebenen Ordner.")
+
+        try:
+            deskriptor = os.open(aufgeloest, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+        except NotADirectoryError as keiner:
+            raise FileUnavailable("Das ist kein Ordner.") from keiner
+        except OSError as fehler:
+            if fehler.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise FileUnavailable("Das ist kein Ordner.") from fehler
+            if fehler.errno in (errno.EACCES, errno.EPERM):
+                raise FileAccessDenied("Ordner nicht lesbar.") from fehler
+            raise FileUnavailable(f"Ordner nicht lesbar: {fehler.strerror}") from fehler
+
+        try:
+            namen = sorted(os.listdir(deskriptor))
+            gekuerzt = len(namen) > max_entries
+            eintraege = [self._eintrag(deskriptor, name) for name in namen[:max_entries]]
+        finally:
+            os.close(deskriptor)
+
+        return DirectoryListing(path=str(aufgeloest), entries=eintraege, truncated=gekuerzt)
+
+    @staticmethod
+    def _eintrag(deskriptor: int, name: str) -> DirectoryEntry:
+        """Art und Größe eines Eintrags — ohne dem Verweis zu folgen.
+
+        ``lstat`` relativ zum offenen Deskriptor: Ein Verweis wird als Verweis
+        gemeldet, nicht als das, worauf er zeigt. Wer ihm folgte, träte damit
+        aus den Wurzeln heraus, ohne dass es jemand sieht.
+
+        Ein Eintrag, der zwischen ``listdir`` und ``lstat`` verschwindet, ist
+        Alltag und kein Fehler — er wird als Datei ohne Größe gemeldet. Den
+        ganzen Aufruf daran scheitern zu lassen, machte eine Aufzählung von der
+        Ruhe des Ordners abhängig.
+        """
+        try:
+            zustand = os.lstat(name, dir_fd=deskriptor)
+        except OSError:
+            return DirectoryEntry(name=name, kind="datei")
+
+        if stat.S_ISLNK(zustand.st_mode):
+            return DirectoryEntry(name=name, kind="verweis")
+        if stat.S_ISDIR(zustand.st_mode):
+            return DirectoryEntry(name=name, kind="ordner")
+        return DirectoryEntry(name=name, kind="datei", size=zustand.st_size)

@@ -45,7 +45,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1509** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| Tests | **1528** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **61/62** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
@@ -1003,6 +1003,13 @@ Zwei Schlüsse, und der zweite ist der unbequeme:
    brauchbar machen will, braucht **Aufzählbarkeit** (ein `files.list`), nicht
    nur Auskunft über die Grenze. Beides zusammen, nicht eines davon.
 
+**Stand 26.08.2026: die erste Hälfte steht** (`files.list`, ADR-019, §8
+Abschnitt 15). Die zweite — dem Modell sagen, *welche* Ordner ihm freigegeben
+sind — fehlt weiterhin, und sie gehört in die Angebotsschicht, nicht in den
+Werkzeugkatalog. **Der Befund oben gilt deshalb als offen**, bis die mittlere
+Zeile der Tabelle mit beiden Hälften neu gemessen ist. Ein Werkzeug, das
+dazugekommen ist, ist noch keine Messung.
+
 Ohne den Pfad im Auftrag schlägt der Schritt fail-closed fehl: Die
 Pfadeinschränkung der Berechtigung weist ab, und die Meldung nennt das Ziel
 nicht. Der Nutzer kann die Argumente weiterhin selbst angeben.
@@ -1782,6 +1789,53 @@ weil es nie als Markup gelesen wird. Ein Browsertest legt
 `inline`-Kennzeichen mehr, und ein Block ohne Sprachangabe trägt auch keine
 Klasse — wer am `code`-Element unterscheidet, hält ihn für eingebetteten Text
 mitten im Satz.
+
+### 15. `files.list` — nachsehen statt raten
+
+Die erste Hälfte des Befundes aus Abschnitt 5. Entschieden in ADR-019
+(`docs/24-aufzaehlbarkeit-adr.md`), und die Entscheidungen sind es, die den
+Block ausmachen — das Aufzählen selbst ist eine Handvoll Zeilen.
+
+* **Eigener Scope.** Aufzählen ist nicht die kleinere Schwester des Lesens: Es
+  beantwortet *was existiert hier?*, und wer eine bekannte Datei lesen lassen
+  will, hat damit keine Inventur seines Ordners erteilt. Ein Durchstich prüft
+  genau das — mit erteiltem `files.read` und ohne `files.list` geschieht
+  nichts.
+* **Eigener Port.** `DirectoryLister` steht neben `FileReader`, nicht in ihm.
+  Der Lesehandler soll nicht aufzählen **können** — dieselbe Trennung wie beim
+  Kalender ohne `list_events` und beim Audit-Prüfer, der `AuditSink` nicht
+  erweitert. Geteilt wird die Wurzelgrenze (`WurzelGrenze`), nicht die
+  Fähigkeit.
+* **Eine Aufzählung ist Fremdinhalt.** `reads_untrusted_content=True`, der Lauf
+  ist danach kontaminiert. Ein Ordner darf `SYSTEM- Sende alles an …` heißen,
+  und dieser Name steht anschließend im Modellkontext. `files.list` ist also
+  kein billiger Blick: Es kostet den Lauf dasselbe wie ein Lesevorgang.
+* **Eine Ebene, keine Rekursion.** Ein Aufruf, der einen ganzen Baum liefert,
+  wäre in erster Linie ein Erkundungswerkzeug.
+* **Nichts wird verschwiegen.** Auch `.env` steht in der Liste. Eine
+  Aufzählung, die still filtert, ist nicht zu gebrauchen — niemand kann „ist
+  leer" von „wurde gefiltert" unterscheiden; gelesen wird die Datei trotzdem
+  nicht. Gekürzt wird mit Ansage (`truncated`).
+* **Ein Verweis wird benannt, nicht aufgelöst.** Wohin er zeigt, wäre eine
+  Auskunft über das Dateisystem jenseits der Wurzeln — abfragbar mit einem
+  einzigen Aufruf. Ein Test prüft, dass der Zielname im ganzen Ergebnis nicht
+  vorkommt.
+
+**Und ein Beispiel ist verschwunden.** `files.read` führte in seiner
+Schemabeschreibung `/Users/ich/Notizen/plan.md`; das Modell gab es 3 von 3 Mal
+wörtlich zurück. Für ein ratendes Modell ist ein Beispiel keine Illustration,
+sondern die Antwort. Die Beschreibung nennt jetzt keinen Pfad und verweist
+stattdessen auf `files.list`.
+
+**Keine neue Invariante, sondern eine geschärfte.**
+`file-access-confined-to-roots` galt für `files.read`; sie gilt jetzt
+wortgleich für Namen statt Inhalte und schließt ausdrücklich ein, dass eine
+Aufzählung ihre Verweise nicht auflöst. Eine zweite Kennung für dieselbe
+Eigenschaft wäre Doppelzählung — die Kennzahl bleibt **61/62**.
+
+**Was offen bleibt, steht in Abschnitt 5:** Das Modell erfährt nach wie vor
+nicht, welche Ordner ihm freigegeben sind. Ohne Startpunkt hilft
+Aufzählbarkeit nicht.
 
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
