@@ -200,10 +200,18 @@ class TestDerTakt:
         assert not wache.faellig(JETZT + timedelta(minutes=59))
         assert wache.faellig(JETZT + timedelta(hours=1))
 
-    async def test_eine_gescheiterte_pruefung_verschiebt_den_takt_trotzdem(self) -> None:
-        """Sonst liefe die Prüfung bei einer nicht erreichbaren Datenbank in
-        jedem Minutentakt erneut — und ein Fehlversuch je Minute ist kein
-        Ersatz für einen je Stunde."""
+    async def test_eine_gescheiterte_pruefung_bleibt_faellig(self) -> None:
+        """**Die Umkehr einer Entscheidung, die falsch war.**
+
+        Die erste Fassung verschob den Takt auch bei einem Fehlschlag — mit dem
+        Argument, ein Fehlversuch je Minute sei kein Ersatz für einen je Stunde.
+        Ein externes Review hat gezeigt, was das kostet: Nach einem einzigen
+        Datenbankfehler galt die Prüfung eine Stunde lang als erledigt, und der
+        Arbeiter wirkte in dieser Stunde weiter, ohne dass die Kette je
+        nachgerechnet worden wäre. Ein Fail-open, eingebaut aus Sparsamkeit.
+
+        Eine Abfrage je Minute ist der billigere Preis.
+        """
 
         class Kaputt(FakeInspector):
             async def verify(self, *, limit: int | None = None) -> list[ChainBreak]:
@@ -213,7 +221,10 @@ class TestDerTakt:
         with pytest.raises(RuntimeError):
             await wache.pruefen(JETZT)
 
-        assert not wache.faellig(JETZT + timedelta(minutes=5))
+        assert wache.faellig(JETZT + timedelta(minutes=1)), (
+            "Nach einem Fehlschlag muss die Prüfung fällig bleiben — sonst gilt sie "
+            "als erledigt, ohne stattgefunden zu haben."
+        )
 
 
 class SpionRunStore:
@@ -262,6 +273,34 @@ class TestDerHaltVerhindertDasWirken:
         await durchgang(wache, arbeiter)  # type: ignore[arg-type]
 
         assert speicher.gefragt == 0
+
+    @pytest.mark.invariant("audit-chain-break-is-detected")
+    async def test_nach_einer_gescheiterten_pruefung_wird_nicht_gewirkt(self) -> None:
+        """**Die Lücke, die das Review offengelegt hat — jetzt gemessen.**
+
+        Der Fall stand zwischen zwei Tests und fiel deshalb durch: Der eine
+        prüfte einen *erkannten* Bruch, der andere den Takt nach einem
+        Fehlschlag. Was fehlte, war die Verbindung — scheitert die Prüfung,
+        darf im selben Takt nichts gewirkt werden, und im nächsten wird sie
+        erneut versucht.
+        """
+        from jarvis_api.worker import durchgang
+
+        class Kaputt(FakeInspector):
+            async def verify(self, *, limit: int | None = None) -> list[ChainBreak]:
+                raise RuntimeError("keine Verbindung")
+
+        speicher = SpionRunStore()
+        arbeiter = self._arbeiter(speicher)
+        wache = ChainWatch(Kaputt())
+
+        with pytest.raises(RuntimeError):
+            await durchgang(wache, arbeiter)  # type: ignore[arg-type]
+
+        assert speicher.gefragt == 0, (
+            "Es wurde gewirkt, obwohl die Kette nicht nachgerechnet werden konnte."
+        )
+        assert wache.faellig(JETZT + timedelta(minutes=1))
 
     async def test_ohne_bruch_laeuft_der_durchgang(self) -> None:
         """Die Gegenprobe — sonst belegte der Test oben auch einen Arbeiter,

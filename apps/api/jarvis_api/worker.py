@@ -210,9 +210,15 @@ async def run_forever(
 
     **Die Kettenprüfung steht vor dem Durchgang und nicht daneben.** Ein Fund
     hält den Arbeiter an (ADR-018), und ein Halt, der erst nach dem Wirken
-    greift, wäre einen Durchgang zu spät. Scheitert die Prüfung selbst, wird in
-    diesem Takt nicht gewirkt: Wer nicht nachrechnen kann, hat keinen Grund
-    anzunehmen, dass die Kette hält.
+    greift, wäre einen Durchgang zu spät.
+
+    **Scheitert die Prüfung selbst, wird nicht gewirkt — und zwar nicht nur in
+    diesem Takt.** Dieser Satz stand hier schon, und er stimmte nur zur Hälfte:
+    Die Prüfung galt nach einem Fehlschlag trotzdem als erledigt und war eine
+    Stunde lang nicht mehr fällig, in der gewirkt wurde. Ein externes Review hat
+    den Fail-open gefunden. Jetzt bleibt sie fällig, bis sie einmal durchläuft:
+    Wer nicht nachrechnen kann, hat keinen Grund anzunehmen, dass die Kette
+    hält.
     """
     _log.info(
         "Arbeiter gestartet: Takt %ss, Frist %ss, Kettenprüfung alle %ss",
