@@ -34,15 +34,20 @@ from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from jarvis_api.agents import agent_catalog
+from jarvis_api.db.account_store import PostgresAccountStore
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.db.audit_store import PostgresAuditSink
 from jarvis_api.db.calendar_store import PostgresCalendarStore
+from jarvis_api.db.credential_store import PostgresCredentialStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.db.permission_store import PostgresPermissionStore
 from jarvis_api.db.run_store import PostgresRunStore
 from jarvis_api.db.session_store import PostgresSessionStore
+from jarvis_api.deps import key_provider
+from jarvis_api.mail import KontoGebundenerPostfachleser
 from jarvis_api.providers import model_gateway
 from jarvis_api.settings import Settings
+from jarvis_api.token_service import TokenService
 from jarvis_api.tools import directory_lister_for, file_reader_for, tool_catalog
 from jarvis_contracts import Run
 from jarvis_core.agents import AgentRuntime, AgentStepSource
@@ -60,6 +65,7 @@ from jarvis_core.orchestrator import (
     ToolExecutor,
 )
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
+from jarvis_integrations.oauth import HttpTokenExchange
 from jarvis_integrations.web import HttpWebFetcher
 
 __all__ = ["DEFAULT_INTERVALL", "chain_watch_for", "durchgang", "run_forever", "worker_for"]
@@ -86,6 +92,10 @@ def worker_for(
 ) -> RunWorker:
     """Ein Arbeiter, der seine Bestandteile je Lauf neu zusammensetzt."""
 
+    # Einmal je Arbeiter und nicht je Lauf: Der Kontospeicher ist zustandslos,
+    # und die Schlüsseldatei soll nicht bei jedem Lauf neu gelesen werden.
+    konten = PostgresAccountStore(engine)
+
     @asynccontextmanager
     async def advancer_for(lauf: Run) -> AsyncIterator[RunAdvancer]:
         """Der Ablauf für **einen** Lauf, in **einer** Transaktion.
@@ -107,6 +117,24 @@ def worker_for(
                 # HTTP-Fassung unterscheidet.
                 calendar=PostgresCalendarStore(engine, user_id=lauf.user_id),
                 web=HttpWebFetcher(),
+                # Dasselbe für das Postfach: Der Eigentümer kommt aus dem Lauf.
+                # Ein Arbeiter, der einen abgestürzten Lauf fortsetzt, muss
+                # dessen Werkzeuge in **dessen** Namen bekommen — sonst läse
+                # eine Wiederaufnahme im falschen Postfach, und das Ergebnis
+                # sähe genauso aus wie das richtige.
+                mail=KontoGebundenerPostfachleser(
+                    user_id=lauf.user_id,
+                    konten=konten,
+                    dienst=lambda: TokenService(
+                        engine,
+                        konten=konten,
+                        zugangsdaten=PostgresCredentialStore(
+                            engine, schluessel=key_provider(settings)
+                        ),
+                        tausch=HttpTokenExchange(),
+                    ),
+                    settings=settings,
+                ),
             )
             policy = PolicyEngine(registry, PostgresPermissionStore(engine))
             invocations = PostgresInvocationStore(engine)

@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 import httpx
@@ -43,6 +42,7 @@ from jarvis_core.ports.web import (
     WebFetcher,
     WebUnavailable,
 )
+from jarvis_integrations.html_text import text_aus_html
 
 __all__ = ["HttpWebFetcher", "adresse_pruefen"]
 
@@ -145,43 +145,6 @@ def _oeffentlich(adresse: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
     return adresse.is_global
 
 
-class _Textsammler(HTMLParser):
-    """Zieht Titel und sichtbaren Text aus HTML.
-
-    Ohne zusätzliche Abhängigkeit, und ohne Anspruch auf Vollständigkeit: Was
-    ein Modell braucht, ist der Fließtext, nicht das Markup. ``script`` und
-    ``style`` fallen heraus — sie enthalten keinen Text für Menschen, und ihr
-    Inhalt ist der, der am ehesten wie eine Anweisung aussieht.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.titel: list[str] = []
-        self.stuecke: list[str] = []
-        self._im_titel = False
-        self._stumm = 0
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style"}:
-            self._stumm += 1
-        elif tag == "title":
-            self._im_titel = True
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style"} and self._stumm:
-            self._stumm -= 1
-        elif tag == "title":
-            self._im_titel = False
-
-    def handle_data(self, data: str) -> None:
-        if self._stumm:
-            return
-        if self._im_titel:
-            self.titel.append(data)
-        elif data.strip():
-            self.stuecke.append(data.strip())
-
-
 class HttpWebFetcher(WebFetcher):
     """Ruft öffentliche Webadressen ab."""
 
@@ -264,12 +227,11 @@ class HttpWebFetcher(WebFetcher):
             # Block, nicht in eine stille Sonderbehandlung hier.
             return WebDocument(url=url, text=text.strip(), truncated=gekuerzt)
 
-        sammler = _Textsammler()
-        sammler.feed(text)
+        titel, fliesstext = text_aus_html(text)
         return WebDocument(
             url=url,
-            title=" ".join("".join(sammler.titel).split()),
-            text="\n".join(sammler.stuecke),
+            title=titel,
+            text=fliesstext,
             truncated=gekuerzt,
         )
 

@@ -1046,6 +1046,28 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.token_service",
     ),
     Invariant(
+        id="oauth-tools-require-the-granted-scope",
+        title="Ein Werkzeug prüft die Bewilligung, nicht den Wunsch",
+        statement=(
+            "Ein Werkzeug, das ein verbundenes Konto benutzt, prüft vor dem Aufruf, ob "
+            "der Anbieter den nötigen Scope tatsächlich bewilligt hat (granted_scopes) — "
+            "und nicht, ob wir ihn gefragt haben."
+        ),
+        why=(
+            "Ein Nutzer kann im Zustimmungsdialog Häkchen entfernen, und eine "
+            "Installation kann ihre gefragten Scopes später erweitern, ohne dass "
+            "bestehende Konten neu zustimmen. Beide Male steht am Konto weniger, als die "
+            "Konfiguration wünscht. Ohne die Prüfung ginge die Anfrage hinaus und käme "
+            "als 403 des Anbieters zurück — ein Fehler, der wie eine Störung aussieht, "
+            "obwohl er hier schon feststand, und der den Nutzer die Ursache bei Google "
+            "suchen lässt. Es sind zwei Erlaubnisse mit demselben Wort: mail.read ist, "
+            "was der Nutzer diesem System erlaubt hat, gmail.readonly, was er bei Google "
+            "bewilligt hat. Keine ersetzt die andere."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.mail",
+    ),
+    Invariant(
         id="resource-ownership-checked-once",
         title="Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen",
         statement=(

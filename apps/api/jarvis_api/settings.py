@@ -215,6 +215,7 @@ class Settings(BaseSettings):
         default_factory=lambda: [
             "openid",
             "email",
+            "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/calendar.events",
         ],
         alias="GOOGLE_SCOPES",

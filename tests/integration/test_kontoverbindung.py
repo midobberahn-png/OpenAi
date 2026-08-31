@@ -399,3 +399,129 @@ def _state_aus(url: str) -> str:
     from urllib.parse import parse_qs, urlparse
 
     return parse_qs(urlparse(url).query)["state"][0]
+
+
+# ==========================================================================
+# Was ein Werkzeug am Konto prüft
+# ==========================================================================
+
+
+class TestDieBewilligungWirdGeprueft:
+    """``granted_scopes`` bekommt seinen ersten Leser.
+
+    Der Zustimmungsblock hat das Feld befüllt und dabei betont, dass Wunsch
+    und Bewilligung zwei Aussagen sind. Hier wird die zweite gelesen.
+    """
+
+    @pytest.mark.invariant("oauth-tools-require-the-granted-scope")
+    async def test_ohne_bewilligten_postfachzugriff_geht_keine_anfrage_hinaus(
+        self, engine: AsyncEngine, schluessel: DateiSchluessel
+    ) -> None:
+        """Der Anbieter wird gar nicht erst gefragt.
+
+        Ohne die Prüfung käme ein 403 zurück — ein Fehler, der wie eine
+        Störung aussieht, obwohl er hier schon feststand, und der den Nutzer
+        die Ursache bei Google suchen lässt.
+        """
+        from jarvis_api.db.account_store import PostgresAccountStore
+        from jarvis_api.mail import KontoGebundenerPostfachleser
+        from jarvis_core.ports.mail import MailAccessDenied
+
+        uid = await _nutzer(engine)
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO connected_accounts "
+                        "(user_id, provider, external_id, display_label, granted_scopes) "
+                        "VALUES (:u, 'google', :e, 'Ohne Postfach', ARRAY['openid'])"
+                    ),
+                    {"u": uid, "e": f"ext-{uid}"},
+                )
+
+            leser = KontoGebundenerPostfachleser(
+                user_id=uid,
+                konten=PostgresAccountStore(engine),
+                dienst=_kein_dienst,
+                settings=_einstellungen(),
+            )
+
+            with pytest.raises(MailAccessDenied, match="bewilligt"):
+                await leser.lesen(anzahl=1)
+        finally:
+            await _weg(engine, uid)
+
+    async def test_ohne_verbundenes_konto_ist_das_die_auskunft(
+        self, engine: AsyncEngine, schluessel: DateiSchluessel
+    ) -> None:
+        from jarvis_api.db.account_store import PostgresAccountStore
+        from jarvis_api.mail import KontoGebundenerPostfachleser
+        from jarvis_core.ports.mail import MailAccessDenied
+
+        uid = await _nutzer(engine)
+        try:
+            leser = KontoGebundenerPostfachleser(
+                user_id=uid,
+                konten=PostgresAccountStore(engine),
+                dienst=_kein_dienst,
+                settings=_einstellungen(),
+            )
+
+            with pytest.raises(MailAccessDenied, match="Kein verbundenes"):
+                await leser.lesen(anzahl=1)
+        finally:
+            await _weg(engine, uid)
+
+    async def test_bei_zwei_konten_wird_nicht_geraten(
+        self, engine: AsyncEngine, schluessel: DateiSchluessel
+    ) -> None:
+        """**Lieber eine Absage als eine Wahl.**
+
+        Welches von zwei Postfächern gemeint ist, weiß dieses System nicht.
+        Läse es im falschen, merkte es niemand — das Ergebnis sähe genauso
+        aus wie das richtige.
+        """
+        from jarvis_api.db.account_store import PostgresAccountStore
+        from jarvis_api.mail import GMAIL_READONLY, KontoGebundenerPostfachleser
+        from jarvis_core.ports.mail import MailAccessDenied
+
+        uid = await _nutzer(engine)
+        try:
+            async with engine.begin() as conn:
+                for nr in (1, 2):
+                    await conn.execute(
+                        text(
+                            "INSERT INTO connected_accounts "
+                            "(user_id, provider, external_id, display_label, granted_scopes) "
+                            "VALUES (:u, 'google', :e, :l, ARRAY[:s])"
+                        ),
+                        {"u": uid, "e": f"ext-{uid}-{nr}", "l": f"Konto {nr}", "s": GMAIL_READONLY},
+                    )
+
+            leser = KontoGebundenerPostfachleser(
+                user_id=uid,
+                konten=PostgresAccountStore(engine),
+                dienst=_kein_dienst,
+                settings=_einstellungen(),
+            )
+
+            with pytest.raises(MailAccessDenied, match="kann noch nicht wählen"):
+                await leser.lesen(anzahl=1)
+        finally:
+            await _weg(engine, uid)
+
+
+def _kein_dienst() -> object:
+    """Wird nie aufgerufen — und genau das prüfen diese Tests.
+
+    Die Absage fällt, bevor irgendetwas Zugangsdaten anfasst. Käme der Dienst
+    doch dran, scheiterte der Test hier mit einer Ausnahme statt mit einer
+    stillen falschen Erlaubnis.
+    """
+    raise AssertionError("Der Tokendienst darf hier nicht gebraucht werden")
+
+
+def _einstellungen() -> object:
+    from jarvis_api.settings import Settings
+
+    return Settings(GOOGLE_CLIENT_ID="cid", GOOGLE_CLIENT_SECRET="secret")

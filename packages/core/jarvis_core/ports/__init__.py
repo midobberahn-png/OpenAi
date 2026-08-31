@@ -4,6 +4,7 @@ from .approval import ApprovalStore, BurnResult
 from .calendar import CalendarEvent, CalendarStore, CalendarWriteFailed
 from .invocations import InvocationStore
 from .llm import LLMProvider
+from .mail import MailAccessDenied, MailMessage, MailReader, MailUnavailable
 from .oauth import (
     AuthorizationRevoked,
     OAuthProvider,
@@ -30,6 +31,10 @@ __all__ = [
     "CredentialStore",
     "InvocationStore",
     "LLMProvider",
+    "MailAccessDenied",
+    "MailMessage",
+    "MailReader",
+    "MailUnavailable",
     "ModelSpendSink",
     "OAuthProvider",
     "PermissionStore",

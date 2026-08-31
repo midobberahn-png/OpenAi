@@ -39,6 +39,7 @@ from jarvis_api.db.session_store import PostgresSessionStore
 from jarvis_api.db.spend_store import PostgresSpendReader
 from jarvis_api.db.webauthn_store import PostgresChallengeStore, PostgresCredentialStore
 from jarvis_api.events import RedisEventBus
+from jarvis_api.mail import KontoGebundenerPostfachleser
 from jarvis_api.providers import model_gateway
 from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
@@ -418,10 +419,29 @@ def tool_registry(
     Die Folge: Der Katalog verlangt eine Sitzung. Das ist richtig so — ein
     Werkzeugangebot ohne Nutzer wäre eines, das niemandem gehört.
     """
+    konten = PostgresAccountStore(engine)
     return tool_catalog(
         engine,
         files=file_reader_for(settings),
         ordner=directory_lister_for(settings),
+        # Das Postfach wird **hier** an den Nutzer gebunden, wie der Kalender
+        # und aus demselben Grund: Ein Argument ``konto`` wäre dieselbe Lücke
+        # wie ``user_id`` im Request-Body, nur eine Schicht tiefer.
+        mail=KontoGebundenerPostfachleser(
+            user_id=session.user_id,
+            konten=konten,
+            # Faul: Der KEK wird erst angefasst, wenn wirklich ein Postfach
+            # gelesen wird. Sonst hinge jedes Werkzeug an der Schlüsseldatei.
+            dienst=lambda: TokenService(
+                engine,
+                konten=konten,
+                zugangsdaten=PostgresOAuthCredentialStore(
+                    engine, schluessel=key_provider(settings)
+                ),
+                tausch=HttpTokenExchange(),
+            ),
+            settings=settings,
+        ),
         calendar=PostgresCalendarStore(engine, user_id=session.user_id),
         # **Kein Nutzerbezug, und das ist richtig.** Der Kalender wird an den
         # Angemeldeten gebunden, weil er *seine* Termine schreibt; das Web
