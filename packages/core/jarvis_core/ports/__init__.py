@@ -4,6 +4,7 @@ from .approval import ApprovalStore, BurnResult
 from .calendar import CalendarEvent, CalendarStore, CalendarWriteFailed
 from .invocations import InvocationStore
 from .llm import LLMProvider
+from .oauth import OAuthProvider, TokenExchange, TokenExchangeFailed, TokenSet
 from .permissions import PermissionStore, RateLimiter, ToolLookup
 from .runs import RunNotStored, RunStateConflict, RunStore
 from .sessions import SessionStore
@@ -23,6 +24,7 @@ __all__ = [
     "InvocationStore",
     "LLMProvider",
     "ModelSpendSink",
+    "OAuthProvider",
     "PermissionStore",
     "RateLimiter",
     "RunNotStored",
@@ -30,6 +32,9 @@ __all__ = [
     "RunStore",
     "SessionStore",
     "SpendContext",
+    "TokenExchange",
+    "TokenExchangeFailed",
+    "TokenSet",
     "ToolLookup",
     "WebAccessDenied",
     "WebDocument",

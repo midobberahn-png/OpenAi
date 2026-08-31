@@ -1,6 +1,49 @@
 {
   "components": {
     "schemas": {
+      "AccountRow": {
+        "properties": {
+          "connected_at": {
+            "format": "date-time",
+            "title": "Connected At",
+            "type": "string"
+          },
+          "display_label": {
+            "title": "Display Label",
+            "type": "string"
+          },
+          "granted_scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Granted Scopes",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "display_label",
+          "granted_scopes",
+          "status",
+          "connected_at"
+        ],
+        "title": "AccountRow",
+        "type": "object"
+      },
       "ActionView": {
         "description": "Eine offene Bestätigung, wie die Oberfläche sie zeigt.\n\nOhne ``invocation_id``: Sie ist der Anker des Grant-Verbrauchs und hat in\neiner Antwort nichts zu suchen — ein Strukturtest führt sie deshalb unter\nden Identitätsfeldern. Ohne ``user_id`` und ``session_id`` aus demselben\nGrund; wer fragt, steht fest.",
         "properties": {
@@ -175,6 +218,20 @@
         "title": "AuthenticationRequest",
         "type": "object"
       },
+      "AuthorizeResponse": {
+        "description": "Wohin der Browser als Nächstes geht.",
+        "properties": {
+          "authorization_url": {
+            "title": "Authorization Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "authorization_url"
+        ],
+        "title": "AuthorizeResponse",
+        "type": "object"
+      },
       "BootstrapRequest": {
         "description": "Anlage des ersten Nutzers. Enthält bewusst keine ``user_id``.",
         "properties": {
@@ -304,6 +361,33 @@
           "attendees"
         ],
         "title": "CalendarRow",
+        "type": "object"
+      },
+      "CallbackResponse": {
+        "properties": {
+          "account_id": {
+            "format": "uuid",
+            "title": "Account Id",
+            "type": "string"
+          },
+          "granted_scopes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Granted Scopes",
+            "type": "array"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_id",
+          "provider",
+          "granted_scopes"
+        ],
+        "title": "CallbackResponse",
         "type": "object"
       },
       "CeremonyOptions": {
@@ -1279,6 +1363,167 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/accounts": {
+      "get": {
+        "operationId": "list_accounts_accounts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AccountRow"
+                  },
+                  "title": "Response List Accounts Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Accounts",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/accounts/callback": {
+      "get": {
+        "description": "Löst den Vorgang ein und legt das Konto an.\n\n**Die Reihenfolge ist die Aussage dieser Funktion.** Erst wird der\n``state`` verbraucht, dann getauscht. Andersherum wäre bequemer — ein\nfehlgeschlagener Tausch ließe den Vorgang wiederholbar — und wäre genau\ndie Lücke: Ein abgefangener Code hätte beliebig viele Versuche, und zwei\ngleichzeitige Rückrufe bekämen beide ihren Tausch.",
+        "operationId": "callback_accounts_callback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "maxLength": 2048,
+              "minLength": 1,
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "State",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Callback",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/accounts/{account_id}": {
+      "delete": {
+        "description": "Trennt die Verbindung — und nimmt die Zugangsdaten mit.\n\n**Was das nicht leistet, gehört gesagt:** Beim Anbieter bleibt die\nZustimmung bestehen. Ein Widerruf dort ist ein eigener Aufruf gegen eine\neigene Adresse, und ihn nur zu behaupten wäre schlimmer als ihn zu\nunterlassen — der Nutzer hielte sein Postfach für gelöst, während die\nZustimmung weiterläuft.",
+        "operationId": "disconnect_accounts__account_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Account Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disconnect",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/accounts/{provider}/authorize": {
+      "post": {
+        "description": "Beginnt einen Zustimmungsvorgang und gibt die Adresse des Anbieters.\n\nDie Adresse wird **zurückgegeben und nicht angesteuert**: Ein 307 von einem\n``POST`` ist für eine SPA unbrauchbar, und wichtiger — der Aufrufer soll\nsehen, wohin er geschickt wird, bevor es passiert.",
+        "operationId": "authorize_accounts__provider__authorize_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "title": "Provider",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authorize",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
     "/actions": {
       "get": {
         "description": "Offene Bestätigungen des angemeldeten Nutzers.",

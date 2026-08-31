@@ -14,6 +14,8 @@ zu einem ``ExecutionGrant``.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
+from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 import structlog
@@ -23,9 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from jarvis_api.agents import agent_catalog
 from jarvis_api.auth import WebAuthnVerifier
+from jarvis_api.db.account_store import PostgresAccountStore
 from jarvis_api.db.approval_store import PostgresApprovalStore
 from jarvis_api.db.audit_store import PostgresAuditSink
+from jarvis_api.db.authorization_store import PostgresAuthorizationStore
 from jarvis_api.db.calendar_store import PostgresCalendarReader, PostgresCalendarStore
+from jarvis_api.db.credential_store import PostgresCredentialStore as PostgresOAuthCredentialStore
 from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.db.permission_store import PostgresPermissionStore
 from jarvis_api.db.run_store import PostgresRunStore
@@ -48,15 +53,22 @@ from jarvis_core.orchestrator import (
     ToolExecutor,
 )
 from jarvis_core.policy import ApprovalGateway, PolicyEngine
+from jarvis_core.ports.keys import KeyProvider
+from jarvis_core.ports.oauth import TokenExchange
 from jarvis_core.tools import ToolRegistry
+from jarvis_integrations import DateiSchluessel
+from jarvis_integrations.oauth import HttpTokenExchange
 from jarvis_integrations.web import HttpWebFetcher
 
 __all__ = [
+    "Accounts",
     "Agents",
     "Approvals",
     "Audit",
     "AuditReader",
+    "Authorizations",
     "CalendarView",
+    "Credentials",
     "CurrentSession",
     "DbConnection",
     "DbEngine",
@@ -68,9 +80,11 @@ __all__ = [
     "Permissions",
     "Policy",
     "Runs",
+    "Schluessel",
     "SessionToken",
     "Sessions",
     "Spend",
+    "Tokens",
     "Tools",
     "agent_step_source",
     "approval_gateway",
@@ -657,3 +671,82 @@ def rate_limited(policy: RateLimitPolicy) -> Callable[..., Awaitable[None]]:
             ) from zu_viel
 
     return dependency
+
+
+# ==========================================================================
+# Verbundene Konten (OAuth)
+# ==========================================================================
+
+
+@lru_cache(maxsize=1)
+def _schluessel(pfad: str) -> DateiSchluessel:
+    """Die Schlüsseldatei wird **einmal** gelesen, nicht je Request.
+
+    Nicht aus Sparsamkeit: Ein Provider je Request hieße, dass ein Austausch
+    der Datei mitten im Betrieb wirkt, ohne dass jemand neu startet — und dann
+    ist die Hälfte der Datensätze mit einem KEK versiegelt, den niemand mehr
+    findet. Eine Rotation gehört über ``kek_id`` und einen Neustart, nicht über
+    einen zufälligen Zeitpunkt.
+    """
+    return DateiSchluessel(pfad)
+
+
+def key_provider(settings: Annotated[Settings, Depends(get_settings)]) -> KeyProvider:
+    """Woher der KEK kommt (ADR-008).
+
+    Nur ``file`` ist gebaut, und dass er außerhalb der Entwicklung verboten
+    ist, steht im Settings-Validator — beim Start und nicht hier. Eine Prüfung
+    an dieser Stelle griffe erst beim ersten Token, und dann läuft das System
+    längst.
+    """
+    if settings.key_provider != "file":
+        raise RuntimeError(
+            f"KEY_PROVIDER={settings.key_provider!r} ist nicht implementiert. "
+            "Gebaut ist nur 'file' (ADR-008); 'keychain' und 'vault' stehen aus."
+        )
+    pfad = str(Path(settings.key_file).expanduser())
+    try:
+        return _schluessel(pfad)
+    except OSError as fehler:
+        # Ein nackter FileNotFoundError aus dem Inneren eines Adapters sagt
+        # dem Betreiber nicht, was zu tun ist — und er käme, seit
+        # ``create_app`` den Schlüssel beim Start anfasst, aus einem
+        # Startvorgang statt aus einem Request.
+        raise RuntimeError(
+            f"Die Schlüsseldatei {pfad!r} fehlt oder ist nicht lesbar (KEY_FILE). "
+            "Ohne sie lassen sich keine Zugangsdaten versiegeln. Anlegen mit "
+            "jarvis_integrations.schluesseldatei_anlegen()."
+        ) from fehler
+
+
+Schluessel = Annotated[KeyProvider, Depends(key_provider)]
+
+
+def authorization_store(engine: DbEngine, schluessel: Schluessel) -> PostgresAuthorizationStore:
+    return PostgresAuthorizationStore(engine, schluessel=schluessel)
+
+
+Authorizations = Annotated[PostgresAuthorizationStore, Depends(authorization_store)]
+
+
+def oauth_credential_store(
+    engine: DbEngine, schluessel: Schluessel
+) -> PostgresOAuthCredentialStore:
+    return PostgresOAuthCredentialStore(engine, schluessel=schluessel)
+
+
+Credentials = Annotated[PostgresOAuthCredentialStore, Depends(oauth_credential_store)]
+
+
+def account_store(engine: DbEngine) -> PostgresAccountStore:
+    return PostgresAccountStore(engine)
+
+
+Accounts = Annotated[PostgresAccountStore, Depends(account_store)]
+
+
+def token_exchange() -> TokenExchange:
+    return HttpTokenExchange()
+
+
+Tokens = Annotated[TokenExchange, Depends(token_exchange)]

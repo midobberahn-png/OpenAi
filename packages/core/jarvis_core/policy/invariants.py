@@ -965,6 +965,46 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="integrations.web",
     ),
     Invariant(
+        id="oauth-callback-belongs-to-its-session",
+        title="Ein Rückruf zählt nur für die Sitzung, die den Vorgang begonnen hat",
+        statement=(
+            "Der Autorisierungscode wird nur verarbeitet, wenn der mitgelieferte state zu "
+            "einem Vorgang gehört, den derselbe angemeldete Nutzer begonnen hat; die "
+            "Bedingung steht in derselben Anweisung, die den Vorgang verbraucht."
+        ),
+        why=(
+            "Der bekannteste Angriff auf einen Zustimmungsablauf verschenkt ein Konto, "
+            "statt eines zu stehlen: Der Angreifer beginnt bei sich, fängt seinen eigenen "
+            "Rückruf ab und bringt dessen Adresse in den Browser des Opfers. Läuft dort "
+            "eine Sitzung, wird sein Postfach an dessen Konto gehängt — und ab da liest "
+            "er mit, ohne je ein Passwort gesehen zu haben. Der Schutz muss in der "
+            "schreibenden Anweisung stehen und nicht in einer Prüfung davor: Wer erst "
+            "liest und dann schreibt, hat dazwischen ein Fenster. Und die Ablehnung darf "
+            "nicht sagen, welcher der vier Gründe zutraf — eine feinere Auskunft verriete "
+            "dem Angreifer, ob sein Rückruf beim Opfer angekommen ist."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.db.authorization_store",
+    ),
+    Invariant(
+        id="oauth-state-is-consumed-before-the-exchange",
+        title="Der Vorgang ist verbraucht, bevor der Code eingelöst wird",
+        statement=(
+            "Der state wird verbraucht, bevor der Autorisierungscode an den Anbieter "
+            "geht; ein gescheiterter Tausch macht den Vorgang nicht wieder einlösbar."
+        ),
+        why=(
+            "Die bequeme Reihenfolge wäre die umgekehrte — erst tauschen, dann "
+            "verbrauchen —, weil ein fehlgeschlagener Tausch dann wiederholbar bliebe. "
+            "Genau das ist die Lücke: Ein abgefangener Code hätte beliebig viele Versuche, "
+            "und zwei gleichzeitige Rückrufe bekämen beide ihren Tausch. Dieselbe "
+            "Überlegung wie beim Grant-Verbrauch, der ebenfalls vor der Wirkung nach "
+            "außen steht und deshalb eine eigene Transaktion hat."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.routes.accounts",
+    ),
+    Invariant(
         id="resource-ownership-checked-once",
         title="Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen",
         statement=(

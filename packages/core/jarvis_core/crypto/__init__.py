@@ -8,6 +8,7 @@ from .envelope import (
     oeffnen,
     versiegeln,
 )
+from .pkce import pkce_challenge
 
 __all__ = [
     "DEK_BYTES",
@@ -15,5 +16,6 @@ __all__ = [
     "SealedSecret",
     "SecretTampered",
     "oeffnen",
+    "pkce_challenge",
     "versiegeln",
 ]

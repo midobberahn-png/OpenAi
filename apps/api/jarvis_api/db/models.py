@@ -264,6 +264,54 @@ class ConnectedAccount(Base, TimestampMixin):
     )
 
 
+class OAuthAuthorization(Base, TimestampMixin):
+    """Ein angefangener Zustimmungsvorgang — der Anspruch auf **einen** Rückruf.
+
+    **Warum diese Zeile existiert.** Zwischen „der Nutzer wird zum Anbieter
+    geschickt" und „der Anbieter ruft zurück" liegt ein Wechsel des Kanals.
+    Was zurückkommt, ist ein GET auf unseren Server mit zwei Zeichenketten
+    darin. Ohne eine Zeile, die den Vorgang vorher festhält, gäbe es nichts,
+    wogegen sich prüfen ließe, ob dieser Rückruf zu diesem Nutzer gehört — und
+    genau das ist der Angriff: Wer sein eigenes ``code`` in den Browser eines
+    Fremden bringt, hängt **sein** Postfach an **dessen** Konto.
+
+    **``state`` steht als Hash hier, nicht im Klartext.** Wer die Datenbank
+    liest, soll keinen gültigen Rückruf bauen können. Dieselbe Überlegung wie
+    beim Sitzungstoken: Der Wert lebt beim Nutzer, die Zeile kennt nur seinen
+    Abdruck.
+
+    **Der PKCE-Verifier ist versiegelt** (ADR-008) und an die Kennung dieser
+    Zeile gebunden. Er ist kurzlebig, aber ein Geheimnis: Wer ihn und den
+    abgefangenen Code hat, löst ihn ein.
+    """
+
+    __tablename__ = "oauth_authorizations"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    state_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, unique=True)
+
+    verifier_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    verifier_nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    verifier_wrapped_dek: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    verifier_kek_id: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    requested_scopes: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False)
+    """Was **gefragt** wurde. Bewilligt wird, was der Anbieter zurückmeldet;
+    das steht in ``connected_accounts.granted_scopes`` und ist die andere
+    Aussage."""
+
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    """Macht den Rückruf einmalig. Die Bedingung steht im ``WHERE`` der
+    Anweisung, die auch schreibt — wer erst liest und dann schreibt, hat
+    dazwischen ein Fenster, und zwei gleichzeitige Rückrufe gäben zwei
+    Konten."""
+
+
 class OAuthCredential(Base, TimestampMixin):
     """Envelope Encryption (ADR-008).
 
