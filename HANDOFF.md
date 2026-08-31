@@ -46,7 +46,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 |---|---|
 | Commits | 125, Remote auf GitHub |
 | Tests | **1612** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
-| **Security Invariant Coverage** | **64/64** |
+| **Security Invariant Coverage** | **66/66** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 12 Migrationen, bi-direktional geprüft |
@@ -576,7 +576,8 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 | **Prompt-Caching und Vision** | Beide Cloud-Adapter melden `False`, und das ist ehrlich: `Message.content` ist eine Zeichenkette, und `cache_control` setzt niemand. Was der Anbieter kann, ist eine andere Aussage als was der Adapter tut. |
 | **Idempotency-Keys pro Invocation** | Aus dem Review offen. Der Ausführungsanspruch verhindert einen zweiten Versuch — nicht, dass ein Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen. |
 | **Memory Service** | Nur Verträge und Schema, kein Retrieval. |
-| **OAuth-Flows** | Die Zugangsdaten sind seit Abschnitt 20 verschlüsselt ablegbar — der Weg, auf dem sie entstehen (Zustimmung, Rückruf, Refresh, Kontoverwaltung), fehlt. |
+| **OAuth: Refresh und Widerruf** | Zustimmung, Rückruf und Kontoverwaltung stehen (Abschnitt 22). Es fehlen der Token-Refresh — der Adapter kann `erneuern`, niemand ruft es — und der Widerruf **beim Anbieter**: Heute verschwinden nur die Zugangsdaten auf dieser Seite. |
+| **Ein Durchstich gegen echtes Google** | Der Tauschadapter steht gegen aufgezeichnete Antworten, wie die Cloud-Modelle auch. Es braucht `GOOGLE_CLIENT_ID` und `GOOGLE_CLIENT_SECRET` eines echten Projekts. |
 | **Context Engine** | Verträge da, Provider fehlen. |
 | **Alles ab Phase 2** | Voice, Vision, Integrationen. |
 
@@ -2340,6 +2341,114 @@ schon zweimal Zeit gekostet. Kosten: 0,7 Sekunden für 3,8 MB.
 Keine neue Invariante — der Scan ist eine Heuristik über den Quelltext, keine
 Eigenschaft des laufenden Systems. Kennzahl unverändert **64/64**.
 
+### 22. Erledigt: Der Weg, auf dem Zugangsdaten entstehen
+
+Abschnitt 20 endete mit „was offen bleibt: Zustimmung, Rückruf, Refresh,
+Kontoverwaltung. Der Speicher wartet darauf." Er wartet nicht mehr auf den
+ersten Teil.
+
+**Der Angriff bestimmt den Zuschnitt, nicht der Ablauf.** Das Lehrbuch
+beschreibt OAuth als Abfolge von Weiterleitungen; die Frage, die diesen Code
+formt, ist eine andere: *Wer kann hier ein Konto verschenken?*
+„Authorization Code Injection" stiehlt nämlich keines — der Angreifer beginnt
+bei sich einen Vorgang, fängt seinen eigenen Rückruf ab und bringt dessen
+Adresse in den Browser des Opfers. Läuft dort eine Sitzung, hängt danach
+**sein** Postfach an **dessen** Konto, und er liest mit, ohne je ein Passwort
+gesehen zu haben.
+
+Dagegen hilft kein Prüfen im Nachhinein. Es hilft, dass die Zugehörigkeit in
+derselben Anweisung steht, die auch schreibt:
+
+```sql
+UPDATE oauth_authorizations SET consumed_at = :jetzt
+ WHERE state_hash = :abdruck
+   AND user_id    = :nutzer      -- die Bindung an die Sitzung
+   AND consumed_at IS NULL       -- die Einmaligkeit
+   AND expires_at  > :jetzt
+RETURNING …
+```
+
+Dieselbe Bauart wie Schrittanspruch und Grant-Verbrauch, und in eigener
+Transaktion aus demselben Grund: Der Verbrauch muss auch dann stehen, wenn der
+Request danach scheitert.
+
+**Vier Entscheidungen, jede gegengemessen:**
+
+* **Verbrauchen vor dem Tausch.** Die bequeme Reihenfolge wäre die umgekehrte
+  — ein gescheiterter Tausch bliebe wiederholbar. Genau das ist die Lücke: Ein
+  abgefangener Code hätte beliebig viele Versuche, und zwei gleichzeitige
+  Rückrufe bekämen beide ihren Tausch. Der HTTP-Test lässt den Tausch scheitern
+  und verlangt, dass der zweite Rückruf mit demselben `state` **400** bekommt
+  und nicht noch einmal 502.
+* **Ein abgewiesener fremder Versuch verbraucht den Vorgang nicht.** Sonst
+  ließe sich mit einem erratenen `state` jeder fremde Vorgang lahmlegen — aus
+  einem Schutz würde ein Hebel. Der Test löst nach dem Fremdversuch als
+  rechtmäßiger Eigentümer ein und verlangt Erfolg.
+* **`state` als Abdruck, PKCE-Verifier versiegelt.** Wer die Datenbank liest,
+  soll keinen gültigen Rückruf bauen können; der Verifier wäre zusammen mit
+  einem abgefangenen Code einlösbar. Zweiter Nutzer von ADR-008 — und der
+  erste, bei dem die Bindung nicht die Zeilenkennung ist, sondern der Abdruck
+  des `state`: Versiegelt wird, **bevor** es die Zeile gibt.
+* **Eine Ablehnung nennt ihren Grund nicht.** Unbekannt, fremd, verbraucht,
+  abgelaufen — vier Lagen, eine Antwort. Eine feinere Auskunft verriete einem
+  Angreifer, ob sein untergeschobener Rückruf beim Opfer angekommen ist.
+
+**Gemessen, nicht behauptet.** Ohne `AND user_id` werden beide
+Zugehörigkeitstests rot; ohne `AND consumed_at IS NULL` beide
+Einmaligkeitstests — darunter der mit zehn gleichzeitigen Verbindungen, der
+sonst zehn Gewinner hätte. Beide Male ausgeführt und wieder zurückgenommen.
+
+**Bewilligt ist, was der Anbieter meldet — nicht, was wir gefragt haben.** Ein
+Nutzer kann im Zustimmungsdialog ein Häkchen entfernen. Wer den Wunsch
+speichert, führt danach ein Konto, das mehr zu können behauptet, als es darf,
+und stellt das beim ersten Aufruf fest, der scheitert. `requested_scopes`
+steht am Vorgang, `granted_scopes` am Konto; das sind zwei Aussagen.
+
+**Ein verbundenes Konto ist kein Recht.** Ob ein Lauf das Postfach lesen darf,
+klärt weiterhin die Policy über einen Scope, den der Nutzer erteilt. Die
+Verbindung ist die technische Möglichkeit, die Berechtigung die Erlaubnis —
+beides zusammenzulegen wäre die stille Rechteerteilung, gegen die der ganze
+Sockel steht.
+
+**Zur Kennung des Kontos aus dem `id_token`.** Sie wird gelesen, ohne die
+Signatur zu prüfen. Das ist die Stelle, an der ein Prüfer zu Recht stutzt, und
+die Begründung steht im Adapter: Dieses Token kommt **nicht** über den Browser,
+sondern aus der Antwort auf eine TLS-gesicherte Anfrage an die konfigurierte
+Adresse des Anbieters — OIDC Core §3.1.3.7 erlaubt einem Client genau dort den
+Verzicht. Wer denselben Wert aus einem Redirect entgegennähme, müsste prüfen.
+
+**Zwei Befunde unterwegs, beide nicht gesucht:**
+
+1. **Eine Zusage im Docstring, die niemand durchsetzte.** `DateiSchluessel`
+   sagt seit dem Envelope-Block zu, „entweder sofort zu fehlen oder gar
+   nicht" — und gebaut wurde er nie beim Start, sondern beim ersten Zugriff.
+   Eine fehlende Schlüsseldatei fiel damit erst auf, wenn ein Nutzer beim
+   Anbieter **schon zugestimmt hatte**, und dann als 500 mit einem Pfad im
+   Stacktrace. Aufgefallen ist es, weil der erste HTTP-Test genau daran
+   scheiterte. `create_app` fasst den Schlüssel jetzt beim Start an — aber nur,
+   wenn ein Anbieter konfiguriert ist: Sonst müsste jede Installation ohne
+   verbundene Konten eine Schlüsseldatei vorhalten, die nichts verschlüsselt.
+2. **`models.py` ist nicht das ganze Schema.** `model_calls`,
+   `calendar_events`, `runs.last_step_at` und die drei Rotationsspalten von
+   `sessions` existieren in der Datenbank und in Migrationen, als ORM-Modell
+   aber nicht. `alembic --autogenerate` vergleicht gegen die Modelle und schlug
+   deshalb vor, sie alle zu **löschen** — in derselben Migration, die die neue
+   Tabelle anlegt. Wer hier eine Migration erzeugt, liest sie und streicht; der
+   Grund steht im Kopf der Migration. Die Tabelle nachzutragen wäre der
+   sauberere Weg und ist ein eigener Block.
+
+Zwei neue Invarianten (`oauth-callback-belongs-to-its-session`,
+`oauth-state-is-consumed-before-the-exchange`), Kennzahl **66/66**.
+
+**Was offen bleibt:** Token-Refresh (der Adapter kann `erneuern`, niemand ruft
+es), der Widerruf **beim Anbieter** — heute verschwinden nur die Zugangsdaten
+auf dieser Seite, und der Endpunkt sagt das —, und ein Durchstich gegen echtes
+Google. Der Adapter steht gegen aufgezeichnete Antworten, wie die Cloud-Modelle
+auch; was das nicht findet, ist ein Feld, das der Anbieter inzwischen anders
+nennt. **Dafür braucht es Zugangsdaten eines echten Google-Projekts** —
+`GOOGLE_CLIENT_ID` und `GOOGLE_CLIENT_SECRET`, dazu
+`http://localhost:8000/accounts/callback` als hinterlegte Rückrufadresse.
+
 ## 9. Arbeitsweise
 
 Vom Nutzer vorgegeben, gilt unverändert:
@@ -2405,6 +2514,8 @@ klären, indem der Fall ausgeführt wurde.
 | **Nach `make gen` gehört ein Commit** | `gen-check` prüft gegen den **Commit**-Stand, nicht gegen die Arbeitskopie. Zweimal in einer Sitzung das Gate rot bekommen, weil die Artefakte aktuell, aber nicht committet waren. Das ist kein Fehler des Ziels — nur eine Reihenfolge, die man einmal lernt. |
 | **`open()` auf eine FIFO blockiert** | Die Prüfung „ist das eine reguläre Datei?" steht notwendigerweise *nach* dem Öffnen — vorher gäbe es nur `lstat`, und dazwischen läge das Zeitfenster, das die Bauart schließen soll. Der erste Testlauf hing deshalb. `O_NONBLOCK` löst es; für reguläre Dateien ist die Flagge wirkungslos. Ein Test, der eine FIFO anlegt, ist billig — und er hat einen echten Hänger gefunden. |
 | **Rollback-Isolation im Test verdeckt Transaktionsgrenzen** | Die `conn`-Fixture hält alles in einer Transaktion, die nie committet. Bequem, schnell, sauber — und blind für jeden Ablauf, der über Transaktionsgrenzen geht. Sie war der Grund, warum die E2E-Suite den Befund nicht sehen konnte. Wo eine Komponente aus gutem Grund selbst committet, muss der Test committen und danach aufräumen (`aufgeraeumte_nutzer`). |
+| **`alembic --autogenerate` vergleicht gegen die Modelle, nicht gegen die Migrationen** | `model_calls`, `calendar_events`, `runs.last_step_at` und die drei Rotationsspalten von `sessions` gibt es in der Datenbank und in früheren Migrationen, als ORM-Modell aber nicht. Autogenerate hält deshalb alles davon für überflüssig und schlägt vor, es zu **löschen** — in derselben Datei, die die neue Tabelle anlegt. **Wer hier eine Migration erzeugt, liest sie und streicht.** Ein `make migration`, das ungelesen committet wird, nimmt vier Tabellenteile mit. |
+| **Ein Docstring, der eine Zusage macht, die niemand durchsetzt** | `DateiSchluessel` sagt seit dem Envelope-Block, die Schlüsseldatei fehle „entweder sofort — dann startet der Prozess nicht — oder gar nicht". Gebaut wurde der Provider aber erst beim ersten Zugriff. Die Zusage galt damit nicht: Eine fehlende Datei fiel erst auf, wenn ein Nutzer beim Anbieter **schon zugestimmt hatte**. Gefunden hat es der erste HTTP-Test, nicht das Lesen. **Eine Zusage im Docstring ist eine Behauptung, bis eine Aufrufstelle sie einlöst** — dieselbe Frage wie bei jeder Einschränkung: wer liest sie, und wer prüft dagegen? |
 | **Eine globale gitleaks-Ausnahme mit `paths` überspringt die ganze Datei** | Nicht den Fund — die Datei, bevor ihr Inhalt gelesen wird. Die erste Fassung der Ausnahme hätte damit **jedes `.py`-Dateiverzeichnis** vom Scan genommen; gemessen an einer Probe mit einem echten Literal: nicht gefunden. `targetRules` behebt es, weil dann je Fund entschieden wird. Und `condition = "AND"` gehört dazu — sonst verknüpft gitleaks `regexes` und `paths` mit ODER, und jede Bedingung allein genügt. **Eine Ausnahme gehört in beide Richtungen gemessen:** Findet sie den Fehlalarm nicht mehr, und findet sie einen echten Wert noch? |
 | **Ein Formatierungsumbruch entscheidet, ob eine Heuristik anschlägt** | Dieselbe Argumentliste war einzeilig unauffällig und umbrochen ein Secret-Scan-Fund, sobald die schließende Klammer nicht mehr auf der Zeile stand. Gemeldet wurde ein Bezeichnername. Wer einen Fehlalarm bewertet, sieht zuerst nach, **was genau** die Regel gegriffen hat; die Meldung nennt es. |
 | **Gate und CI mit verschiedenen Werkzeugfassungen prüfen verschieden** | Die gitleaks-Action bringt ihr eigenes Binary mit (8.24.3); lokal lief 8.30.1. Die Ausnahmedatei hängt an `targetRules`, das die ältere Fassung nicht kennt — lokal grün, in CI rot, und mit *mehr* Funden. **Eine lokale Messung belegt nur dann etwas über CI, wenn beide Seiten dieselbe Fassung festlegen.** `GITLEAKS_VERSION` in der Workflow-Datei, `minVersion` in der Konfiguration: die eine heftet an, die andere lässt eine zu alte Fassung scheitern statt raten. |
