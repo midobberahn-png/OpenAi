@@ -42,6 +42,7 @@ from jarvis_api.events import RedisEventBus
 from jarvis_api.providers import model_gateway
 from jarvis_api.rate_limit_store import RedisRateLimitStore
 from jarvis_api.settings import Settings, get_settings
+from jarvis_api.token_service import TokenService
 from jarvis_api.tools import directory_lister_for, file_reader_for, tool_catalog
 from jarvis_contracts import Session
 from jarvis_core.agents import AgentRuntime, AgentStepSource
@@ -84,6 +85,7 @@ __all__ = [
     "SessionToken",
     "Sessions",
     "Spend",
+    "TokenDienst",
     "Tokens",
     "Tools",
     "agent_step_source",
@@ -750,3 +752,12 @@ def token_exchange() -> TokenExchange:
 
 
 Tokens = Annotated[TokenExchange, Depends(token_exchange)]
+
+
+def token_service(
+    engine: DbEngine, konten: Accounts, zugangsdaten: Credentials, tausch: Tokens
+) -> TokenService:
+    return TokenService(engine, konten=konten, zugangsdaten=zugangsdaten, tausch=tausch)
+
+
+TokenDienst = Annotated[TokenService, Depends(token_service)]

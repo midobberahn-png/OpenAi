@@ -18,7 +18,11 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from jarvis_core.ports.oauth import OAuthProvider, TokenExchangeFailed
+from jarvis_core.ports.oauth import (
+    AuthorizationRevoked,
+    OAuthProvider,
+    TokenExchangeFailed,
+)
 from jarvis_integrations.oauth import HttpTokenExchange
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.security]
@@ -213,3 +217,71 @@ def _mock(
         return original(transport=httpx.MockTransport(handler))
 
     monkeypatch.setattr(httpx, "AsyncClient", fabrik)
+
+
+class TestWannEinKontoTotIst:
+    """Der Unterschied, an dem hängt, ob ein Konto abgeschrieben wird.
+
+    Ein Refresh scheitert aus zwei Gründen, und sie führen zu
+    entgegengesetzten Reaktionen. Der Adapter muss sie trennen, sonst muss der
+    Aufrufer raten — und er würde vorsichtig raten, also jedes Konto bei jedem
+    Schluckauf des Netzes für tot erklären.
+    """
+
+    async def test_invalid_grant_heisst_die_zustimmung_ist_weg(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _mock(monkeypatch, {"error": "invalid_grant"}, status=400)
+
+        with pytest.raises(AuthorizationRevoked):
+            await HttpTokenExchange(uhr=lambda: JETZT).erneuern(ANBIETER, refresh_token="rt")
+
+    async def test_ein_anderer_400er_ist_keine_aussage_ueber_die_zustimmung(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``invalid_request`` heißt, dass **unsere** Anfrage falsch war."""
+        _mock(monkeypatch, {"error": "invalid_request"}, status=400)
+
+        with pytest.raises(TokenExchangeFailed) as fehler:
+            await HttpTokenExchange(uhr=lambda: JETZT).erneuern(ANBIETER, refresh_token="rt")
+
+        assert not isinstance(fehler.value, AuthorizationRevoked)
+
+    async def test_ein_401_erklaert_kein_konto_fuer_tot(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**Der teure Fall.**
+
+        401 heißt, dass unsere Client-Zugangsdaten nicht stimmen. Eine falsch
+        eingetragene ``GOOGLE_CLIENT_SECRET`` räumte sonst reihenweise gesunde
+        Verbindungen ab — und zwar alle auf einmal, mit einem Tippfehler.
+        """
+        _mock(monkeypatch, {"error": "invalid_grant"}, status=401)
+
+        with pytest.raises(TokenExchangeFailed) as fehler:
+            await HttpTokenExchange(uhr=lambda: JETZT).erneuern(ANBIETER, refresh_token="rt")
+
+        assert not isinstance(fehler.value, AuthorizationRevoked)
+
+    async def test_ein_500_ist_eine_stoerung(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _mock(monkeypatch, {"error": "invalid_grant"}, status=500)
+
+        with pytest.raises(TokenExchangeFailed) as fehler:
+            await HttpTokenExchange(uhr=lambda: JETZT).erneuern(ANBIETER, refresh_token="rt")
+
+        assert not isinstance(fehler.value, AuthorizationRevoked)
+
+    async def test_eine_erneuerung_braucht_kein_id_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Die Kennung des Kontos steht schon in der Datenbank.
+
+        Bei einer Erneuerung schickt kaum ein Anbieter noch ein ``id_token``.
+        Wer es hier verlangte, brächte jedes Konto nach einer Stunde um.
+        """
+        _mock(monkeypatch, {"access_token": "at", "expires_in": 3600})
+
+        tokens = await HttpTokenExchange(uhr=lambda: JETZT).erneuern(ANBIETER, refresh_token="rt")
+
+        assert tokens.access_token == "at"
+        assert tokens.external_id == ""
