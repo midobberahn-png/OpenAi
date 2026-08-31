@@ -13,7 +13,7 @@ from decimal import Decimal
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 __all__ = ["Settings", "get_settings"]
@@ -33,6 +33,20 @@ class Settings(BaseSettings):
     webauthn_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173"], alias="WEBAUTHN_ORIGINS"
     )
+
+    key_provider: str = Field(default="file", alias="KEY_PROVIDER")
+    """Woher der KEK kommt (ADR-008): ``file`` in der Entwicklung, später
+    ``keychain`` oder ``vault``.
+
+    **``file`` ist in Produktion verboten**, und die Prüfung steht im Validator
+    unten — nicht im Adapter. Ein Adapter, der sich selbst verbietet, greift
+    erst, wenn zum ersten Mal ein Token geschrieben wird; dann läuft das System
+    längst und jemand hat sich darauf verlassen."""
+
+    key_file: str = Field(default="~/.jarvis/kek.json", alias="KEY_FILE")
+    """Wo die Schlüsseldatei liegt. Außerhalb des Repositorys, mit Vorgabe im
+    Heimatverzeichnis — ein Vorgabewert innerhalb des Projekts wäre eine
+    Einladung, ihn einzuchecken."""
 
     session_cookie_name: str = Field(default="jarvis_session", alias="SESSION_COOKIE_NAME")
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
@@ -177,6 +191,26 @@ class Settings(BaseSettings):
     Feld, und ein Rate-Limit, das daran hängt, kostet einen Angreifer eine
     Zeile Code. Wer hinter einem Reverse Proxy betreibt, trägt dessen Adresse
     hier ein und weiß dann auch, warum."""
+
+    @model_validator(mode="after")
+    def _kek_quelle_passt_zur_umgebung(self) -> Settings:
+        """Der Datei-KEK ist Entwicklungssache (ADR-008 V1.1).
+
+        Bei ``KEY_PROVIDER=file`` liegt der Schlüssel im Speicher desselben
+        Prozesses, der HTTP annimmt — eine Schwachstelle im Web-Layer gäbe
+        damit alle Postfach-Tokens preis. In Produktion entpackt eine eigene
+        Instanz, und bis es sie gibt, **startet der Prozess dort gar nicht**.
+
+        Beim Start und nicht beim ersten Zugriff: Eine Fehlkonfiguration soll
+        auffallen, bevor jemand ihr Tokens anvertraut.
+        """
+        if self.env != "development" and self.key_provider == "file":
+            raise ValueError(
+                "KEY_PROVIDER=file ist nur in der Entwicklung zulässig (ADR-008 V1.1): "
+                "Der KEK läge im Speicher des Prozesses, der HTTP annimmt. In Produktion "
+                "gehört das Entpacken in eine eigene Instanz."
+            )
+        return self
 
     @property
     def cookie_secure(self) -> bool:

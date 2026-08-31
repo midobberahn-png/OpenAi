@@ -828,6 +828,46 @@ INVARIANTS: tuple[Invariant, ...] = (
         status=InvariantStatus.ENFORCED,
         component="core.agents",
     ),
+    # -- Geheimnisse ----------------------------------------------------
+    Invariant(
+        id="secrets-sealed-at-rest",
+        title="Zugangsdaten liegen verschlüsselt und an ihren Platz gebunden",
+        statement=(
+            "OAuth-Tokens stehen ausschließlich als Geheimtext in der Datenbank; der "
+            "Datenschlüssel liegt daneben, verpackt mit einem KEK, den der Prozess nicht "
+            "herausgeben kann. Der Geheimtext ist an die Konto-ID gebunden und öffnet "
+            "sich in keiner anderen Zeile."
+        ),
+        why=(
+            "Tokens in einer Klartextspalte sind der häufigste Fehler in dieser Art "
+            "Projekt: Ein Datenbank-Dump wäre damit Vollzugriff auf das Postfach. Die "
+            "Bindung an die Konto-ID kommt dazu, weil Verschlüsselung allein das "
+            "Verschieben nicht verhindert — wer die Datenbank erreicht, könnte sonst "
+            "den Geheimtext eines fremden Kontos in die eigene Zeile kopieren und ihn "
+            "vom System öffnen lassen (ADR-008)."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="core.crypto.envelope",
+    ),
+    Invariant(
+        id="kek-never-leaves-its-instance",
+        title="Der KEK verlässt seine Instanz nicht",
+        statement=(
+            "Der Port entpackt Datenschlüssel, statt den KEK auszuliefern. Der "
+            "Datei-Provider ist ausschließlich in der Entwicklung zulässig und wird in "
+            "jeder anderen Umgebung beim Start abgewiesen."
+        ),
+        why=(
+            "Läge der KEK im Speicher des Prozesses, der HTTP annimmt, gäbe eine "
+            "Schwachstelle im Web-Layer alle Postfach-Tokens preis. Ein Port, der den "
+            "Schlüssel herausgibt, wäre von Vault Transit gar nicht implementierbar — "
+            "die Signatur trägt die Zusage deshalb selbst (ADR-008 V1.1). Die Prüfung "
+            "steht beim Start und nicht beim ersten Zugriff: Eine Fehlkonfiguration "
+            "soll auffallen, bevor jemand ihr Tokens anvertraut."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.settings",
+    ),
     # -- Audit ----------------------------------------------------------
     Invariant(
         id="audit-append-only",

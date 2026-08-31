@@ -87,8 +87,28 @@ proof: ## Beweislauf: Integrationstests MÜSSEN laufen, Überspringen ist ein Fe
 	@docker compose ps --status running --format '{{.Service}}' | sort | tr '\n' ' '; echo
 	JARVIS_REQUIRE_SERVICES=1 $(UV) run pytest -m integration -q -rs
 
+.PHONY: gate-secrets
+gate-secrets: ## Secret-Scan über den gesamten Verlauf (dieselbe Prüfung wie in CI)
+	@# Diese Prüfung fehlte hier, und das hat gekostet: Ein Block ging mit
+	@# grünem Gate raus und blieb im PR an einem roten Secret-Scan haengen —
+	@# an zwei Fehlalarmen, die lokal in Sekunden zu klaeren gewesen waeren.
+	@# Das ist die Kehrseite des bekannten Falls „CI prueft die
+	@# Browserdurchstiche nicht": Wo Gate und CI verschieden viel pruefen,
+	@# faellt der Unterschied dem auf die Fuesse, der zuerst darauf trifft.
+	@command -v gitleaks >/dev/null 2>&1 || { \
+		echo "✗ gitleaks fehlt — 'brew install gitleaks'."; \
+		echo "  Wird bewusst nicht uebersprungen: CI fuehrt diese Pruefung."; \
+		echo "  Ein Gate, das sie still auslaesst, meldet Gruen fuer etwas,"; \
+		echo "  das es nicht geprueft hat."; \
+		exit 1; }
+	@# Der gesamte Verlauf, nicht nur die neuen Commits: Ein Geheimnis wirkt
+	@# ab dem Moment, in dem es gepusht wurde, und nicht erst, wenn jemand die
+	@# Zeile wieder anfasst. CI sieht im PR nur dessen Commits — hier ist die
+	@# Zusage also die staerkere, und das ist die richtige Richtung.
+	gitleaks git --no-banner
+
 .PHONY: gate
-gate: lint types gen-check ## Vollständiges Gate inkl. erzwungener Integrationstests
+gate: lint types gen-check gate-secrets ## Vollständiges Gate inkl. erzwungener Integrationstests
 	$(UV) run pytest -q
 	JARVIS_REQUIRE_SERVICES=1 $(UV) run pytest -m integration -q
 	$(UV) run pytest -m security -q

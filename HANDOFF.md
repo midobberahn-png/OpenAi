@@ -45,8 +45,8 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 | | |
 |---|---|
 | Commits | 106, Remote auf GitHub |
-| Tests | **1577** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
-| **Security Invariant Coverage** | **62/62** |
+| Tests | **1612** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
+| **Security Invariant Coverage** | **64/64** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 12 Migrationen, bi-direktional geprüft |
@@ -300,6 +300,16 @@ brew install ollama && brew services start ollama
 ollama pull llama3.1:8b        # 4,9 GB; entspricht dem Vorgabewert OLLAMA_MODEL
 ```
 
+Und für den Secret-Scan, den ``make gate`` seit Abschnitt 21 führt:
+
+```bash
+brew install gitleaks
+```
+
+Ohne ihn **scheitert** ``make gate`` mit einem Hinweis — es überspringt nicht.
+Das ist Absicht: CI führt die Prüfung, und ein Gate, das sie still auslässt,
+meldet Grün für etwas, das es nicht geprüft hat.
+
 Ollama läuft auf ``http://localhost:11434`` (``OLLAMA_URL``). Die Adresse ist
 nicht beliebig: ``models.py`` führt das Modell mit ``is_local=True``, und daran
 macht das Model Gateway fest, dass P3 das Gerät nicht verlässt. Wer dort einen
@@ -332,8 +342,9 @@ denselben Lauf noch einmal anfasst. `JARVIS_WORKER_INTERVAL` (Sekunden, Vorgabe
 ### Vollständiges Gate
 
 ```bash
-make gate      # Lint, Typen, Vertragsdrift, alle Tests, Kennzahl
-make proof     # nur die Integrationstests — Überspringen ist dabei ein Fehler
+make gate          # Lint, Typen, Vertragsdrift, Secret-Scan, alle Tests, Kennzahl
+make proof         # nur die Integrationstests — Überspringen ist dabei ein Fehler
+make gate-secrets  # nur der Secret-Scan, über den gesamten Verlauf (0,7 s)
 
 # Und, seit die Modellschleife hängt, der Lauf gegen ein echtes Modell:
 JARVIS_REQUIRE_OLLAMA=1 uv run pytest tests/integration/test_ollama_live.py
@@ -559,13 +570,12 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 | Fehlt | Auswirkung |
 |---|---|
 | **Werkzeuge — mehr als drei** | `files.read`, `calendar.create`, `web.fetch`. Der Scope-Katalog führt 34 Einträge. Es fehlen `mail.*`, `tasks.*`, `search.web`. |
-| **Ein brauchbarer Antwortschritt** | Er läuft — und sieht nur Schritt*zusammenfassungen*, keine Werkzeug*daten*. „Lies X und fasse es zusammen" endet deshalb mit „ich kenne den Inhalt nicht". Der Weg dorthin führt über Fremdinhalt im Prompt und ist die heikelste offene Entscheidung (Abschnitt 8.4). |
-| **Modellgetriebener Dateizugriff** | Gemessen: Steht der Pfad im Auftrag, trifft das Modell 3/3. Kennt es nur die freigegebene Wurzel, 0/3. Es braucht **Aufzählbarkeit** (`files.list`), nicht nur Auskunft über die Grenze — Abschnitt 8.5. |
 | **Ein Aufruf gegen einen echten Cloud-Endpunkt** | Die Adapter für Anthropic und OpenAI sind gegen aufgezeichnete Antworten geprüft, nie gegen das Netz — es gibt keinen Schlüssel. Was ein Contract-Test nicht findet: ein Feld, das der Anbieter inzwischen anders nennt. Für Ollama gibt es dafür `test_ollama_live.py`; das Gegenstück fehlt. |
 | **Google als Anbieter** | ADR-009 nennt drei. Gebaut sind Ollama, Anthropic, OpenAI. |
 | **Prompt-Caching und Vision** | Beide Cloud-Adapter melden `False`, und das ist ehrlich: `Message.content` ist eine Zeichenkette, und `cache_control` setzt niemand. Was der Anbieter kann, ist eine andere Aussage als was der Adapter tut. |
 | **Idempotency-Keys pro Invocation** | Aus dem Review offen. Der Ausführungsanspruch verhindert einen zweiten Versuch — nicht, dass ein Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen. |
 | **Memory Service** | Nur Verträge und Schema, kein Retrieval. |
+| **OAuth-Flows** | Die Zugangsdaten sind seit Abschnitt 20 verschlüsselt ablegbar — der Weg, auf dem sie entstehen (Zustimmung, Rückruf, Refresh, Kontoverwaltung), fehlt. |
 | **Context Engine** | Verträge da, Provider fehlen. |
 | **Alles ab Phase 2** | Voice, Vision, Integrationen. |
 
@@ -2067,6 +2077,55 @@ die fehlende Kombination zu Befund 1 (behoben). Offen: `FakePermissions` in
 **zwei** Nutzern; die Isolation ist korrekt (das Review hat sie bestätigt), aber
 nicht geprüft.
 
+### 20. Envelope Encryption — die Tabellen hatten seit jeher keinen Code
+
+Phase 3 der Roadmap beginnt mit „OAuth-Flows, Envelope Encryption, Token-Refresh,
+Kontoverwaltung". Beim Nachsehen stellte sich heraus, wie weit das schon gediehen
+ist — und wie weit nicht: **`connected_accounts` und `oauth_credentials` stehen
+vollständig**, mit `ciphertext`, `nonce`, `wrapped_dek` und `kek_id`. Dazu gab es
+**keine Zeile Code.** Kein `KeyProvider`, keine Verschlüsselung, kein Speicher.
+Dieselbe Form wie die Audit-Kette vor `a67dd30`: vollständig geschaffen, nirgends
+benutzt — und diesmal an den Zugangsdaten zum Postfach.
+
+**Die Verschärfung V1.1 von ADR-008 bestimmt den Zuschnitt des Ports**, und das
+ist die tragende Entscheidung dieses Blocks. Der naheliegende Port wäre
+`kek() -> bytes`. Genau den schließt V1.1 aus: In Produktion entpackt der
+API-Prozess nicht selbst, sondern schickt den `wrapped_dek` an eine eigene
+Instanz. Ein Port, der den Schlüssel herausgibt, wäre von Vault Transit **gar
+nicht implementierbar** — die Signatur trägt die Zusage also selbst. Ein Test
+hält fest, dass niemand später ein drittes Verfahren ergänzt.
+
+**Und eine Entscheidung, die ADR-008 nicht trifft:** Der Geheimtext ist an
+seinen Platz gebunden. Wer die Datenbank erreicht, kann eine Zeile nicht
+entschlüsseln — aber er könnte sie **verschieben**: den Geheimtext eines fremden
+Kontos in die eigene Zeile kopieren und vom System öffnen lassen. Die Konto-ID
+geht deshalb als zusätzliche authentifizierte Daten in die Verschlüsselung ein.
+Zwei Tests stellen den Angriff nach, einer davon an echten Zeilen.
+
+**Was sonst noch entschieden wurde:**
+
+* Ein DEK **je Datensatz**, nicht ein gemeinsamer — nicht aus Vorsicht, sondern
+  weil es die Nonce-Frage beantwortet: Eine wiederholte Nonce mit demselben
+  Schlüssel beendet bei AES-GCM jede Zusage. Mit einem frischen Schlüssel je
+  Datensatz kann das nicht passieren, ohne dass jemand mitzählt.
+* Die Schlüsseldatei führt **mehrere** KEKs mit einer aktuellen Kennung. Ohne
+  das wäre die Rotation, die `kek_id` in der Tabelle vorsieht, nicht
+  durchführbar — wer rotiert, braucht eine Weile beide.
+* `KEY_PROVIDER=file` wird **beim Start** abgewiesen, wenn die Umgebung nicht
+  `development` ist. Nicht im Adapter: Der griffe erst, wenn zum ersten Mal ein
+  Token geschrieben wird, und dann läuft das System längst.
+* Der Speicher schreibt in **eigener Transaktion**. Ein Token, den der Anbieter
+  ausgestellt hat, muss auch dann liegen, wenn der Request danach scheitert —
+  sonst hat der Nutzer eine Zustimmung erteilt, von der nichts übrig bleibt.
+
+Zwei neue Invarianten (`secrets-sealed-at-rest`, `kek-never-leaves-its-instance`),
+Kennzahl **64/64**.
+
+**Was offen bleibt:** der Weg, auf dem Zugangsdaten überhaupt entstehen —
+Zustimmung, Rückruf, Refresh, Kontoverwaltung. Das ist der Rest von Woche 10 und
+braucht Zugangsdaten eines echten Anbieters. Der Speicher wartet darauf, nicht
+umgekehrt.
+
 ### Erledigt: `main` ist geschützt — und CI hat vorher nie einen Test ausgeführt
 
 Der Schutz steht (`enforce_admins: true`, keine Force-Pushes, keine Löschung,
@@ -2168,6 +2227,118 @@ still verhält.
 
 Kennzahl: **62/62.** Zum ersten Mal steht keine Invariante mehr offen.
 
+### 21. Erledigt: Der Secret-Scan lief nur in CI — und meldete dort zwei Namen
+
+Der Envelope-Block war lokal grün und blieb im PR stehen: **Secret-Scan rot,
+zwei Funde.** Beide in `tests/integration/test_zugangsdaten.py`, und beide
+keine Geheimnisse.
+
+**Was tatsächlich gemeldet wurde.** Nicht der Testtoken — sondern
+`gilt_bis=GILT_BIS`, ein Schlüsselwortargument. Die Regel `generic-api-key`
+sucht ein Schlüsselwort wie `token=` und nimmt, was folgt; in Python trifft sie
+damit einen Aufruf, in dem auf das Argument `token` noch `gilt_bis` folgt,
+und meldet den
+Bezeichnernamen dahinter. Ob sie zuschlug, hing daran, **ob die schließende
+Klammer auf derselben Zeile stand**: Dieselbe Argumentliste war einzeilig
+unauffällig (Zeile 66, 150) und umbrochen ein Fund (Zeile 88, 126). Der
+Unterschied kam von der automatischen Formatierung.
+
+**Warum das trotzdem ein Befund ist.** Nicht wegen der Regel — die tut, was
+eine Heuristik tut. Sondern weil `make gate` diese Prüfung **nicht führte**.
+Das Gate war grün, CI war rot, und der Unterschied fiel erst auf, als er einen
+Merge blockierte. Das ist die Kehrseite des schon notierten Falls *„CI prüft
+die Browserdurchstiche nicht"*: Wo Gate und CI verschieden viel prüfen, trägt
+die Differenz der, der zuerst darauf trifft — und er hält sie für ein
+Infrastrukturproblem.
+
+**Der Zuschnitt: schärfen statt stilllegen.** `.gitleaks.toml` erlaubt genau
+das, was **vollständig** die Form `kleiner_name=GROSSER_NAME` hat, nur in
+`.py`-Dateien, und nur für diese eine Regel. In Python ist `GROSSER_NAME` eine
+Referenz; wo der Name gebunden wird, steht ein Literal in Anführungszeichen,
+und *diese* Zeile prüft der Scan weiter.
+
+**Drei Einzelheiten, die erst die Messung gezeigt hat — jede davon hätte den
+Scan still blind gemacht:**
+
+1. **Eine globale Ausnahme mit `paths` überspringt die ganze Datei.** Nicht den
+   Fund — die Datei, bevor der Inhalt gelesen wird (`skipping file: global
+   allowlist`). Die erste Fassung hätte damit **jede `.py`-Datei im Repository**
+   vom Scan genommen. Gemessen an einer Probe mit einem echten Literal: nicht
+   gefunden. `targetRules` behebt es, weil dann je Fund entschieden wird.
+2. **`condition = "AND"` ist nicht Feinschliff.** Ohne die Zeile verknüpft
+   gitleaks `regexes` und `paths` mit ODER — jede Bedingung allein hätte
+   gereicht.
+3. **Die Pfadgrenze trägt die Begründung, nicht die Bequemlichkeit.** Ohne sie
+   gälte die Ausnahme auch für `.env`, und `aws_access_key_id=AKIA…` hat genau
+   diese Form. Gegenprobe angelegt: Mit Pfadgrenze bleibt der `.env`-Fund
+   stehen.
+
+Die Gesamtmessung an einer Probe mit einem Fehlalarm und zwei echten Werten:
+**ohne die Datei 3 Funde, mit ihr 2.** Die Differenz ist genau der Fehlalarm —
+und das ist die Zusage, die eine Ausnahme schuldig ist.
+
+**Und der Fund, den erst der vollständige Verlauf brachte.** Der PR-Scan sieht
+nur die Commits des PRs; über alle 125 Commits kamen **zwei weitere** dazu, in
+`tests/unit/test_secrets.py` — seit dem 21.08. unbemerkt, weil sie nie in einem
+geprüften Bereich lagen. Es sind die Eingaben von `looks_like_secret()`, der
+Heuristik, die entscheidet, ob ein gelesener Dateiinhalt P3 wird und damit das
+Gerät nicht verlässt. Diese Eingaben **müssen** wie Zugangsdaten aussehen,
+sonst prüft der Test nichts. **Der Scan und der Klassifikator suchen dasselbe;
+die Kollision ist strukturell, nicht nachlässig.**
+
+Die Ausnahme dafür greift deshalb nicht am Pfad allein — das stellte
+ausgerechnet die Datei blind, in der jemand versucht sein könnte, „zum
+Ausprobieren" einen echten Wert einzusetzen. Sie greift an der Platzhalterform:
+Ein Wert, der `abcdefgh` enthält, ist ein durchgezähltes Alphabet. Beides muss
+zutreffen. Gegenprobe: ein echter `sk_live_…`-Wert, in genau diese Datei
+geschrieben, wird weiterhin gefunden.
+
+**Und der Nachschlag, der den ersten Anlauf zurückwarf: Gate und CI liefen mit
+verschiedenen Fassungen.** Der Push war lokal grün und in CI rot — mit **mehr**
+Funden als vorher. Die Action bringt ihr eigenes gitleaks mit (8.24.3), lokal
+lief 8.30.1, und `targetRules` — die Zeile, an der die ganze Ausnahme hängt —
+kennt die ältere Fassung nicht. Sie hat die Datei gelesen (das steht im Log)
+und anders ausgewertet. **Damit belegte die lokale Messung nichts über CI**,
+und das ist derselbe Fehler wie eine Prüfung, die nur eine Seite führt, nur
+eine Ebene tiefer: nicht *ob* geprüft wird, sondern *womit*. `GITLEAKS_VERSION`
+heftet CI jetzt auf 8.30.1, und `minVersion` in der Konfiguration lässt eine zu
+alte Fassung **scheitern** statt raten. Ob es die Nummer gibt, wurde vorher
+nachgesehen — die Lehre aus `UV_VERSION` gilt für jede angeheftete Version.
+
+**Zwei Funde erzeugte dieser Text selbst.** Die Beschreibung des Fehlalarms
+enthielt den Aufruf, der ihn auslöst — in `HANDOFF.md`, also außerhalb der
+`.py`-Pfadgrenze. **Wer über einen Fehlalarm schreibt, löst ihn aus**, und das
+gilt für dieses Dossier dauerhaft: Es beschreibt Befunde und zitiert dabei
+Quelltext.
+
+Die naheliegende Antwort — `.md` einfach mit aufnehmen — wäre eine Aufweichung
+gewesen: `aws_access_key_id=AKIAIOSFODNN7EXAMPLE` hat dieselbe Form. Die
+Ausnahme ist deshalb **zugleich enger** geworden: Der große Teil muss
+**mindestens einen Unterstrich** enthalten. Ein ausgestellter Schlüssel ist
+durchgehend, ohne Trenner; `GILT_BIS` ist ein Bezeichner. Damit trägt die
+**Form des Wertes** die Zusage, nicht die Sprache der Datei — und ein echter
+Großbuchstabenwert bleibt auch in einer erlaubten Datei sichtbar. Gegenprobe
+angelegt, die beides in dieselbe `.md`-Datei schreibt: der Bezeichner
+verschwindet, der Schlüssel steht.
+
+**Warum das an der Regel gelöst wurde und nicht an der Historie.** gitleaks
+prüft die *Ergänzungen* jedes Commits; ein Folge-Commit, der die Zeilen
+entfernt, nimmt sie aus dem alten nicht heraus. Der saubere Weg wäre ein
+`--amend` gewesen — der ist in dieser Umgebung nicht zugelassen. Das Ergebnis
+ist trotzdem das bessere: Eine Regel, die an der Form des Wertes hängt,
+überlebt den nächsten Dossiereintrag, ein umformulierter Satz nicht.
+
+**Was sich für die Arbeitsweise ändert.** `make gate` führt jetzt
+`gate-secrets`, und zwar über den **gesamten** Verlauf — CI sieht im PR nur
+dessen Commits, das Gate ist hier also die stärkere Zusage. Fehlt `gitleaks`,
+**scheitert** das Ziel mit einem Hinweis auf `brew install gitleaks`; es
+überspringt nicht. Ein Gate, das eine Prüfung still auslässt, meldet Grün für
+etwas, das es nicht geprüft hat — und genau diese Sorte Grün hat dieses Projekt
+schon zweimal Zeit gekostet. Kosten: 0,7 Sekunden für 3,8 MB.
+
+Keine neue Invariante — der Scan ist eine Heuristik über den Quelltext, keine
+Eigenschaft des laufenden Systems. Kennzahl unverändert **64/64**.
+
 ## 9. Arbeitsweise
 
 Vom Nutzer vorgegeben, gilt unverändert:
@@ -2233,6 +2404,10 @@ klären, indem der Fall ausgeführt wurde.
 | **Nach `make gen` gehört ein Commit** | `gen-check` prüft gegen den **Commit**-Stand, nicht gegen die Arbeitskopie. Zweimal in einer Sitzung das Gate rot bekommen, weil die Artefakte aktuell, aber nicht committet waren. Das ist kein Fehler des Ziels — nur eine Reihenfolge, die man einmal lernt. |
 | **`open()` auf eine FIFO blockiert** | Die Prüfung „ist das eine reguläre Datei?" steht notwendigerweise *nach* dem Öffnen — vorher gäbe es nur `lstat`, und dazwischen läge das Zeitfenster, das die Bauart schließen soll. Der erste Testlauf hing deshalb. `O_NONBLOCK` löst es; für reguläre Dateien ist die Flagge wirkungslos. Ein Test, der eine FIFO anlegt, ist billig — und er hat einen echten Hänger gefunden. |
 | **Rollback-Isolation im Test verdeckt Transaktionsgrenzen** | Die `conn`-Fixture hält alles in einer Transaktion, die nie committet. Bequem, schnell, sauber — und blind für jeden Ablauf, der über Transaktionsgrenzen geht. Sie war der Grund, warum die E2E-Suite den Befund nicht sehen konnte. Wo eine Komponente aus gutem Grund selbst committet, muss der Test committen und danach aufräumen (`aufgeraeumte_nutzer`). |
+| **Eine globale gitleaks-Ausnahme mit `paths` überspringt die ganze Datei** | Nicht den Fund — die Datei, bevor ihr Inhalt gelesen wird. Die erste Fassung der Ausnahme hätte damit **jedes `.py`-Dateiverzeichnis** vom Scan genommen; gemessen an einer Probe mit einem echten Literal: nicht gefunden. `targetRules` behebt es, weil dann je Fund entschieden wird. Und `condition = "AND"` gehört dazu — sonst verknüpft gitleaks `regexes` und `paths` mit ODER, und jede Bedingung allein genügt. **Eine Ausnahme gehört in beide Richtungen gemessen:** Findet sie den Fehlalarm nicht mehr, und findet sie einen echten Wert noch? |
+| **Ein Formatierungsumbruch entscheidet, ob eine Heuristik anschlägt** | Dieselbe Argumentliste war einzeilig unauffällig und umbrochen ein Secret-Scan-Fund, sobald die schließende Klammer nicht mehr auf der Zeile stand. Gemeldet wurde ein Bezeichnername. Wer einen Fehlalarm bewertet, sieht zuerst nach, **was genau** die Regel gegriffen hat; die Meldung nennt es. |
+| **Gate und CI mit verschiedenen Werkzeugfassungen prüfen verschieden** | Die gitleaks-Action bringt ihr eigenes Binary mit (8.24.3); lokal lief 8.30.1. Die Ausnahmedatei hängt an `targetRules`, das die ältere Fassung nicht kennt — lokal grün, in CI rot, und mit *mehr* Funden. **Eine lokale Messung belegt nur dann etwas über CI, wenn beide Seiten dieselbe Fassung festlegen.** `GITLEAKS_VERSION` in der Workflow-Datei, `minVersion` in der Konfiguration: die eine heftet an, die andere lässt eine zu alte Fassung scheitern statt raten. |
+| **Eine Prüfung, die nur in CI läuft, ist erst im PR sichtbar** | `make gate` führte den Secret-Scan nicht. Der Block war lokal grün und blieb am Merge hängen — an zwei Fehlalarmen, die lokal in Sekunden zu klären gewesen wären. Das ist die Kehrseite von *„CI prüft die Browserdurchstiche nicht"*: **Wo Gate und CI verschieden viel prüfen, trägt die Differenz der, der zuerst darauf trifft** — und hält sie für ein Infrastrukturproblem. |
 | **Aufräum-Fixture verklemmt gegen die offene Testtransaktion** | Das `DELETE` der Aufräum-Fixture wartete auf Zeilensperren der `conn`-Transaktion, die erst später zurückrollte: Die Suite blieb stehen, **ohne Fehlermeldung** — der unangenehmste Ausgang. Fixtures werden in umgekehrter Aufbaureihenfolge abgebaut; `conn` fordert deshalb `aufgeraeumte_nutzer` an, obwohl es sie nicht benutzt. Damit rollt es zuerst zurück. Diagnose lief über `pg_stat_activity` (`wait_event_type = 'Lock'`) — bei einer hängenden Suite die erste Adresse. |
 
 ---

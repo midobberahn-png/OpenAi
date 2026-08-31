@@ -1,0 +1,91 @@
+# Regeln für den Secret-Scan (gitleaks) — dieselbe Datei für CI und `make gate`.
+#
+# Grundlage sind die mitgelieferten Regeln. Ergänzt wird genau eine Ausnahme,
+# und sie steht hier mit Begründung und mit dem, was gemessen wurde: Eine
+# Prüfung, die man leiser stellt, ohne zu belegen, dass sie noch dasselbe
+# findet, ist keine Prüfung mehr.
+
+# ``targetRules`` in den Ausnahmen unten gibt es erst ab einer neueren
+# Fassung. Ohne diese Zeile schweigt eine aeltere darueber und wertet die
+# Ausnahme anders aus — genau das ist einmal passiert: lokal (8.30.1) gruen,
+# in CI (8.24.3, die Fassung der Action) rot. Eine zu alte Fassung soll
+# scheitern, nicht raten.
+minVersion = "8.30.1"
+
+[extend]
+useDefault = true
+
+# --------------------------------------------------------------------------
+# Ausnahme: ein Schlüsselwortargument in Python ist kein Geheimnis
+# --------------------------------------------------------------------------
+#
+# Die Regel ``generic-api-key`` sucht ein Schlüsselwort wie ``token=`` und
+# nimmt, was folgt. In Python trifft sie damit auch einen Aufruf der Form
+# ``kid, token=TOKEN, gilt_bis=GILT_BIS`` — gemeldet wurde zweimal
+# ``gilt_bis=GILT_BIS``, also ein *Bezeichnername*. Ob die Regel zuschlug, hing
+# sogar daran, ob die schließende Klammer auf derselben Zeile stand: Dieselbe
+# Argumentliste war einzeilig unauffällig und umbrochen ein Fund.
+#
+# Erlaubt wird nur, was **vollständig** die Form ``kleiner_name=GROSSER_NAME``
+# hat, wobei der große Teil **mindestens einen Unterstrich** enthalten muss,
+# nur in ``.py``- und ``.md``-Dateien, und nur für diese eine Regel. In Python
+# ist ``GROSSER_NAME`` eine Referenz, kein Literal; wo der Name gebunden wird,
+# steht das Literal in Anführungszeichen, und *diese* Zeile prüft der Scan
+# weiterhin.
+#
+# **Der Unterstrich trägt die Sicherheit, nicht die Pfadgrenze.** Ein
+# ausgestellter Schlüssel ist ``AKIAIOSFODNN7EXAMPLE`` oder
+# ``ABCD1234EFGH5678IJKL`` — durchgehend, ohne Trenner. ``GILT_BIS`` ist ein
+# Bezeichner. Mit dieser Bedingung bleibt ein echter Großbuchstabenwert auch
+# in einer erlaubten Datei sichtbar; gemessen an einer Gegenprobe, die beides
+# in dieselbe ``.md``-Datei schreibt.
+#
+# ``.md`` ist dabei kein Zugeständnis, sondern folgerichtig: Dieses Dossier
+# beschreibt Befunde und zitiert dabei Quelltext — die Beschreibung dieses
+# Fehlalarms löste ihn prompt selbst aus. Die Zusage hängt an der **Form des
+# Wertes**, nicht an der Sprache der Datei.
+#
+# Drei Einzelheiten, die jeweils erst die Messung gezeigt hat:
+#
+# * ``targetRules`` ist nicht Feinschliff, sondern notwendig. Eine globale
+#   Ausnahme mit ``paths`` überspringt die **ganze Datei**, bevor der Inhalt
+#   überhaupt gelesen wird — ``condition`` ändert daran nichts. Gemessen: In
+#   dieser Fassung blieb ein echtes Literal in derselben Datei unentdeckt.
+#   Mit ``targetRules`` wird je Fund entschieden.
+# * ``condition = "AND"`` ist der Unterschied zwischen „Name *und* Python" und
+#   „Name *oder* Python". Ohne die Zeile verknüpft gitleaks mit ODER.
+# * Die Pfadgrenze trägt die Begründung. Ohne sie gälte die Ausnahme auch für
+#   ``.env``: ``aws_access_key_id=AKIA…`` hat genau diese Form und ist echt.
+#   Gemessen an einer Gegenprobe — mit Pfadgrenze bleibt der ``.env``-Fund
+#   stehen.
+#
+# Die Gesamtmessung an einer Probe mit einem Fehlalarm und zwei echten Funden:
+# ohne diese Datei 3 Funde, mit ihr 2. Die Differenz ist genau der Fehlalarm.
+[[allowlists]]
+description = "Schlüsselwortargument statt Geheimnis (siehe Kommentar oben)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexes = ['''^[a-z_][a-z0-9_]*=[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$''']
+paths = ['''\.(py|md)$''']
+
+# --------------------------------------------------------------------------
+# Ausnahme: Platzhalter, die wie Zugangsdaten aussehen müssen
+# --------------------------------------------------------------------------
+#
+# `tests/unit/test_secrets.py` prüft `looks_like_secret()` — die Heuristik, die
+# entscheidet, ob ein gelesener Dateiinhalt als P3 eingestuft wird und damit
+# das Gerät nicht verlässt. Ihre Eingaben *müssen* wie Zugangsdaten aussehen;
+# sonst prüft der Test nichts. Der Scan und dieser Klassifikator suchen also
+# dasselbe, und die Kollision ist keine Nachlässigkeit, sondern strukturell.
+#
+# Die Ausnahme greift deshalb nicht am Pfad allein — das würde die Datei
+# blind stellen, ausgerechnet die eine, in der jemand versucht sein könnte,
+# einen echten Wert „zum Ausprobieren" einzusetzen. Sie greift an der
+# Platzhalterform: Ein Wert, der ``abcdefgh`` enthält, ist ein durchgezähltes
+# Alphabet und kein ausgestelltes Geheimnis. Beides muss zutreffen.
+[[allowlists]]
+description = "Durchgezählte Platzhalter im Test des Geheimnis-Klassifikators"
+targetRules = ["generic-api-key", "stripe-access-token"]
+condition = "AND"
+regexes = ['''abcdefgh''']
+paths = ['''tests/unit/test_secrets\.py$''']
