@@ -127,3 +127,13 @@ jobs:
           # beim naechsten Wechsel der Action stillschweigend weg — und der
           # Ausfall zeigt sich als Fehlalarm, den jemand wegklickt.
           GITLEAKS_CONFIG: .gitleaks.toml
+          # **Dieselbe Version wie lokal — sonst misst das Gate etwas anderes
+          # als CI.** Die Action bringt ihre eigene mit (8.24.3) und kennt
+          # ``targetRules`` in der Ausnahmedatei nicht: Der erste Anlauf war
+          # lokal gruen und in CI rot, mit *mehr* Funden als vorher. Eine
+          # Pruefung, deren Verhalten von einer Version abhaengt, die nur eine
+          # der beiden Seiten festlegt, ist keine gemeinsame Pruefung.
+          #
+          # Und wie bei ``UV_VERSION``: Vor dem Anheften nachgesehen, ob es die
+          # Nummer gibt (``gh release view v8.30.1 --repo gitleaks/gitleaks``).
+          GITLEAKS_VERSION: "8.30.1"

@@ -2236,7 +2236,8 @@ keine Geheimnisse.
 **Was tatsächlich gemeldet wurde.** Nicht der Testtoken — sondern
 `gilt_bis=GILT_BIS`, ein Schlüsselwortargument. Die Regel `generic-api-key`
 sucht ein Schlüsselwort wie `token=` und nimmt, was folgt; in Python trifft sie
-damit den Aufruf `kid, token=TOKEN, gilt_bis=GILT_BIS` und meldet den
+damit einen Aufruf, in dem auf das Argument `token` noch `gilt_bis` folgt,
+und meldet den
 Bezeichnernamen dahinter. Ob sie zuschlug, hing daran, **ob die schließende
 Klammer auf derselben Zeile stand**: Dieselbe Argumentliste war einzeilig
 unauffällig (Zeile 66, 150) und umbrochen ein Fund (Zeile 88, 126). Der
@@ -2291,6 +2292,41 @@ Ausprobieren" einen echten Wert einzusetzen. Sie greift an der Platzhalterform:
 Ein Wert, der `abcdefgh` enthält, ist ein durchgezähltes Alphabet. Beides muss
 zutreffen. Gegenprobe: ein echter `sk_live_…`-Wert, in genau diese Datei
 geschrieben, wird weiterhin gefunden.
+
+**Und der Nachschlag, der den ersten Anlauf zurückwarf: Gate und CI liefen mit
+verschiedenen Fassungen.** Der Push war lokal grün und in CI rot — mit **mehr**
+Funden als vorher. Die Action bringt ihr eigenes gitleaks mit (8.24.3), lokal
+lief 8.30.1, und `targetRules` — die Zeile, an der die ganze Ausnahme hängt —
+kennt die ältere Fassung nicht. Sie hat die Datei gelesen (das steht im Log)
+und anders ausgewertet. **Damit belegte die lokale Messung nichts über CI**,
+und das ist derselbe Fehler wie eine Prüfung, die nur eine Seite führt, nur
+eine Ebene tiefer: nicht *ob* geprüft wird, sondern *womit*. `GITLEAKS_VERSION`
+heftet CI jetzt auf 8.30.1, und `minVersion` in der Konfiguration lässt eine zu
+alte Fassung **scheitern** statt raten. Ob es die Nummer gibt, wurde vorher
+nachgesehen — die Lehre aus `UV_VERSION` gilt für jede angeheftete Version.
+
+**Zwei Funde erzeugte dieser Text selbst.** Die Beschreibung des Fehlalarms
+enthielt den Aufruf, der ihn auslöst — in `HANDOFF.md`, also außerhalb der
+`.py`-Pfadgrenze. **Wer über einen Fehlalarm schreibt, löst ihn aus**, und das
+gilt für dieses Dossier dauerhaft: Es beschreibt Befunde und zitiert dabei
+Quelltext.
+
+Die naheliegende Antwort — `.md` einfach mit aufnehmen — wäre eine Aufweichung
+gewesen: `aws_access_key_id=AKIAIOSFODNN7EXAMPLE` hat dieselbe Form. Die
+Ausnahme ist deshalb **zugleich enger** geworden: Der große Teil muss
+**mindestens einen Unterstrich** enthalten. Ein ausgestellter Schlüssel ist
+durchgehend, ohne Trenner; `GILT_BIS` ist ein Bezeichner. Damit trägt die
+**Form des Wertes** die Zusage, nicht die Sprache der Datei — und ein echter
+Großbuchstabenwert bleibt auch in einer erlaubten Datei sichtbar. Gegenprobe
+angelegt, die beides in dieselbe `.md`-Datei schreibt: der Bezeichner
+verschwindet, der Schlüssel steht.
+
+**Warum das an der Regel gelöst wurde und nicht an der Historie.** gitleaks
+prüft die *Ergänzungen* jedes Commits; ein Folge-Commit, der die Zeilen
+entfernt, nimmt sie aus dem alten nicht heraus. Der saubere Weg wäre ein
+`--amend` gewesen — der ist in dieser Umgebung nicht zugelassen. Das Ergebnis
+ist trotzdem das bessere: Eine Regel, die an der Form des Wertes hängt,
+überlebt den nächsten Dossiereintrag, ein umformulierter Satz nicht.
 
 **Was sich für die Arbeitsweise ändert.** `make gate` führt jetzt
 `gate-secrets`, und zwar über den **gesamten** Verlauf — CI sieht im PR nur
@@ -2369,7 +2405,8 @@ klären, indem der Fall ausgeführt wurde.
 | **`open()` auf eine FIFO blockiert** | Die Prüfung „ist das eine reguläre Datei?" steht notwendigerweise *nach* dem Öffnen — vorher gäbe es nur `lstat`, und dazwischen läge das Zeitfenster, das die Bauart schließen soll. Der erste Testlauf hing deshalb. `O_NONBLOCK` löst es; für reguläre Dateien ist die Flagge wirkungslos. Ein Test, der eine FIFO anlegt, ist billig — und er hat einen echten Hänger gefunden. |
 | **Rollback-Isolation im Test verdeckt Transaktionsgrenzen** | Die `conn`-Fixture hält alles in einer Transaktion, die nie committet. Bequem, schnell, sauber — und blind für jeden Ablauf, der über Transaktionsgrenzen geht. Sie war der Grund, warum die E2E-Suite den Befund nicht sehen konnte. Wo eine Komponente aus gutem Grund selbst committet, muss der Test committen und danach aufräumen (`aufgeraeumte_nutzer`). |
 | **Eine globale gitleaks-Ausnahme mit `paths` überspringt die ganze Datei** | Nicht den Fund — die Datei, bevor ihr Inhalt gelesen wird. Die erste Fassung der Ausnahme hätte damit **jedes `.py`-Dateiverzeichnis** vom Scan genommen; gemessen an einer Probe mit einem echten Literal: nicht gefunden. `targetRules` behebt es, weil dann je Fund entschieden wird. Und `condition = "AND"` gehört dazu — sonst verknüpft gitleaks `regexes` und `paths` mit ODER, und jede Bedingung allein genügt. **Eine Ausnahme gehört in beide Richtungen gemessen:** Findet sie den Fehlalarm nicht mehr, und findet sie einen echten Wert noch? |
-| **Ein Formatierungsumbruch entscheidet, ob eine Heuristik anschlägt** | Dieselbe Argumentliste war einzeilig unauffällig und umbrochen ein Secret-Scan-Fund — `token=TOKEN, gilt_bis=GILT_BIS` ohne schließende Klammer auf der Zeile. Gemeldet wurde ein Bezeichnername. Wer einen Fehlalarm bewertet, sieht zuerst nach, **was genau** die Regel gegriffen hat; die Meldung nennt es. |
+| **Ein Formatierungsumbruch entscheidet, ob eine Heuristik anschlägt** | Dieselbe Argumentliste war einzeilig unauffällig und umbrochen ein Secret-Scan-Fund, sobald die schließende Klammer nicht mehr auf der Zeile stand. Gemeldet wurde ein Bezeichnername. Wer einen Fehlalarm bewertet, sieht zuerst nach, **was genau** die Regel gegriffen hat; die Meldung nennt es. |
+| **Gate und CI mit verschiedenen Werkzeugfassungen prüfen verschieden** | Die gitleaks-Action bringt ihr eigenes Binary mit (8.24.3); lokal lief 8.30.1. Die Ausnahmedatei hängt an `targetRules`, das die ältere Fassung nicht kennt — lokal grün, in CI rot, und mit *mehr* Funden. **Eine lokale Messung belegt nur dann etwas über CI, wenn beide Seiten dieselbe Fassung festlegen.** `GITLEAKS_VERSION` in der Workflow-Datei, `minVersion` in der Konfiguration: die eine heftet an, die andere lässt eine zu alte Fassung scheitern statt raten. |
 | **Eine Prüfung, die nur in CI läuft, ist erst im PR sichtbar** | `make gate` führte den Secret-Scan nicht. Der Block war lokal grün und blieb am Merge hängen — an zwei Fehlalarmen, die lokal in Sekunden zu klären gewesen wären. Das ist die Kehrseite von *„CI prüft die Browserdurchstiche nicht"*: **Wo Gate und CI verschieden viel prüfen, trägt die Differenz der, der zuerst darauf trifft** — und hält sie für ein Infrastrukturproblem. |
 | **Aufräum-Fixture verklemmt gegen die offene Testtransaktion** | Das `DELETE` der Aufräum-Fixture wartete auf Zeilensperren der `conn`-Transaktion, die erst später zurückrollte: Die Suite blieb stehen, **ohne Fehlermeldung** — der unangenehmste Ausgang. Fixtures werden in umgekehrter Aufbaureihenfolge abgebaut; `conn` fordert deshalb `aufgeraeumte_nutzer` an, obwohl es sie nicht benutzt. Damit rollt es zuerst zurück. Diagnose lief über `pg_stat_activity` (`wait_event_type = 'Lock'`) — bei einer hängenden Suite die erste Adresse. |
 

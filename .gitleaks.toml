@@ -5,6 +5,13 @@
 # Prüfung, die man leiser stellt, ohne zu belegen, dass sie noch dasselbe
 # findet, ist keine Prüfung mehr.
 
+# ``targetRules`` in den Ausnahmen unten gibt es erst ab einer neueren
+# Fassung. Ohne diese Zeile schweigt eine aeltere darueber und wertet die
+# Ausnahme anders aus — genau das ist einmal passiert: lokal (8.30.1) gruen,
+# in CI (8.24.3, die Fassung der Action) rot. Eine zu alte Fassung soll
+# scheitern, nicht raten.
+minVersion = "8.30.1"
+
 [extend]
 useDefault = true
 
@@ -20,10 +27,23 @@ useDefault = true
 # Argumentliste war einzeilig unauffällig und umbrochen ein Fund.
 #
 # Erlaubt wird nur, was **vollständig** die Form ``kleiner_name=GROSSER_NAME``
-# hat, nur in ``.py``-Dateien, und nur für diese eine Regel. In Python ist
-# ``GROSSER_NAME`` eine Referenz, kein Literal; wo der Name gebunden wird,
+# hat, wobei der große Teil **mindestens einen Unterstrich** enthalten muss,
+# nur in ``.py``- und ``.md``-Dateien, und nur für diese eine Regel. In Python
+# ist ``GROSSER_NAME`` eine Referenz, kein Literal; wo der Name gebunden wird,
 # steht das Literal in Anführungszeichen, und *diese* Zeile prüft der Scan
 # weiterhin.
+#
+# **Der Unterstrich trägt die Sicherheit, nicht die Pfadgrenze.** Ein
+# ausgestellter Schlüssel ist ``AKIAIOSFODNN7EXAMPLE`` oder
+# ``ABCD1234EFGH5678IJKL`` — durchgehend, ohne Trenner. ``GILT_BIS`` ist ein
+# Bezeichner. Mit dieser Bedingung bleibt ein echter Großbuchstabenwert auch
+# in einer erlaubten Datei sichtbar; gemessen an einer Gegenprobe, die beides
+# in dieselbe ``.md``-Datei schreibt.
+#
+# ``.md`` ist dabei kein Zugeständnis, sondern folgerichtig: Dieses Dossier
+# beschreibt Befunde und zitiert dabei Quelltext — die Beschreibung dieses
+# Fehlalarms löste ihn prompt selbst aus. Die Zusage hängt an der **Form des
+# Wertes**, nicht an der Sprache der Datei.
 #
 # Drei Einzelheiten, die jeweils erst die Messung gezeigt hat:
 #
@@ -45,8 +65,8 @@ useDefault = true
 description = "Schlüsselwortargument statt Geheimnis (siehe Kommentar oben)"
 targetRules = ["generic-api-key"]
 condition = "AND"
-regexes = ['''^[a-z_][a-z0-9_]*=[A-Z][A-Z0-9_]*$''']
-paths = ['''\.py$''']
+regexes = ['''^[a-z_][a-z0-9_]*=[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$''']
+paths = ['''\.(py|md)$''']
 
 # --------------------------------------------------------------------------
 # Ausnahme: Platzhalter, die wie Zugangsdaten aussehen müssen
