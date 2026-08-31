@@ -1,6 +1,6 @@
 # JARVIS — Übergabe an eine neue Sitzung
 
-> **Stand: 26.08.2026, Commit `0f2eb89` auf `main`.** Dieses Dokument ist der
+> **Stand: 31.08.2026, Commit `d60dc92` auf `main`.** Dieses Dokument ist der
 > Einstieg für eine frische Claude-Code-Sitzung. Es ersetzt kein
 > Architekturdokument, sondern sagt, wo das Projekt steht und was als Nächstes
 > zu tun ist.
@@ -44,13 +44,14 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 
 | | |
 |---|---|
-| Commits | 106, Remote auf GitHub |
+| Commits | 125, Remote auf GitHub |
 | Tests | **1612** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
 | **Security Invariant Coverage** | **64/64** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 12 Migrationen, bi-direktional geprüft |
 | CI | GitHub Actions mit Postgres und Redis; **seit `0c28a5e` erstmals grün** — davor 45 Läufe, die im Einrichten abbrachen (uv-Version gab es nicht). Ohne Browserdurchstiche. |
+| Secret-Scan | gitleaks, **auf 8.30.1 angeheftet in CI *und* im Gate** — sonst werten die beiden Seiten dieselbe Ausnahmedatei verschieden aus (Abschnitt 21). `make gate` führt ihn seit dem 31.08. über den **gesamten** Verlauf; CI sieht im PR nur dessen Commits. |
 
 ### Was seit dem letzten Dossier geschah
 
