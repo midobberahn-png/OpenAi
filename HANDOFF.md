@@ -300,6 +300,16 @@ brew install ollama && brew services start ollama
 ollama pull llama3.1:8b        # 4,9 GB; entspricht dem Vorgabewert OLLAMA_MODEL
 ```
 
+Und für den Secret-Scan, den ``make gate`` seit Abschnitt 21 führt:
+
+```bash
+brew install gitleaks
+```
+
+Ohne ihn **scheitert** ``make gate`` mit einem Hinweis — es überspringt nicht.
+Das ist Absicht: CI führt die Prüfung, und ein Gate, das sie still auslässt,
+meldet Grün für etwas, das es nicht geprüft hat.
+
 Ollama läuft auf ``http://localhost:11434`` (``OLLAMA_URL``). Die Adresse ist
 nicht beliebig: ``models.py`` führt das Modell mit ``is_local=True``, und daran
 macht das Model Gateway fest, dass P3 das Gerät nicht verlässt. Wer dort einen
@@ -332,8 +342,9 @@ denselben Lauf noch einmal anfasst. `JARVIS_WORKER_INTERVAL` (Sekunden, Vorgabe
 ### Vollständiges Gate
 
 ```bash
-make gate      # Lint, Typen, Vertragsdrift, alle Tests, Kennzahl
-make proof     # nur die Integrationstests — Überspringen ist dabei ein Fehler
+make gate          # Lint, Typen, Vertragsdrift, Secret-Scan, alle Tests, Kennzahl
+make proof         # nur die Integrationstests — Überspringen ist dabei ein Fehler
+make gate-secrets  # nur der Secret-Scan, über den gesamten Verlauf (0,7 s)
 
 # Und, seit die Modellschleife hängt, der Lauf gegen ein echtes Modell:
 JARVIS_REQUIRE_OLLAMA=1 uv run pytest tests/integration/test_ollama_live.py
@@ -2216,6 +2227,82 @@ still verhält.
 
 Kennzahl: **62/62.** Zum ersten Mal steht keine Invariante mehr offen.
 
+### 21. Erledigt: Der Secret-Scan lief nur in CI — und meldete dort zwei Namen
+
+Der Envelope-Block war lokal grün und blieb im PR stehen: **Secret-Scan rot,
+zwei Funde.** Beide in `tests/integration/test_zugangsdaten.py`, und beide
+keine Geheimnisse.
+
+**Was tatsächlich gemeldet wurde.** Nicht der Testtoken — sondern
+`gilt_bis=GILT_BIS`, ein Schlüsselwortargument. Die Regel `generic-api-key`
+sucht ein Schlüsselwort wie `token=` und nimmt, was folgt; in Python trifft sie
+damit den Aufruf `kid, token=TOKEN, gilt_bis=GILT_BIS` und meldet den
+Bezeichnernamen dahinter. Ob sie zuschlug, hing daran, **ob die schließende
+Klammer auf derselben Zeile stand**: Dieselbe Argumentliste war einzeilig
+unauffällig (Zeile 66, 150) und umbrochen ein Fund (Zeile 88, 126). Der
+Unterschied kam von der automatischen Formatierung.
+
+**Warum das trotzdem ein Befund ist.** Nicht wegen der Regel — die tut, was
+eine Heuristik tut. Sondern weil `make gate` diese Prüfung **nicht führte**.
+Das Gate war grün, CI war rot, und der Unterschied fiel erst auf, als er einen
+Merge blockierte. Das ist die Kehrseite des schon notierten Falls *„CI prüft
+die Browserdurchstiche nicht"*: Wo Gate und CI verschieden viel prüfen, trägt
+die Differenz der, der zuerst darauf trifft — und er hält sie für ein
+Infrastrukturproblem.
+
+**Der Zuschnitt: schärfen statt stilllegen.** `.gitleaks.toml` erlaubt genau
+das, was **vollständig** die Form `kleiner_name=GROSSER_NAME` hat, nur in
+`.py`-Dateien, und nur für diese eine Regel. In Python ist `GROSSER_NAME` eine
+Referenz; wo der Name gebunden wird, steht ein Literal in Anführungszeichen,
+und *diese* Zeile prüft der Scan weiter.
+
+**Drei Einzelheiten, die erst die Messung gezeigt hat — jede davon hätte den
+Scan still blind gemacht:**
+
+1. **Eine globale Ausnahme mit `paths` überspringt die ganze Datei.** Nicht den
+   Fund — die Datei, bevor der Inhalt gelesen wird (`skipping file: global
+   allowlist`). Die erste Fassung hätte damit **jede `.py`-Datei im Repository**
+   vom Scan genommen. Gemessen an einer Probe mit einem echten Literal: nicht
+   gefunden. `targetRules` behebt es, weil dann je Fund entschieden wird.
+2. **`condition = "AND"` ist nicht Feinschliff.** Ohne die Zeile verknüpft
+   gitleaks `regexes` und `paths` mit ODER — jede Bedingung allein hätte
+   gereicht.
+3. **Die Pfadgrenze trägt die Begründung, nicht die Bequemlichkeit.** Ohne sie
+   gälte die Ausnahme auch für `.env`, und `aws_access_key_id=AKIA…` hat genau
+   diese Form. Gegenprobe angelegt: Mit Pfadgrenze bleibt der `.env`-Fund
+   stehen.
+
+Die Gesamtmessung an einer Probe mit einem Fehlalarm und zwei echten Werten:
+**ohne die Datei 3 Funde, mit ihr 2.** Die Differenz ist genau der Fehlalarm —
+und das ist die Zusage, die eine Ausnahme schuldig ist.
+
+**Und der Fund, den erst der vollständige Verlauf brachte.** Der PR-Scan sieht
+nur die Commits des PRs; über alle 125 Commits kamen **zwei weitere** dazu, in
+`tests/unit/test_secrets.py` — seit dem 21.08. unbemerkt, weil sie nie in einem
+geprüften Bereich lagen. Es sind die Eingaben von `looks_like_secret()`, der
+Heuristik, die entscheidet, ob ein gelesener Dateiinhalt P3 wird und damit das
+Gerät nicht verlässt. Diese Eingaben **müssen** wie Zugangsdaten aussehen,
+sonst prüft der Test nichts. **Der Scan und der Klassifikator suchen dasselbe;
+die Kollision ist strukturell, nicht nachlässig.**
+
+Die Ausnahme dafür greift deshalb nicht am Pfad allein — das stellte
+ausgerechnet die Datei blind, in der jemand versucht sein könnte, „zum
+Ausprobieren" einen echten Wert einzusetzen. Sie greift an der Platzhalterform:
+Ein Wert, der `abcdefgh` enthält, ist ein durchgezähltes Alphabet. Beides muss
+zutreffen. Gegenprobe: ein echter `sk_live_…`-Wert, in genau diese Datei
+geschrieben, wird weiterhin gefunden.
+
+**Was sich für die Arbeitsweise ändert.** `make gate` führt jetzt
+`gate-secrets`, und zwar über den **gesamten** Verlauf — CI sieht im PR nur
+dessen Commits, das Gate ist hier also die stärkere Zusage. Fehlt `gitleaks`,
+**scheitert** das Ziel mit einem Hinweis auf `brew install gitleaks`; es
+überspringt nicht. Ein Gate, das eine Prüfung still auslässt, meldet Grün für
+etwas, das es nicht geprüft hat — und genau diese Sorte Grün hat dieses Projekt
+schon zweimal Zeit gekostet. Kosten: 0,7 Sekunden für 3,8 MB.
+
+Keine neue Invariante — der Scan ist eine Heuristik über den Quelltext, keine
+Eigenschaft des laufenden Systems. Kennzahl unverändert **64/64**.
+
 ## 9. Arbeitsweise
 
 Vom Nutzer vorgegeben, gilt unverändert:
@@ -2281,6 +2368,9 @@ klären, indem der Fall ausgeführt wurde.
 | **Nach `make gen` gehört ein Commit** | `gen-check` prüft gegen den **Commit**-Stand, nicht gegen die Arbeitskopie. Zweimal in einer Sitzung das Gate rot bekommen, weil die Artefakte aktuell, aber nicht committet waren. Das ist kein Fehler des Ziels — nur eine Reihenfolge, die man einmal lernt. |
 | **`open()` auf eine FIFO blockiert** | Die Prüfung „ist das eine reguläre Datei?" steht notwendigerweise *nach* dem Öffnen — vorher gäbe es nur `lstat`, und dazwischen läge das Zeitfenster, das die Bauart schließen soll. Der erste Testlauf hing deshalb. `O_NONBLOCK` löst es; für reguläre Dateien ist die Flagge wirkungslos. Ein Test, der eine FIFO anlegt, ist billig — und er hat einen echten Hänger gefunden. |
 | **Rollback-Isolation im Test verdeckt Transaktionsgrenzen** | Die `conn`-Fixture hält alles in einer Transaktion, die nie committet. Bequem, schnell, sauber — und blind für jeden Ablauf, der über Transaktionsgrenzen geht. Sie war der Grund, warum die E2E-Suite den Befund nicht sehen konnte. Wo eine Komponente aus gutem Grund selbst committet, muss der Test committen und danach aufräumen (`aufgeraeumte_nutzer`). |
+| **Eine globale gitleaks-Ausnahme mit `paths` überspringt die ganze Datei** | Nicht den Fund — die Datei, bevor ihr Inhalt gelesen wird. Die erste Fassung der Ausnahme hätte damit **jedes `.py`-Dateiverzeichnis** vom Scan genommen; gemessen an einer Probe mit einem echten Literal: nicht gefunden. `targetRules` behebt es, weil dann je Fund entschieden wird. Und `condition = "AND"` gehört dazu — sonst verknüpft gitleaks `regexes` und `paths` mit ODER, und jede Bedingung allein genügt. **Eine Ausnahme gehört in beide Richtungen gemessen:** Findet sie den Fehlalarm nicht mehr, und findet sie einen echten Wert noch? |
+| **Ein Formatierungsumbruch entscheidet, ob eine Heuristik anschlägt** | Dieselbe Argumentliste war einzeilig unauffällig und umbrochen ein Secret-Scan-Fund — `token=TOKEN, gilt_bis=GILT_BIS` ohne schließende Klammer auf der Zeile. Gemeldet wurde ein Bezeichnername. Wer einen Fehlalarm bewertet, sieht zuerst nach, **was genau** die Regel gegriffen hat; die Meldung nennt es. |
+| **Eine Prüfung, die nur in CI läuft, ist erst im PR sichtbar** | `make gate` führte den Secret-Scan nicht. Der Block war lokal grün und blieb am Merge hängen — an zwei Fehlalarmen, die lokal in Sekunden zu klären gewesen wären. Das ist die Kehrseite von *„CI prüft die Browserdurchstiche nicht"*: **Wo Gate und CI verschieden viel prüfen, trägt die Differenz der, der zuerst darauf trifft** — und hält sie für ein Infrastrukturproblem. |
 | **Aufräum-Fixture verklemmt gegen die offene Testtransaktion** | Das `DELETE` der Aufräum-Fixture wartete auf Zeilensperren der `conn`-Transaktion, die erst später zurückrollte: Die Suite blieb stehen, **ohne Fehlermeldung** — der unangenehmste Ausgang. Fixtures werden in umgekehrter Aufbaureihenfolge abgebaut; `conn` fordert deshalb `aufgeraeumte_nutzer` an, obwohl es sie nicht benutzt. Damit rollt es zuerst zurück. Diagnose lief über `pg_stat_activity` (`wait_event_type = 'Lock'`) — bei einer hängenden Suite die erste Adresse. |
 
 ---
