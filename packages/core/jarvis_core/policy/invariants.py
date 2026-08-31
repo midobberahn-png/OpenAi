@@ -1005,6 +1005,47 @@ INVARIANTS: tuple[Invariant, ...] = (
         component="api.routes.accounts",
     ),
     Invariant(
+        id="oauth-refresh-is-serialized-per-account",
+        title="Ein Konto wird nicht zweimal gleichzeitig erneuert",
+        statement=(
+            "Zu einem Zeitpunkt läuft je Konto höchstens eine Token-Erneuerung; "
+            "gleichzeitige Anfragen warten und finden danach den frischen Token vor, "
+            "statt selbst einen zu holen."
+        ),
+        why=(
+            "Der harmlose Fall ist Verschwendung. Der teure ist ein Anbieter, der den "
+            "Erneuerungstoken rotiert: Dann entwertet die erste Antwort den Token, mit dem "
+            "die zweite Anfrage gerade unterwegs ist — die zweite bekommt invalid_grant und "
+            "erklärt das Konto für tot, obwohl die erste es soeben erneuert hat. Aus zwei "
+            "erfolgreichen Absichten wird ein kaputtes Konto. Google rotiert heute nicht, "
+            "OAuth 2.1 empfiehlt es; der Schaden entsteht also nicht bei einem "
+            "Anbieterwechsel, sondern wenn der Anbieter seine Praxis ändert, ohne dass hier "
+            "jemand etwas anfasst."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.token_service",
+    ),
+    Invariant(
+        id="oauth-account-dies-only-on-a-revoked-grant",
+        title="Eine Netzstörung erklärt kein Konto für tot",
+        statement=(
+            "Der Status eines Kontos wird nur dann auf 'expired' gesetzt, wenn der "
+            "Anbieter die Zustimmung ausdrücklich verweigert (invalid_grant); jeder andere "
+            "Fehlschlag lässt den Status unverändert."
+        ),
+        why=(
+            "Ein Refresh scheitert aus zwei Gründen, und sie führen zu entgegengesetzten "
+            "Reaktionen. Bei einem Zeitlimit oder einem 500 ist über die Zustimmung nichts "
+            "gesagt — wer das Konto dann abschreibt, macht aus einer Störung einen Verlust, "
+            "und der Nutzer stimmt neu zu, obwohl nichts kaputt war. Auch ein 401 gehört "
+            "hierher: Er heißt, dass unsere Client-Zugangsdaten nicht stimmen, und eine "
+            "falsch eingetragene CLIENT_SECRET räumte sonst reihenweise gesunde "
+            "Verbindungen ab."
+        ),
+        status=InvariantStatus.ENFORCED,
+        component="api.token_service",
+    ),
+    Invariant(
         id="resource-ownership-checked-once",
         title="Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen",
         statement=(

@@ -6,7 +6,7 @@ Leitkennzahl des Sicherheitskerns. Testabdeckung sagt nicht, ob der Ablauf
 *kontaminiert → Bestätigung → veränderter Payload → Ausführung* abgewehrt wird;
 diese Tabelle sagt es.
 
-**Security Invariant Coverage: 66/66**
+**Security Invariant Coverage: 68/68**
 
 Ein Meta-Test (`tests/unit/test_invariant_coverage.py`) schlägt fehl, sobald eine
 als durchgesetzt geführte Invariante keinen Test hat — die Kennzahl lässt sich
@@ -77,6 +77,8 @@ nicht nachträglich passend machen.
 | `web-fetch-reaches-only-public-addresses` | Ein Abruf erreicht nur, was aus dem Internet erreichbar ist | web.fetch baut eine Verbindung ausschließlich zu öffentlich routbaren Adressen auf; geprüft wird die aufgelöste Adresse vor dem Verbindungsaufbau und nach jeder Weiterleitung erneut. | `integrations.web` |
 | `oauth-callback-belongs-to-its-session` | Ein Rückruf zählt nur für die Sitzung, die den Vorgang begonnen hat | Der Autorisierungscode wird nur verarbeitet, wenn der mitgelieferte state zu einem Vorgang gehört, den derselbe angemeldete Nutzer begonnen hat; die Bedingung steht in derselben Anweisung, die den Vorgang verbraucht. | `api.db.authorization_store` |
 | `oauth-state-is-consumed-before-the-exchange` | Der Vorgang ist verbraucht, bevor der Code eingelöst wird | Der state wird verbraucht, bevor der Autorisierungscode an den Anbieter geht; ein gescheiterter Tausch macht den Vorgang nicht wieder einlösbar. | `api.routes.accounts` |
+| `oauth-refresh-is-serialized-per-account` | Ein Konto wird nicht zweimal gleichzeitig erneuert | Zu einem Zeitpunkt läuft je Konto höchstens eine Token-Erneuerung; gleichzeitige Anfragen warten und finden danach den frischen Token vor, statt selbst einen zu holen. | `api.token_service` |
+| `oauth-account-dies-only-on-a-revoked-grant` | Eine Netzstörung erklärt kein Konto für tot | Der Status eines Kontos wird nur dann auf 'expired' gesetzt, wenn der Anbieter die Zustimmung ausdrücklich verweigert (invalid_grant); jeder andere Fehlschlag lässt den Status unverändert. | `api.token_service` |
 | `resource-ownership-checked-once` | Eine Sitzung berechtigt an eigenen Objekten, nicht an beliebigen | Jeder Endpunkt, der eine Ressourcenkennung entgegennimmt, prüft die Zugehörigkeit zum angemeldeten Nutzer über genau eine Funktion; ein fremdes Objekt ist von einem nicht existierenden nicht unterscheidbar. | `api.routes` |
 | `run-state-compare-and-set` | Ein Lauf wird nur aus dem erwarteten Status fortgeschrieben | save() schreibt nur, wenn der Lauf noch in dem Status steht, den der Schreiber vorzufinden erwartet; sonst wird abgewiesen und nichts geändert. | `api.db.run_store` |
 | `uncertain-effect-resolved-only-by-owner` | Einen unklaren Schritt löst nur sein Eigentümer auf — gegen den aktuellen Anspruch | Ein Schritt mit möglicher, aber unbestätigter Wirkung bleibt gesperrt, bis der Eigentümer des Laufs eine von genau drei benannten Entscheidungen trifft; sie gilt nur gegen das Fencing-Token des gehaltenen Anspruchs und wird in derselben Anweisung geprüft, die schreibt. | `core.orchestrator.resolution` |

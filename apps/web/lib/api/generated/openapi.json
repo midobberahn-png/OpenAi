@@ -24,6 +24,17 @@
             "title": "Id",
             "type": "string"
           },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
           "provider": {
             "title": "Provider",
             "type": "string"
@@ -39,6 +50,7 @@
           "display_label",
           "granted_scopes",
           "status",
+          "last_error",
           "connected_at"
         ],
         "title": "AccountRow",
@@ -1476,6 +1488,50 @@
           }
         },
         "summary": "Disconnect",
+        "tags": [
+          "accounts"
+        ]
+      }
+    },
+    "/accounts/{account_id}/refresh": {
+      "post": {
+        "description": "Erneuert die Zugangsdaten von Hand.\n\n**Der Token steht nicht in der Antwort, und das ist kein Versehen.** Er\nverließe damit den Server und läge im Speicher eines Browsers, in einem\nNetzwerk-Panel, womöglich in einem Protokoll — ausgerechnet der Wert, den\nADR-008 in der Datenbank versiegelt. Was der Aufrufer bekommt, ist der\nZustand des Kontos: Hat es geklappt, steht es wieder auf ``active``.\n\nDer Endpunkt ist die Reparatur für den Menschen, der ein Konto auf\n``expired`` sieht. Im Betrieb erneuert der Dienst von selbst, wenn ein\nAufruf einen Token braucht.",
+        "operationId": "refresh_accounts__account_id__refresh_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Account Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountRow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh",
         "tags": [
           "accounts"
         ]

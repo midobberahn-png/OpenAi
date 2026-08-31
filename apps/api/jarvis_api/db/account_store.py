@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import RowMapping, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 __all__ = ["PostgresAccountStore", "VerbundenesKonto"]
@@ -65,6 +65,28 @@ _LISTE = text(
       FROM connected_accounts
      WHERE user_id = :user_id
      ORDER BY created_at
+    """
+)
+
+_LADEN = text(
+    """
+    SELECT id, provider, external_id, display_label, granted_scopes,
+           status, last_error, created_at
+      FROM connected_accounts
+     WHERE id = :id AND user_id = :user_id
+    """
+)
+"""``user_id`` steht auch hier im ``WHERE`` und nicht in einer Prüfung darüber.
+
+Ein fremdes Konto ist damit von einem nicht existierenden nicht zu
+unterscheiden — dieselbe Entscheidung wie überall sonst, und sie steht in der
+Anweisung, damit der nächste Endpunkt sie nicht vergessen kann."""
+
+_MARKIEREN = text(
+    """
+    UPDATE connected_accounts
+       SET status = :status, last_error = :fehler, updated_at = now()
+     WHERE id = :id
     """
 )
 
@@ -123,21 +145,55 @@ class PostgresAccountStore:
     async def liste(self, user_id: UUID) -> list[VerbundenesKonto]:
         async with self._engine.connect() as conn:
             zeilen = (await conn.execute(_LISTE, {"user_id": user_id})).mappings().all()
-        return [
-            VerbundenesKonto(
-                id=UUID(str(z["id"])),
-                provider=str(z["provider"]),
-                external_id=str(z["external_id"]),
-                display_label=str(z["display_label"]),
-                granted_scopes=tuple(z["granted_scopes"]),
-                status=str(z["status"]),
-                last_error=z["last_error"],
-                created_at=z["created_at"],
+        return [_zu_konto(z) for z in zeilen]
+
+    async def laden(self, account_id: UUID, *, user_id: UUID) -> VerbundenesKonto | None:
+        async with self._engine.connect() as conn:
+            zeile = (
+                (await conn.execute(_LADEN, {"id": account_id, "user_id": user_id}))
+                .mappings()
+                .first()
             )
-            for z in zeilen
-        ]
+        return None if zeile is None else _zu_konto(zeile)
+
+    async def markieren(self, account_id: UUID, *, status: str, fehler: str | None) -> None:
+        """Hält fest, wie es dem Konto geht.
+
+        **Ohne ``user_id``, und das ist hier richtig.** Diese Methode ruft kein
+        Endpunkt mit einer Kennung aus einem Request auf, sondern der Dienst,
+        der gerade an genau diesem Konto gearbeitet hat — die Zugehörigkeit ist
+        beim Laden geklärt. Eine Bedingung, die nichts mehr prüfen kann, wäre
+        Beruhigung und keine Sicherheit; sie ließe die echte Frage ungestellt,
+        nämlich wer ``account_id`` bestimmt hat.
+
+        Eigene Transaktion: Dass eine Zustimmung nicht mehr besteht, ist eine
+        Tatsache von außen. Sie gehört festgeschrieben, auch wenn der Aufrufer
+        danach scheitert — sonst versucht der nächste Aufruf dasselbe noch
+        einmal und der übernächste wieder.
+        """
+        async with self._engine.begin() as conn:
+            await conn.execute(_MARKIEREN, {"id": account_id, "status": status, "fehler": fehler})
 
     async def trennen(self, account_id: UUID, *, user_id: UUID) -> bool:
         async with self._engine.begin() as conn:
             zeile = (await conn.execute(_TRENNEN, {"id": account_id, "user_id": user_id})).first()
         return zeile is not None
+
+
+def _zu_konto(zeile: RowMapping) -> VerbundenesKonto:
+    """Zeile → Konto, an genau einer Stelle.
+
+    Dieselbe Lehre wie beim N+1 im Bestätigungsspeicher: Lag die Abbildung nur
+    in einem der Leser, musste der zweite ihn aufrufen oder sie doppeln — und
+    beim Doppeln laufen sie auseinander.
+    """
+    return VerbundenesKonto(
+        id=UUID(str(zeile["id"])),
+        provider=str(zeile["provider"]),
+        external_id=str(zeile["external_id"]),
+        display_label=str(zeile["display_label"]),
+        granted_scopes=tuple(zeile["granted_scopes"]),
+        status=str(zeile["status"]),
+        last_error=None if zeile["last_error"] is None else str(zeile["last_error"]),
+        created_at=zeile["created_at"],
+    )

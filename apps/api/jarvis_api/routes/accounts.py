@@ -35,15 +35,19 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
+from jarvis_api.db.account_store import VerbundenesKonto
 from jarvis_api.deps import (
     Accounts,
     Authorizations,
     Credentials,
     CurrentSession,
+    TokenDienst,
     Tokens,
 )
 from jarvis_api.oauth import oauth_providers
 from jarvis_api.settings import get_settings
+from jarvis_api.token_service import KeinZugang
+from jarvis_api.tokenbuendel import buendeln
 from jarvis_core.clock import utc_now
 from jarvis_core.crypto import pkce_challenge
 from jarvis_core.ports.oauth import TokenExchangeFailed
@@ -69,6 +73,9 @@ class AccountRow(BaseModel):
     """Die **Bewilligung**, nicht der Wunsch. Eine Oberfläche, die den Wunsch
     zeigte, behauptete Fähigkeiten, die beim ersten Aufruf fehlen."""
     status: str
+    last_error: str | None
+    """Steht in der Antwort, weil der Nutzer sonst nur „expired" sieht und
+    nicht, ob er neu zustimmen muss oder ob nur das Netz klemmte."""
     connected_at: datetime
 
 
@@ -181,7 +188,7 @@ async def callback(
     # Datensätze könnten auseinanderlaufen.
     await zugangsdaten.speichern(
         account_id,
-        token=_gebuendelt(tokens.access_token, tokens.refresh_token),
+        token=buendeln(tokens.access_token, tokens.refresh_token),
         gilt_bis=tokens.access_expires_at,
     )
 
@@ -201,17 +208,49 @@ async def callback(
 
 @router.get("", response_model=list[AccountRow])
 async def list_accounts(session: CurrentSession, konten: Accounts) -> list[AccountRow]:
-    return [
-        AccountRow(
-            id=k.id,
-            provider=k.provider,
-            display_label=k.display_label,
-            granted_scopes=list(k.granted_scopes),
-            status=k.status,
-            connected_at=k.created_at,
-        )
-        for k in await konten.liste(session.user_id)
-    ]
+    return [_zeile(k) for k in await konten.liste(session.user_id)]
+
+
+@router.post("/{account_id}/refresh", response_model=AccountRow)
+async def refresh(
+    account_id: UUID,
+    session: CurrentSession,
+    konten: Accounts,
+    dienst: TokenDienst,
+) -> AccountRow:
+    """Erneuert die Zugangsdaten von Hand.
+
+    **Der Token steht nicht in der Antwort, und das ist kein Versehen.** Er
+    verließe damit den Server und läge im Speicher eines Browsers, in einem
+    Netzwerk-Panel, womöglich in einem Protokoll — ausgerechnet der Wert, den
+    ADR-008 in der Datenbank versiegelt. Was der Aufrufer bekommt, ist der
+    Zustand des Kontos: Hat es geklappt, steht es wieder auf ``active``.
+
+    Der Endpunkt ist die Reparatur für den Menschen, der ein Konto auf
+    ``expired`` sieht. Im Betrieb erneuert der Dienst von selbst, wenn ein
+    Aufruf einen Token braucht.
+    """
+    konto = await konten.laden(account_id, user_id=session.user_id)
+    if konto is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Kein solches Konto")
+
+    beschreibung = oauth_providers(get_settings()).get(konto.provider)
+    if beschreibung is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Anbieter nicht mehr konfiguriert")
+
+    try:
+        await dienst.zugang(konto, provider=beschreibung, jetzt=utc_now(), erzwingen=True)
+    except KeinZugang as fehler:
+        # 409 und nicht 502: Der Aufruf war richtig, das Konto ist es nicht
+        # (mehr). Der Grund steht am Konto, das die Liste ohnehin zeigt —
+        # hier ihn zu wiederholen hieße, ihn an zwei Stellen zu pflegen.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Die Zugangsdaten liessen sich nicht erneuern"
+        ) from fehler
+
+    erneuert = await konten.laden(account_id, user_id=session.user_id)
+    assert erneuert is not None  # gerade geladen, und getrennt wird nur über /accounts
+    return _zeile(erneuert)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -229,14 +268,13 @@ async def disconnect(account_id: UUID, session: CurrentSession, konten: Accounts
     log.info("konto.getrennt", account_id=str(account_id), user_id=str(session.user_id))
 
 
-def _gebuendelt(access: str, refresh: str | None) -> bytes:
-    """Beide Tokens in **einem** Geheimtext.
-
-    Ein Trennzeichen und kein JSON: Was hier hineingeht, sind zwei
-    undurchsichtige Zeichenketten des Anbieters, und ein Zeilenumbruch kommt in
-    keinem OAuth-Token vor (RFC 6749 §A.12 lässt nur druckbares ASCII ohne
-    Steuerzeichen zu). JSON wäre die Einladung, dem Bündel später Felder
-    hinzuzufügen — und dann liegt Struktur in einem Feld, das die Datenbank als
-    einen Blob führt.
-    """
-    return f"{access}\n{refresh or ''}".encode()
+def _zeile(konto: VerbundenesKonto) -> AccountRow:
+    return AccountRow(
+        id=konto.id,
+        provider=konto.provider,
+        display_label=konto.display_label,
+        granted_scopes=list(konto.granted_scopes),
+        status=konto.status,
+        last_error=konto.last_error,
+        connected_at=konto.created_at,
+    )

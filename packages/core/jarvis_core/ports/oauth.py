@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Protocol
 
 __all__ = [
+    "AuthorizationRevoked",
     "OAuthProvider",
     "TokenExchange",
     "TokenExchangeFailed",
@@ -37,6 +38,28 @@ class TokenExchangeFailed(Exception):
     gewöhnlicher Ausgang. Er heißt entweder, dass jemand einen fremden Code
     vorlegt, oder dass unsere Anfrage falsch war — beides gehört gesehen und
     nicht als „kein Konto" verbucht.
+    """
+
+
+class AuthorizationRevoked(TokenExchangeFailed):
+    """Der Anbieter sagt, dass es die Zustimmung nicht mehr gibt.
+
+    **Der Unterschied zur Oberklasse trägt eine Entscheidung, keine
+    Feinheit.** Ein Refresh kann aus zwei Gründen scheitern, und sie führen zu
+    entgegengesetzten Reaktionen:
+
+    * *Der Anbieter ist nicht erreichbar, antwortet mit 500, das Zeitlimit
+      läuft ab.* Dann ist über die Zustimmung **nichts** gesagt. Wer das Konto
+      hier auf „abgelaufen" setzt, macht aus einer Netzstörung einen Verlust:
+      Der Nutzer sieht ein totes Konto und stimmt neu zu, obwohl nichts
+      kaputt war.
+    * *Der Anbieter antwortet mit ``invalid_grant``.* Dann ist die Zustimmung
+      weg — zurückgezogen, abgelaufen, oder der Erneuerungstoken wurde
+      rotiert und wir haben den alten. Ein Wiederholen hilft nie.
+
+    Ohne diese Trennung müsste der Aufrufer raten, und er würde in die
+    vorsichtige Richtung raten — also jedes Konto bei jedem Schluckauf des
+    Netzes für tot erklären.
     """
 
 

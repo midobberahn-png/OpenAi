@@ -30,7 +30,12 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from jarvis_core.ports.oauth import OAuthProvider, TokenExchangeFailed, TokenSet
+from jarvis_core.ports.oauth import (
+    AuthorizationRevoked,
+    OAuthProvider,
+    TokenExchangeFailed,
+    TokenSet,
+)
 
 __all__ = ["HttpTokenExchange"]
 
@@ -97,6 +102,13 @@ class HttpTokenExchange:
             # sonst in einem Protokoll, und manche Anbieter spiegeln in ihrer
             # Fehlermeldung zurück, was man geschickt hat — einschließlich des
             # Codes und, bei einer falsch gebauten Anfrage, des Geheimnisses.
+            #
+            # Gelesen wird genau **ein** Feld: der Fehlercode aus RFC 6749
+            # §5.2. Er ist eine feste Aufzählung und kein freier Text, und er
+            # entscheidet, ob ein Konto gleich tot ist oder nur gerade nicht
+            # erreichbar. Alles andere aus der Antwort bleibt liegen.
+            if _ist_ungueltiger_grant(antwort):
+                raise AuthorizationRevoked(f"{provider.name}: Zustimmung besteht nicht mehr")
             raise TokenExchangeFailed(f"{provider.name}: HTTP {antwort.status_code}")
 
         try:
@@ -183,3 +195,20 @@ def _identitaet(provider: OAuthProvider, id_token: object) -> tuple[str, str]:
         if isinstance(wert, str) and wert:
             return sub, wert
     return sub, sub
+
+
+def _ist_ungueltiger_grant(antwort: httpx.Response) -> bool:
+    """Sagt der Anbieter, dass es die Zustimmung nicht mehr gibt?
+
+    Nur bei **400**, und nur beim Code ``invalid_grant``. Ein 401 heißt, dass
+    unsere Client-Zugangsdaten nicht stimmen — das ist ein Fehler auf dieser
+    Seite und darf kein Konto für tot erklären; sonst räumte eine falsch
+    eingetragene ``GOOGLE_CLIENT_SECRET`` reihenweise gesunde Verbindungen ab.
+    """
+    if antwort.status_code != httpx.codes.BAD_REQUEST:
+        return False
+    try:
+        daten = antwort.json()
+    except ValueError:
+        return False
+    return isinstance(daten, dict) and daten.get("error") == "invalid_grant"

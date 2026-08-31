@@ -4,7 +4,13 @@ from .approval import ApprovalStore, BurnResult
 from .calendar import CalendarEvent, CalendarStore, CalendarWriteFailed
 from .invocations import InvocationStore
 from .llm import LLMProvider
-from .oauth import OAuthProvider, TokenExchange, TokenExchangeFailed, TokenSet
+from .oauth import (
+    AuthorizationRevoked,
+    OAuthProvider,
+    TokenExchange,
+    TokenExchangeFailed,
+    TokenSet,
+)
 from .permissions import PermissionStore, RateLimiter, ToolLookup
 from .runs import RunNotStored, RunStateConflict, RunStore
 from .sessions import SessionStore
@@ -15,6 +21,7 @@ from .webauthn import AttestationVerifier, ChallengeStore, CredentialStore
 __all__ = [
     "ApprovalStore",
     "AttestationVerifier",
+    "AuthorizationRevoked",
     "BurnResult",
     "CalendarEvent",
     "CalendarStore",
