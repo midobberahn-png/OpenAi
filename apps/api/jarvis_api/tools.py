@@ -33,17 +33,20 @@ from jarvis_api.db.invocation_store import PostgresInvocationStore
 from jarvis_api.settings import Settings
 from jarvis_core.ports.calendar import CalendarStore
 from jarvis_core.ports.files import DirectoryLister, FileReader
+from jarvis_core.ports.mail import MailReader
 from jarvis_core.ports.web import WebFetcher
 from jarvis_core.tools import ToolRegistry
 from jarvis_core.tools.builtin import (
     CALENDAR_CREATE,
     FILES_LIST,
     FILES_READ,
+    MAIL_READ,
     WEB_FETCH,
     calendar_create_handler,
     calendar_undo_handler,
     files_list_handler,
     files_read_handler,
+    mail_read_handler,
     web_fetch_handler,
 )
 
@@ -57,6 +60,7 @@ def tool_catalog(
     ordner: DirectoryLister,
     calendar: CalendarStore,
     web: WebFetcher,
+    mail: MailReader,
 ) -> ToolRegistry:
     """Die Registry der Anwendung — mit persistentem Grant-Verbrauch.
 
@@ -80,6 +84,7 @@ def tool_catalog(
     # aufzählen und der Aufzählhandler nicht lesen (ADR-019).
     registry.register(FILES_LIST, files_list_handler(ordner))
     registry.register(WEB_FETCH, web_fetch_handler(web))
+    registry.register(MAIL_READ, mail_read_handler(mail))
     registry.register(
         CALENDAR_CREATE,
         calendar_create_handler(calendar),

@@ -46,7 +46,7 @@ Deshalb trägt jede Datei aus `scripts/pruefpaket.py` den Commit im Kopf.
 |---|---|
 | Commits | 127, Remote auf GitHub |
 | Tests | **1612** Python + 26 Browserdurchstiche — **0 übersprungen**, aber nur mit Diensten **und** Ollama. Ohne Postgres und Redis überspringt `pytest` sämtliche Integrationstests und meldet ein sattes Grün; genau dagegen steht `JARVIS_REQUIRE_SERVICES=1`. Die Zahlen veralten mit jedem Block — was nicht veraltet, ist die Bedingung: **0 übersprungen gilt nur mit Diensten und laufendem Ollama.** Zwei Prüfungen des Hauptbuchs brauchen einen echten Modellaufruf und stehen deshalb hinter `JARVIS_REQUIRE_OLLAMA`; in CI werden sie übersprungen. |
-| **Security Invariant Coverage** | **66/66** |
+| **Security Invariant Coverage** | **69/69** |
 | mypy | `strict`, sauber über 134 Dateien |
 | Ruff | sauber (check + format) |
 | Datenbank | 33 Tabellen, 12 Migrationen, bi-direktional geprüft |
@@ -570,13 +570,14 @@ Fehlendes verschweigt — und sie war der erste Eindruck jeder neuen Sitzung.
 
 | Fehlt | Auswirkung |
 |---|---|
-| **Werkzeuge — mehr als drei** | `files.read`, `calendar.create`, `web.fetch`. Der Scope-Katalog führt 34 Einträge. Es fehlen `mail.*`, `tasks.*`, `search.web`. |
+| **Werkzeuge — mehr als vier** | `files.read`, `files.list`, `calendar.create`, `web.fetch`, `mail.read`. Der Scope-Katalog führt 34 Einträge. Es fehlen `mail.send`, `tasks.*`, `search.web`. |
 | **Ein Aufruf gegen einen echten Cloud-Endpunkt** | Die Adapter für Anthropic und OpenAI sind gegen aufgezeichnete Antworten geprüft, nie gegen das Netz — es gibt keinen Schlüssel. Was ein Contract-Test nicht findet: ein Feld, das der Anbieter inzwischen anders nennt. Für Ollama gibt es dafür `test_ollama_live.py`; das Gegenstück fehlt. |
 | **Google als Anbieter** | ADR-009 nennt drei. Gebaut sind Ollama, Anthropic, OpenAI. |
 | **Prompt-Caching und Vision** | Beide Cloud-Adapter melden `False`, und das ist ehrlich: `Message.content` ist eine Zeichenkette, und `cache_control` setzt niemand. Was der Anbieter kann, ist eine andere Aussage als was der Adapter tut. |
 | **Idempotency-Keys pro Invocation** | Aus dem Review offen. Der Ausführungsanspruch verhindert einen zweiten Versuch — nicht, dass ein Timeout eine Aktion ausgeführt hat, die wir als unklar verbuchen. |
 | **Memory Service** | Nur Verträge und Schema, kein Retrieval. |
-| **OAuth: Refresh und Widerruf** | Zustimmung, Rückruf und Kontoverwaltung stehen (Abschnitt 22). Es fehlen der Token-Refresh — der Adapter kann `erneuern`, niemand ruft es — und der Widerruf **beim Anbieter**: Heute verschwinden nur die Zugangsdaten auf dieser Seite. |
+| **OAuth: Widerruf beim Anbieter** | Zustimmung, Rückruf, Refresh und Kontoverwaltung stehen (Abschnitte 22, 23). Heute verschwinden beim Trennen nur die Zugangsdaten auf dieser Seite; beim Anbieter bleibt die Zustimmung bestehen, und der Endpunkt sagt das. |
+| **Mehrere Konten je Anbieter** | `mail.read` weist zwei verbundene Google-Konten ab, statt zu raten. Ein Argument `konto` braucht einen Weg, es zu benennen, ohne dass ein Modell eine fremde Kennung erfinden kann. |
 | **Ein Durchstich gegen echtes Google** | Der Tauschadapter steht gegen aufgezeichnete Antworten, wie die Cloud-Modelle auch. Es braucht `GOOGLE_CLIENT_ID` und `GOOGLE_CLIENT_SECRET` eines echten Projekts. |
 | **Context Engine** | Verträge da, Provider fehlen. |
 | **Alles ab Phase 2** | Voice, Vision, Integrationen. |
@@ -2449,6 +2450,126 @@ nennt. **Dafür braucht es Zugangsdaten eines echten Google-Projekts** —
 `GOOGLE_CLIENT_ID` und `GOOGLE_CLIENT_SECRET`, dazu
 `http://localhost:8000/accounts/callback` als hinterlegte Rückrufadresse.
 
+### 23. Erledigt: Der Refresh — und `mail.read`, der erste Aufrufer
+
+Zwei Blöcke, die zusammengehören: Der Speicher aus Abschnitt 20 hatte seit
+Abschnitt 22 einen Zulieferer, aber keinen Abnehmer. Jetzt hat er beides.
+
+#### Der Refresh
+
+Ein Zugriffstoken lebt eine Stunde, ein Erneuerungstoken Monate. Jeder Aufruf
+gegen einen Anbieter braucht davor dieselbe Frage; sie an jeder Aufrufstelle
+zu beantworten hieße, sie überall verschieden zu beantworten.
+
+**Ein Refresh je Konto, nicht zwei.** Der harmlose Fall ist Verschwendung.
+Der teure ist ein Anbieter, der den Erneuerungstoken **rotiert**: Dann
+entwertet die erste Antwort den Token, mit dem die zweite Anfrage gerade
+unterwegs ist — die zweite bekommt `invalid_grant` und erklärt das Konto für
+tot, obwohl die erste es soeben erneuert hat. **Aus zwei erfolgreichen
+Absichten wird ein kaputtes Konto.** Google rotiert heute nicht, OAuth 2.1
+empfiehlt es; der Schaden entsteht also nicht bei einem Anbieterwechsel,
+sondern wenn der Anbieter seine Praxis ändert, ohne dass hier jemand etwas
+anfasst.
+
+**Serialisiert wird mit `pg_advisory_xact_lock` — die Ausnahme vom Muster
+dieses Projekts, und sie hat einen Grund.** Ein Anspruch mit Frist bräuchte
+eine Frist, und die wäre hier zu raten: zu kurz gibt zwei Refreshes, zu lang
+blockiert ein Konto nach einem Absturz minutenlang. Das Schloss fällt beim
+Ende der Transaktion, auch beim Absturz, und **der Verlierer wartet, statt zu
+pollen** — er findet danach den frischen Token vor. Was das kostet, gehört
+gesagt: Eine Verbindung bleibt für die Dauer des Anbieteraufrufs belegt,
+begrenzt durch dessen 15 Sekunden. Bei einem Nutzer und einer Handvoll Konten
+ist das der richtige Tausch; bei tausend gleichzeitigen Refreshes gehörte der
+Refresh in den zweiten Prozess.
+
+Gemessen: Ohne die Sperre erzeugen zehn gleichzeitige Anfragen **zehn**
+Anbieteraufrufe statt einem. Der Test **zählt** sie — am Ergebnis wären beide
+Fassungen gleich grün, weil alle zehn einen gültigen Token bekommen.
+
+**Eine Netzstörung erklärt kein Konto für tot.** Ein Refresh scheitert aus
+zwei Gründen mit entgegengesetzten Folgen, und ohne Trennung müsste der
+Aufrufer raten — er würde vorsichtig raten, also jedes Konto bei jedem
+Schluckauf des Netzes abschreiben. Nur `invalid_grant` bei HTTP **400** heißt,
+dass die Zustimmung weg ist. Ein 401 heißt es ausdrücklich **nicht**: Er sagt,
+dass unsere Client-Zugangsdaten nicht stimmen — eine falsch eingetragene
+`GOOGLE_CLIENT_SECRET` räumte sonst reihenweise gesunde Verbindungen ab, alle
+auf einmal, mit einem Tippfehler. Dafür gibt es `AuthorizationRevoked` als
+eigene Ausnahme.
+
+**Der alte Erneuerungstoken bleibt, wenn keiner nachkommt.** Die meisten
+Anbieter schicken beim Refresh nur den Zugriffstoken. Wer dann `None`
+speichert, hat das Konto beim übernächsten Mal verloren — und der Fehler zeigt
+sich Stunden später als „Zustimmung besteht nicht mehr", also dort, wo niemand
+nach dieser Ursache sucht.
+
+#### `mail.read`
+
+**Das erste Werkzeug, dessen Fremdinhalt nicht das Modell ausgesucht hat.**
+Bei `web.fetch` nennt ein Modell die Adresse; wer dort Text unterschieben will,
+muss erst dafür sorgen, dass das Modell seine Seite anfragt. Ein Postfach
+dagegen ist eine Adresse, die jeder kennt: **Ein Angreifer entscheidet allein,
+dass sein Text im Kontext des Modells landet.** Er braucht keine
+Suchmaschinenplatzierung und keinen Zufall, nur eine Mailadresse. Die
+untergeschobene Anweisung ist hier der Normalfall und nicht der Grenzfall —
+`taints_context=True` ist an diesem Werkzeug keine Vorsicht, sondern seine
+Existenzbedingung.
+
+**P2, und was daran hängt.** `docs/00-uebersicht.md §8` sagt es seit dem
+ersten Entwurf: „der Mail-Connector markiert alles als P2". Damit bleibt der
+Inhalt bei den Anbietern, die dafür freigegeben sind. Zum ersten Mal treffen
+beide Eigenschaften zusammen: sensibel **und** nicht vertrauenswürdig.
+
+**Zwei Erlaubnisse mit demselben Wort.** `mail.read` ist unser Scope — was der
+Nutzer *diesem System* erlaubt hat, und den prüft die Policy. `gmail.readonly`
+ist Googles Scope — was er *bei Google* bewilligt hat, und den prüft die
+Verdrahtung, und zwar an `granted_scopes`: an dem, was der Anbieter
+zurückgemeldet hat. **Damit bekommt das Feld aus Abschnitt 22 seinen ersten
+Leser.** Ohne die Prüfung ginge die Anfrage hinaus und käme als 403 zurück —
+ein Fehler, der wie eine Störung aussieht, obwohl er hier schon feststand, und
+der den Nutzer die Ursache bei Google suchen lässt.
+
+**Bei zwei Konten wird nicht geraten.** Welches von zwei Postfächern gemeint
+ist, weiß dieses System nicht; läse es im falschen, merkte es niemand — das
+Ergebnis sähe genauso aus wie das richtige. Es gibt deshalb eine Absage statt
+einer Wahl. Ein Argument `konto` ist der nächste Schritt und braucht einen
+eigenen Block: Es muss benannt werden können, ohne dass ein Modell eine fremde
+Kennung erfinden kann.
+
+**Kein Versand, keine Löschung.** Der Scope-Katalog führt `mail.send` und
+`mail.delete`; dieses Werkzeug und sein Port können sie nicht. Derselbe
+Unterschied wie beim Kalender: Der Handler tut es nicht, weil er es nicht
+kann — nicht, weil es ihm verboten wäre.
+
+#### Zwei Befunde unterwegs
+
+1. **Was beim Verdrahten gebaut wird, wird zur Voraussetzung von allem, was
+   daneben steht.** Die erste Fassung erzeugte den Tokendienst beim Bauen des
+   Werkzeugkatalogs. Damit hing **jedes** Werkzeug an der Schlüsseldatei — auch
+   `files.read`, das mit Zugangsdaten nichts zu tun hat. Gemessen: zwölf Tests
+   scheiterten mit `FileNotFoundError`, und eine Installation ohne verbundene
+   Konten hätte gar keine Werkzeuge mehr gehabt. Der Dienst kommt jetzt als
+   Fabrik herein und wird erst angefasst, wenn wirklich ein Postfach gelesen
+   wird.
+2. **Eine Attrappe war jahrelang die Spezifikation.** `tests/fakes.py` führt
+   seit langem eine `ToolSpec` namens `mail.read`, gegen die die Policy- und
+   Executor-Suite arbeitet — für ein Werkzeug, das es nicht gab. Wären die
+   sicherheitsrelevanten Eigenschaften des echten Werkzeugs andere, prüfte die
+   Policy-Suite seit je etwas anderes, als jetzt läuft. Ein Test vergleicht die
+   beiden jetzt Feld für Feld.
+
+Drei neue Invarianten (`oauth-refresh-is-serialized-per-account`,
+`oauth-account-dies-only-on-a-revoked-grant`,
+`oauth-tools-require-the-granted-scope`), Kennzahl **69/69**.
+
+**Was offen bleibt:** Der Widerruf **beim Anbieter** — heute verschwinden nur
+die Zugangsdaten auf dieser Seite, und der Endpunkt sagt das. Die Wahl
+zwischen mehreren Konten. Und weiterhin der Durchstich gegen echtes Google:
+Adapter und Werkzeug stehen gegen aufgezeichnete Antworten, wie die
+Cloud-Modelle auch. **Dafür braucht es `GOOGLE_CLIENT_ID` und
+`GOOGLE_CLIENT_SECRET` eines echten Projekts**, mit
+`http://localhost:8000/accounts/callback` als hinterlegter Rückrufadresse und
+`gmail.readonly` unter den freigegebenen Scopes.
+
 ## 9. Arbeitsweise
 
 Vom Nutzer vorgegeben, gilt unverändert:
@@ -2514,6 +2635,7 @@ klären, indem der Fall ausgeführt wurde.
 | **Nach `make gen` gehört ein Commit** | `gen-check` prüft gegen den **Commit**-Stand, nicht gegen die Arbeitskopie. Zweimal in einer Sitzung das Gate rot bekommen, weil die Artefakte aktuell, aber nicht committet waren. Das ist kein Fehler des Ziels — nur eine Reihenfolge, die man einmal lernt. |
 | **`open()` auf eine FIFO blockiert** | Die Prüfung „ist das eine reguläre Datei?" steht notwendigerweise *nach* dem Öffnen — vorher gäbe es nur `lstat`, und dazwischen läge das Zeitfenster, das die Bauart schließen soll. Der erste Testlauf hing deshalb. `O_NONBLOCK` löst es; für reguläre Dateien ist die Flagge wirkungslos. Ein Test, der eine FIFO anlegt, ist billig — und er hat einen echten Hänger gefunden. |
 | **Rollback-Isolation im Test verdeckt Transaktionsgrenzen** | Die `conn`-Fixture hält alles in einer Transaktion, die nie committet. Bequem, schnell, sauber — und blind für jeden Ablauf, der über Transaktionsgrenzen geht. Sie war der Grund, warum die E2E-Suite den Befund nicht sehen konnte. Wo eine Komponente aus gutem Grund selbst committet, muss der Test committen und danach aufräumen (`aufgeraeumte_nutzer`). |
+| **Was beim Verdrahten gebaut wird, wird zur Voraussetzung von allem daneben** | Der Tokendienst wurde beim Bauen des Werkzeugkatalogs erzeugt — damit hing **jedes** Werkzeug an der KEK-Datei, auch `files.read`. Gemessen: zwölf Tests mit `FileNotFoundError`, und eine Installation ohne verbundene Konten hätte gar keine Werkzeuge mehr gehabt. Was nur ein Zweig braucht, gehört als Fabrik herein und nicht als fertiges Objekt. |
 | **`alembic --autogenerate` vergleicht gegen die Modelle, nicht gegen die Migrationen** | `model_calls`, `calendar_events`, `runs.last_step_at` und die drei Rotationsspalten von `sessions` gibt es in der Datenbank und in früheren Migrationen, als ORM-Modell aber nicht. Autogenerate hält deshalb alles davon für überflüssig und schlägt vor, es zu **löschen** — in derselben Datei, die die neue Tabelle anlegt. **Wer hier eine Migration erzeugt, liest sie und streicht.** Ein `make migration`, das ungelesen committet wird, nimmt vier Tabellenteile mit. |
 | **Ein Docstring, der eine Zusage macht, die niemand durchsetzt** | `DateiSchluessel` sagt seit dem Envelope-Block, die Schlüsseldatei fehle „entweder sofort — dann startet der Prozess nicht — oder gar nicht". Gebaut wurde der Provider aber erst beim ersten Zugriff. Die Zusage galt damit nicht: Eine fehlende Datei fiel erst auf, wenn ein Nutzer beim Anbieter **schon zugestimmt hatte**. Gefunden hat es der erste HTTP-Test, nicht das Lesen. **Eine Zusage im Docstring ist eine Behauptung, bis eine Aufrufstelle sie einlöst** — dieselbe Frage wie bei jeder Einschränkung: wer liest sie, und wer prüft dagegen? |
 | **Eine globale gitleaks-Ausnahme mit `paths` überspringt die ganze Datei** | Nicht den Fund — die Datei, bevor ihr Inhalt gelesen wird. Die erste Fassung der Ausnahme hätte damit **jedes `.py`-Dateiverzeichnis** vom Scan genommen; gemessen an einer Probe mit einem echten Literal: nicht gefunden. `targetRules` behebt es, weil dann je Fund entschieden wird. Und `condition = "AND"` gehört dazu — sonst verknüpft gitleaks `regexes` und `paths` mit ODER, und jede Bedingung allein genügt. **Eine Ausnahme gehört in beide Richtungen gemessen:** Findet sie den Fehlalarm nicht mehr, und findet sie einen echten Wert noch? |

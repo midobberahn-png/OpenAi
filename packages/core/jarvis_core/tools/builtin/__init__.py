@@ -14,16 +14,19 @@ einem Anbieter; ein Strukturtest hält das fest
 
 from .calendar import CALENDAR_CREATE, calendar_create_handler, calendar_undo_handler
 from .files import FILES_LIST, FILES_READ, files_list_handler, files_read_handler
+from .mail import MAIL_READ, mail_read_handler
 from .web import WEB_FETCH, web_fetch_handler
 
 __all__ = [
     "CALENDAR_CREATE",
     "FILES_LIST",
     "FILES_READ",
+    "MAIL_READ",
     "WEB_FETCH",
     "calendar_create_handler",
     "calendar_undo_handler",
     "files_list_handler",
     "files_read_handler",
+    "mail_read_handler",
     "web_fetch_handler",
 ]
