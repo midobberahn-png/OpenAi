@@ -192,6 +192,37 @@ class Settings(BaseSettings):
     Zeile Code. Wer hinter einem Reverse Proxy betreibt, trägt dessen Adresse
     hier ein und weiß dann auch, warum."""
 
+    # -- Verbundene Konten (OAuth) ----------------------------------------
+    #
+    # **Ohne Client-Kennung und Geheimnis gibt es den Anbieter nicht.**
+    # Dieselbe Bedingung wie bei den Modellanbietern und aus demselben Grund:
+    # Ein Eintrag, den niemand aufrufen kann, führt die Oberfläche in die Irre
+    # — sie böte ein „Konto verbinden" an, das mit einem Fehler des Anbieters
+    # endet, und der Nutzer sucht die Ursache bei sich.
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(
+        default="http://localhost:8000/accounts/callback", alias="GOOGLE_REDIRECT_URI"
+    )
+    """Die Rückrufadresse, exakt wie beim Anbieter hinterlegt.
+
+    Sie steht hier und wird nie aus einem Request übernommen — dieselbe
+    Verankerung wie ``WEBAUTHN_ORIGINS``. Eine wählbare Rückrufadresse machte
+    aus diesem Endpunkt einen offenen Weiterleiter und aus dem
+    Autorisierungscode etwas, das man sich zuschicken lassen kann."""
+
+    google_scopes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "openid",
+            "email",
+            "https://www.googleapis.com/auth/calendar.events",
+        ],
+        alias="GOOGLE_SCOPES",
+    )
+    """Was gefragt wird. Was **bewilligt** ist, meldet der Anbieter zurück und
+    steht in ``connected_accounts.granted_scopes`` — zwei Aussagen, und die
+    zweite ist die verbindliche."""
+
     @model_validator(mode="after")
     def _kek_quelle_passt_zur_umgebung(self) -> Settings:
         """Der Datei-KEK ist Entwicklungssache (ADR-008 V1.1).
@@ -227,6 +258,7 @@ class Settings(BaseSettings):
         "trusted_proxies",
         "files_allowed_roots",
         "cloud_zero_retention",
+        "google_scopes",
         mode="before",
     )
     @classmethod

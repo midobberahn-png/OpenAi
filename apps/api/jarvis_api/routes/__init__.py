@@ -1,5 +1,6 @@
 """HTTP-Routen. Dünne Adapter auf den Kern — keine Sicherheitslogik."""
 
+from .accounts import router as accounts_router
 from .actions import router as actions_router
 from .audit import router as audit_router
 from .auth import router as auth_router
@@ -11,6 +12,7 @@ from .runs import router as runs_router
 from .undo import router as undo_router
 
 __all__ = [
+    "accounts_router",
     "actions_router",
     "audit_router",
     "auth_router",

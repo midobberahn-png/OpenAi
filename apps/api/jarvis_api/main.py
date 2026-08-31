@@ -23,8 +23,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from jarvis_api.db.session import dispose
-from jarvis_api.deps import dispose_redis
+from jarvis_api.deps import dispose_redis, key_provider
+from jarvis_api.oauth import oauth_providers
 from jarvis_api.routes import (
+    accounts_router,
     actions_router,
     audit_router,
     auth_router,
@@ -49,6 +51,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # **Der Schlüssel wird beim Start angefasst, nicht beim ersten Token.**
+    # ``DateiSchluessel`` sagt in seinem Docstring seit jeher zu, entweder
+    # sofort zu fehlen oder gar nicht — und niemand hat ihn je beim Start
+    # gebaut. Die Zusage galt damit nicht: Eine fehlende Schlüsseldatei fiel
+    # erst auf, wenn ein Nutzer bereits beim Anbieter zugestimmt hatte, und
+    # dann als 500 mit einem Pfad im Stacktrace.
+    #
+    # **Nur wenn es einen Anbieter gibt**, für den überhaupt etwas zu
+    # versiegeln wäre. Sonst müsste jede Installation ohne verbundene Konten
+    # eine Schlüsseldatei vorhalten, die nichts verschlüsselt — und jeder Test,
+    # der die App baut, ebenso.
+    if oauth_providers(settings):
+        key_provider(settings)
     application = FastAPI(
         title="JARVIS API",
         version="0.1.0",
@@ -69,6 +85,7 @@ def create_app() -> FastAPI:
     application.include_router(audit_router)
     application.include_router(events_router)
     application.include_router(undo_router)
+    application.include_router(accounts_router)
 
     @application.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
